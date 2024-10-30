@@ -12,12 +12,12 @@ import io.hyperfoil.controller.Client;
 import io.hyperfoil.controller.model.RequestStatisticsResponse;
 import io.hyperfoil.controller.model.RequestStats;
 import io.hyperfoil.core.util.ConstantBytesGenerator;
-import io.hyperfoil.http.api.HttpMethod;
 import io.hyperfoil.http.config.ConnectionStrategy;
 import io.hyperfoil.http.config.HttpPluginBuilder;
 import io.hyperfoil.http.statistics.HttpStats;
 import io.hyperfoil.http.steps.HttpStepCatalog;
 import io.micronaut.context.annotation.ConfigurationProperties;
+import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.scheduling.TaskExecutors;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClosedException;
@@ -39,6 +39,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,7 +57,7 @@ public class HyperfoilRunner implements AutoCloseable {
 
     private static final String HYPERFOIL_CONTROLLER_IP = "10.0.0.3";
     private static final String HYPERFOIL_AGENT_PREFIX = "10.0.1.";
-    private static final Path LOCAL_HYPERFOIL_LOCATION = Path.of("/home/yawkat/bin/hyperfoil-0.24.1");
+    private static final Path LOCAL_HYPERFOIL_LOCATION = Path.of("/home/yawkat/bin/hyperfoil-0.27");
     private static final String REMOTE_HYPERFOIL_LOCATION = "hyperfoil";
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
 
@@ -225,7 +226,7 @@ public class HyperfoilRunner implements AutoCloseable {
         this.relay.complete(relay);
     }
 
-    public FrameworkRun.BenchmarkClosure benchmarkClosure(Path outputDirectory, ProtocolSettings protocol, byte[] body) {
+    public FrameworkRun.BenchmarkClosure benchmarkClosure(Path outputDirectory, ProtocolSettings protocol, RequestDefinition.SampleRequestDefinition body) {
         return new FrameworkRun.BenchmarkClosure() {
             @Override
             public void benchmark(PhaseTracker.PhaseUpdater progress) throws Exception {
@@ -239,7 +240,22 @@ public class HyperfoilRunner implements AutoCloseable {
         };
     }
 
-    private void benchmark(Path outputDirectory, ProtocolSettings protocol, byte[] body, PhaseTracker.PhaseUpdater progress, boolean forPgo) throws Exception {
+    private static String createCurlCommand(Protocol protocol, RequestDefinition definition, String socketUri, boolean verbose) {
+        StringBuilder builder = new StringBuilder("curl");
+        builder.append(protocol == Protocol.HTTP1 ? " --http1.1" : " --http2");
+        builder.append(" --insecure");
+        builder.append(verbose ? " -v" : " --silent");
+        builder.append(" -X ").append(definition.getMethod().name());
+        builder.append(" --request-target '").append(definition.getUri()).append("'");
+        if (definition.getRequestBody() != null) {
+            builder.append(" -H 'content-type: ").append(definition.getRequestType()).append("'");
+            builder.append(" -d '").append(definition.getRequestBody()).append("'");
+        }
+        builder.append(' ').append(socketUri);
+        return builder.toString();
+    }
+
+    private void benchmark(Path outputDirectory, ProtocolSettings protocol, RequestDefinition.SampleRequestDefinition body, PhaseTracker.PhaseUpdater progress, boolean forPgo) throws Exception {
         BenchmarkPhase benchmarkPhase = forPgo ? BenchmarkPhase.PGO : BenchmarkPhase.BENCHMARKING;
 
         progress.update(benchmarkPhase);
@@ -247,23 +263,24 @@ public class HyperfoilRunner implements AutoCloseable {
         int port = protocol.protocol() == Protocol.HTTP1 ? 8080 : 8443;
         io.hyperfoil.http.config.Protocol prot = protocol.protocol() == Protocol.HTTP1 ? io.hyperfoil.http.config.Protocol.HTTP : io.hyperfoil.http.config.Protocol.HTTPS;
 
-        String statusUri = prot.scheme + "://" + ip + ":" + port + "/status";
-        String findUri = prot.scheme + "://" + ip + ":" + port + "/search/find";
-        String curlBase = "curl " + (protocol.protocol() == Protocol.HTTPS2 ? "--http2" : "--http1.1") + " -H 'Accept: application/json' --insecure ";
+        String curlBase = "curl " + (protocol.protocol() == Protocol.HTTPS2 ? "--http2" : "--http1.1") + " --insecure ";
+        String socketUri = prot.scheme + "://" + ip + ":" + port;
+        for (HyperfoilConfiguration.StatusRequest status : factory.config.status) {
+            Infrastructure.retry(() -> {
+                try (OutputListener.Write write = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve(status.getName() + ".http")))) {
+                    SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), status, socketUri, true), write);
+                }
+                return null;
+            }, controllerPortForward.get()::disconnect);
+        }
         Infrastructure.retry(() -> {
-            try (OutputListener.Write write = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve("status.http")))) {
-                SshUtil.run(controllerSession, curlBase + "-v " + statusUri, write);
-            }
-            return null;
-        }, controllerPortForward.get()::disconnect);
-        Infrastructure.retry(() -> {
-            String testBody = factory.objectMapper.writeValueAsString(new Input(List.of("foo", "bar"), "ar"));
             ByteArrayOutputStream resp = new ByteArrayOutputStream();
             try (OutputListener.Write write = new OutputListener.Write(resp)) {
-                SshUtil.run(controllerSession, curlBase + "--silent -d '" + testBody + "' -H 'Content-Type: application/json' " + findUri, write);
+                SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), body, socketUri, false), write);
             }
-            Result result = factory.objectMapper.readValue(resp.toByteArray(), Result.class);
-            if (result.listIndex != 1 || result.stringIndex != 1) {
+            if (body.isResponseJson() ?
+                    !factory.objectMapper.readTree(resp.toByteArray()).equals(factory.objectMapper.readTree(body.getResponseBody())) :
+                    !Arrays.equals(resp.toByteArray(), body.getResponseBody().getBytes(StandardCharsets.UTF_8))) {
                 throw new InvalidatesBenchmarkException("Response to test request was incorrect: " + resp.toString(StandardCharsets.UTF_8));
             }
             return null;
@@ -407,15 +424,15 @@ public class HyperfoilRunner implements AutoCloseable {
         }
     }
 
-    private static void prepareScenario(byte[] body, String ip, int port, ScenarioBuilder warmup) {
+    private static void prepareScenario(RequestDefinition sampleRequest, String ip, int port, ScenarioBuilder warmup) {
         warmup.initialSequence("test")
                 .step(HttpStepCatalog.class)
-                .httpRequest(HttpMethod.POST)
+                .httpRequest(sampleRequest.getMethod())
                 .authority(ip + ":" + port)
-                .path("/search/find")
+                .path(sampleRequest.getUri())
                 // MUST be lowercase for HTTP/2
-                .headers().header("content-type", "application/json").endHeaders()
-                .body(new ConstantBytesGenerator(body));
+                .headers().header("content-type", sampleRequest.getRequestType()).endHeaders()
+                .body(sampleRequest.getRequestBody() == null ? null : new ConstantBytesGenerator(sampleRequest.getRequestBody().getBytes(StandardCharsets.UTF_8)));
     }
 
     public void terminateAsync() {
@@ -465,9 +482,12 @@ public class HyperfoilRunner implements AutoCloseable {
             Duration warmupDuration,
             Duration benchmarkDuration,
             Duration pgoDuration,
-
-            double sessionLimitFactor
+            double sessionLimitFactor,
+            List<StatusRequest> status
     ) {
+        @EachProperty(value = "status", list = true)
+        interface StatusRequest extends RequestDefinition, io.micronaut.core.naming.Named {
+        }
     }
 
     private record HyperfoilInstances(
@@ -510,10 +530,6 @@ public class HyperfoilRunner implements AutoCloseable {
             }
         }
     }
-
-    private record Input(List<String> haystack, String needle) {}
-
-    private record Result(int listIndex, int stringIndex) {}
 
     private record Metadata(HyperfoilConfiguration hyperfoilConfiguration) {}
 }

@@ -138,7 +138,7 @@ public class Infrastructure extends AbstractInfrastructure {
                                 benchmarkServerClient,
                                 outputDirectory,
                                 log,
-                                hyperfoilRunner.benchmarkClosure(outputDirectory, loadVariant.protocol(), loadVariant.body()),
+                                hyperfoilRunner.benchmarkClosure(outputDirectory, loadVariant.protocol(), loadVariant.definition()),
                                 finalProgress);
                         return null;
                     }

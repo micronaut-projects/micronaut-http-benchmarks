@@ -22,9 +22,9 @@ dependencies {
     implementation("io.micronaut.toml:micronaut-toml")
     implementation("io.micronaut:micronaut-jackson-databind")
     implementation("io.micronaut:micronaut-http-client")
-    implementation("io.hyperfoil:hyperfoil-api:0.24.1")
-    implementation("io.hyperfoil:hyperfoil-core:0.24.1")
-    implementation("io.hyperfoil:hyperfoil-clustering:0.24.1")
+    implementation("io.hyperfoil:hyperfoil-api:0.27")
+    implementation("io.hyperfoil:hyperfoil-core:0.27")
+    implementation("io.hyperfoil:hyperfoil-clustering:0.27")
 }
 
 micronaut {

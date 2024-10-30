@@ -105,7 +105,7 @@ public class Compute {
             Image image = images.stream()
                     .filter(i -> i.getId().equals(instanceType.image) || i.getDisplayName().equals(instanceType.image))
                     .findAny()
-                    .orElseThrow(() -> new NoSuchElementException("Image " + instanceType.image + " not found. Available images are: " + images.stream().map(Image::getDisplayName).toList()));
+                    .orElseThrow(() -> new NoSuchElementException("Image " + instanceType.image + " not found. Available images are: \n" + images.stream().map(Image::getDisplayName).collect(Collectors.joining("\n"))));
             while (true) {
                 try {
                     String id = computeClient.forRegion(location).launchInstance(LaunchInstanceRequest.builder()

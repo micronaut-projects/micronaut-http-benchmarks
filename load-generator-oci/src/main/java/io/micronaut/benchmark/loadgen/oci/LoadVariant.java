@@ -6,9 +6,10 @@ public record LoadVariant(
         @JsonIgnore
         String name,
         ProtocolSettings protocol,
-        int stringCount,
-        int stringLength,
         @JsonIgnore
-        byte[] body
+        RequestDefinition.SampleRequestDefinition definition
 ) {
+    public String getLoadName() {
+        return definition.getName();
+    }
 }
