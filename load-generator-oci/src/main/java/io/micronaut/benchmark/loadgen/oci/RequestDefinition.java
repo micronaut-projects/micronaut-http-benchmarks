@@ -14,6 +14,10 @@ public interface RequestDefinition {
     @NonNull
     String getUri();
 
+    @Bindable(defaultValue = "example.com")
+    @NonNull
+    String getHost();
+
     @Bindable(defaultValue = "application/json")
     @NonNull
     String getRequestType();

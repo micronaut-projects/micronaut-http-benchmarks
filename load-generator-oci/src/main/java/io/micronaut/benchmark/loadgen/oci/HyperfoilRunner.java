@@ -247,6 +247,7 @@ public class HyperfoilRunner implements AutoCloseable {
         builder.append(verbose ? " -v" : " --silent");
         builder.append(" -X ").append(definition.getMethod().name());
         builder.append(" --request-target '").append(definition.getUri()).append("'");
+        builder.append(" -H 'host: ").append(definition.getHost()).append("'");
         if (definition.getRequestBody() != null) {
             builder.append(" -H 'content-type: ").append(definition.getRequestType()).append("'");
             builder.append(" -d '").append(definition.getRequestBody()).append("'");
@@ -263,7 +264,6 @@ public class HyperfoilRunner implements AutoCloseable {
         int port = protocol.protocol() == Protocol.HTTP1 ? 8080 : 8443;
         io.hyperfoil.http.config.Protocol prot = protocol.protocol() == Protocol.HTTP1 ? io.hyperfoil.http.config.Protocol.HTTP : io.hyperfoil.http.config.Protocol.HTTPS;
 
-        String curlBase = "curl " + (protocol.protocol() == Protocol.HTTPS2 ? "--http2" : "--http1.1") + " --insecure ";
         String socketUri = prot.scheme + "://" + ip + ":" + port;
         for (HyperfoilConfiguration.StatusRequest status : factory.config.status) {
             Infrastructure.retry(() -> {
