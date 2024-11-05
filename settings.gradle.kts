@@ -37,7 +37,7 @@ configure<io.micronaut.bench.AppVariants> {
             variant("serde")
         }
         dimension("micronaut") {
-            variant("4.3")
+            variant("latest")
         }
         dimension("java") {
             //variant("11")

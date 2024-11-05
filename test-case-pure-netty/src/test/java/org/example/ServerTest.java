@@ -47,7 +47,7 @@ public class ServerTest {
 
     @Test
     public void http() throws IOException, InterruptedException {
-        try (HttpServer server = new HttpServer(new RequestHandler())) {
+        try (HttpServer server = new HttpServer()) {
             InetSocketAddress addr = server.bindHttp("localhost", 0);
             byte[] bytes = client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + addr.getPort() + "/status")).build(), HttpResponse.BodyHandlers.ofByteArray()).body();
             jsonMapper.readTree(bytes);
@@ -56,7 +56,7 @@ public class ServerTest {
 
     @Test
     public void https1() throws IOException, InterruptedException, CertificateException {
-        try (HttpServer server = new HttpServer(new RequestHandler())) {
+        try (HttpServer server = new HttpServer()) {
             InetSocketAddress addr = server.bindHttps("localhost", 0);
             HttpResponse<byte[]> response = client.send(HttpRequest.newBuilder(URI.create("https://localhost:" + addr.getPort() + "/status")).version(HttpClient.Version.HTTP_1_1).build(), HttpResponse.BodyHandlers.ofByteArray());
             Assertions.assertEquals(HttpClient.Version.HTTP_1_1, response.version());
@@ -66,7 +66,7 @@ public class ServerTest {
 
     @Test
     public void https2() throws IOException, InterruptedException, CertificateException {
-        try (HttpServer server = new HttpServer(new RequestHandler())) {
+        try (HttpServer server = new HttpServer()) {
             InetSocketAddress addr = server.bindHttps("localhost", 0);
             HttpResponse<byte[]> response = client.send(HttpRequest.newBuilder(URI.create("https://localhost:" + addr.getPort() + "/status")).version(HttpClient.Version.HTTP_2).build(), HttpResponse.BodyHandlers.ofByteArray());
             Assertions.assertEquals(HttpClient.Version.HTTP_2, response.version());
