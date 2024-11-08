@@ -29,8 +29,14 @@ public interface RequestDefinition {
         @NonNull
         String getResponseBody();
 
-        @Bindable(defaultValue = "true")
+        @Bindable(defaultValue = "JSON")
         @NonNull
-        boolean isResponseJson();
+        MatchingMode getResponseMatchingMode();
+
+        enum MatchingMode {
+            EQUAL,
+            JSON,
+            REGEX
+        }
     }
 }

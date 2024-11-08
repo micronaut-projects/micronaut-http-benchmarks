@@ -51,6 +51,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 
 public class HyperfoilRunner implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(HyperfoilRunner.class);
@@ -278,9 +279,12 @@ public class HyperfoilRunner implements AutoCloseable {
             try (OutputListener.Write write = new OutputListener.Write(resp)) {
                 SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), body, socketUri, false), write);
             }
-            if (body.isResponseJson() ?
-                    !factory.objectMapper.readTree(resp.toByteArray()).equals(factory.objectMapper.readTree(body.getResponseBody())) :
-                    !Arrays.equals(resp.toByteArray(), body.getResponseBody().getBytes(StandardCharsets.UTF_8))) {
+            boolean matches = switch (body.getResponseMatchingMode()) {
+                case EQUAL -> Arrays.equals(resp.toByteArray(), body.getResponseBody().getBytes(StandardCharsets.UTF_8));
+                case JSON -> factory.objectMapper.readTree(resp.toByteArray()).equals(factory.objectMapper.readTree(body.getResponseBody()));
+                case REGEX -> Pattern.compile(body.getResponseBody()).matcher(resp.toString(StandardCharsets.UTF_8)).matches();
+            };
+            if (!matches) {
                 throw new InvalidatesBenchmarkException("Response to test request was incorrect: " + resp.toString(StandardCharsets.UTF_8));
             }
             return null;

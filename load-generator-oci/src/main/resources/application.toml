@@ -125,23 +125,24 @@ image="Oracle-Linux-9.4-aarch64-2024.09.30-0"
 
 # hyperfoil agent
 [compute.instance-types.hyperfoil-agent]
-shape="VM.Standard.E4.Flex"
-ocpus=8
-memory-in-gb=16
+shape="VM.Standard.E5.Flex"
+ocpus=16
+memory-in-gb=32
 image="Oracle-Linux-9.4-2024.09.30-0"
 
 [variants.hotspot]
-version=21
+version=23
 common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192"
 option-choices=[""]
 
 [variants.hotspot.async-profiler]
 enabled=false
-path="/home/yawkat/bin/async-profiler-2.9-linux-x64/build/libasyncProfiler.so"
+path="/home/yawkat/bin/async-profiler-3.0-linux-x64/lib/libasyncProfiler.so"
 args="start,event=cpu,file=flamegraph.html"
 outputs=["flamegraph.html"]
 
 [variants.native-image]
+version=23
 # these are native-image options that are benchmarked against each other
 option-choices=["--gc=G1"]
 # these are framework-specific options that are just required to get the build to work :)
@@ -154,7 +155,7 @@ tcnative=[
     #"off"
 ]
 transport=[
-    "nio",
+    #"nio",
     #"epoll",
     "iouring"
 ]

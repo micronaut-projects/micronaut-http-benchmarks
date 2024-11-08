@@ -55,6 +55,8 @@ public class JavaRunFactory {
         private Object compileConfiguration;
         private byte[] boundLine;
         private final String additionalNativeImageOptions;
+        @Nullable
+        private String args;
 
         private RunBuilder(String typePrefix) {
             this.typePrefix = typePrefix;
@@ -94,6 +96,11 @@ public class JavaRunFactory {
          */
         public RunBuilder boundOn(String message) {
             this.boundLine = message.getBytes(StandardCharsets.UTF_8);
+            return this;
+        }
+
+        public RunBuilder args(String args) {
+            this.args = args;
             return this;
         }
 
@@ -137,7 +144,7 @@ public class JavaRunFactory {
                                 start += "-agentpath:" + PROFILER_LOCATION + "=" + asyncProfilerConfiguration.args() + " ";
                             }
                             LOG.info("Starting benchmark server (hotspot, " + typePrefix + ")");
-                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(start + combinedOptions() + " -jar " + SHADOW_JAR_LOCATION)) {
+                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(start + combinedOptions() + " -jar " + SHADOW_JAR_LOCATION + (args == null ? "" : " " + args))) {
                                 OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
                                 SshUtil.forwardOutput(cmd, log, waiter);
                                 cmd.open().verify();
@@ -182,10 +189,10 @@ public class JavaRunFactory {
                         public void setupAndRun(ClientSession benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
 
                             progress.update(BenchmarkPhase.INSTALLING_SOFTWARE);
-                            SshUtil.run(benchmarkServerClient, "sudo yum install graalvm22-ee-17-jdk -y", log, 0, 1);
+                            SshUtil.run(benchmarkServerClient, "sudo yum install graalvm-" + nativeImageConfiguration.version() + "-jdk -y", log, 0, 1);
                             SshUtil.run(benchmarkServerClient, "sudo yum update oraclelinux-release-el9 -y", log, 0, 1);
                             SshUtil.run(benchmarkServerClient, "sudo yum config-manager --set-enabled ol9_codeready_builder", log, 0, 1);
-                            SshUtil.run(benchmarkServerClient, "sudo yum install graalvm22-ee-17-native-image -y", log, 0, 1);
+                            SshUtil.run(benchmarkServerClient, "sudo yum install graalvm-" + nativeImageConfiguration.version() + "-native-image -y", log, 0, 1);
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
                             ScpClientCreator.instance().createScpClient(benchmarkServerClient)
                                     .upload(shadowJar, SHADOW_JAR_LOCATION);
@@ -193,7 +200,7 @@ public class JavaRunFactory {
                             String niCommandBase = "native-image --no-fallback " + nativeImageOptions + " " + additionalNativeImageOptions;
                             SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo-instrument -jar " + SHADOW_JAR_LOCATION + " pgo-instrument", log);
                             LOG.info("Starting benchmark server for PGO (native, micronaut)");
-                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./pgo-instrument")) {
+                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./pgo-instrument" + (args == null ? "" : " " + args))) {
                                 OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
                                 SshUtil.forwardOutput(cmd, log, waiter);
                                 cmd.open().verify();
@@ -209,7 +216,7 @@ public class JavaRunFactory {
                             progress.update(BenchmarkPhase.BUILDING_IMAGE);
                             SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo -jar " + SHADOW_JAR_LOCATION + " optimized", log);
                             LOG.info("Starting benchmark server (native, " + typePrefix + ")");
-                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./optimized")) {
+                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./optimized" + (args == null ? "" : " " + args))) {
                                 OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
                                 SshUtil.forwardOutput(cmd, log, waiter);
                                 cmd.open().verify();
