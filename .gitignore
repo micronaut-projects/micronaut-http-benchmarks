@@ -12,4 +12,7 @@ results.json
 pgo-data/
 *.jfr
 test-body-*.json
-output/
+/output/
+/output-*/
+/techempower-output/
+/phases.png
