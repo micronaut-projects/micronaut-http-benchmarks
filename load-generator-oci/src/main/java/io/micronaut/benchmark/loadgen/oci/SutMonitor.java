@@ -20,8 +20,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Monitor the server-under-test system.
+ */
 @Singleton
-public class SutMonitor {
+public final class SutMonitor {
     private static final Logger LOG = LoggerFactory.getLogger(SutMonitor.class);
 
     private final MeminfoConfiguration meminfoConfiguration;

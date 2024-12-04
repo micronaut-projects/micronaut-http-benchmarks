@@ -5,8 +5,11 @@ import jakarta.inject.Singleton;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * Runs of the {@code test-case-spring-boot} submodule.
+ */
 @Singleton
-public class SpringBootRunSet implements FrameworkRunSet {
+public final class SpringBootRunSet implements FrameworkRunSet {
     private final JavaRunFactory javaRunFactory;
 
     public SpringBootRunSet(JavaRunFactory javaRunFactory) {

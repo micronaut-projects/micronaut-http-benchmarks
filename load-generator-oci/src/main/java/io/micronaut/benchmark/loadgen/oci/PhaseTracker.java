@@ -19,7 +19,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-public class PhaseTracker {
+/**
+ * Tracker for progress of different benchmarks.
+ */
+public final class PhaseTracker {
     private static final Logger LOG = LoggerFactory.getLogger(PhaseTracker.class);
 
     private final ObjectMapper objectMapper;
@@ -35,17 +38,26 @@ public class PhaseTracker {
         this.outputOld = outputDir.resolve("phases.json");
     }
 
+    /**
+     * Create a new {@link PhaseUpdater} for the given benchmark name.
+     *
+     * @param name benchmark name
+     * @return A progress updater for that benchmark
+     */
     public PhaseUpdater updater(String name) {
         return (phase, percent, msg) -> update(name, phase, percent);
     }
 
-    public void update(String name, BenchmarkPhase phase, double phasePercentage) {
+    private void update(String name, BenchmarkPhase phase, double phasePercentage) {
         synchronized (phases) {
             phases.put(name, phase);
         }
         records.add(new Record(Instant.now(), name, phase, phasePercentage));
     }
 
+    /**
+     * Regularly log and save benchmark progress.
+     */
     public void trackLoop() throws IOException {
         int lastSize = 0;
         while (true) {

@@ -17,8 +17,12 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+/**
+ * Factory for {@link FrameworkRun}s that use a {@code java} command to run a shadow jar. This class handles things
+ * like JVM flags and async-profiler setup. It can also run the jar using native-image.
+ */
 @Singleton
-public class JavaRunFactory {
+public final class JavaRunFactory {
     private static final Logger LOG = LoggerFactory.getLogger(JavaRunFactory.class);
     private static final String SHADOW_JAR_LOCATION = "shadow.jar";
     private static final String PROFILER_LOCATION = "/tmp/libasyncProfiler.so";
@@ -42,11 +46,17 @@ public class JavaRunFactory {
                 .toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * New builder for java-based runs.
+     *
+     * @param typePrefix Prefix for the {@link FrameworkRun#type()}.
+     * @return The builder
+     */
     public RunBuilder createJavaRuns(String typePrefix) {
         return new RunBuilder(typePrefix);
     }
 
-    public class RunBuilder {
+    public final class RunBuilder {
         private final String typePrefix;
         private Path shadowJar;
         @Nullable
@@ -99,13 +109,21 @@ public class JavaRunFactory {
             return this;
         }
 
+        /**
+         * Application arguments to pass to the SUT.
+         */
         public RunBuilder args(String args) {
             this.args = args;
             return this;
         }
 
+        /**
+         * Build the runs for this jar. This returns multiple runs if multiple different JVM flag choices are
+         * configured, and for native-image.
+         */
         public Stream<FrameworkRun> build() {
             return Stream.concat(
+                    // one run for each JVM option choice to test
                     hotspotConfiguration.optionChoices().stream().map(hotspotOptions -> new FrameworkRun() {
                         @Override
                         public String type() {
@@ -167,6 +185,7 @@ public class JavaRunFactory {
                             }
                         }
                     }),
+                    // one run for each native-image option choice to test
                     nativeImageConfiguration.optionChoices().stream().map(nativeImageOptions -> new FrameworkRun() {
                         @Override
                         public String type() {

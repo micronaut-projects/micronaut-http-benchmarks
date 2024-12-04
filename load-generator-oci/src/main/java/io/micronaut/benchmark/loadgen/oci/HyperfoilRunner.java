@@ -53,13 +53,27 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
-public class HyperfoilRunner implements AutoCloseable {
+/**
+ * This class manages the provisioning of a hyperfoil cluster and allows using it for benchmarks.
+ */
+public final class HyperfoilRunner implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(HyperfoilRunner.class);
 
+    /**
+     * IP of the hyperfoil controller.
+     */
     private static final String HYPERFOIL_CONTROLLER_IP = "10.0.0.3";
+    /**
+     * IP prefix of the hyperfoil agents.
+     */
     private static final String HYPERFOIL_AGENT_PREFIX = "10.0.1.";
-    private static final Path LOCAL_HYPERFOIL_LOCATION = Path.of("/home/yawkat/bin/hyperfoil-0.27");
+    /**
+     * Directory of the hyperfoil controller.
+     */
     private static final String REMOTE_HYPERFOIL_LOCATION = "hyperfoil";
+    /**
+     * {@link Compute} instance type name for hyperfoil agents.
+     */
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
 
     private final Factory factory;
@@ -68,6 +82,9 @@ public class HyperfoilRunner implements AutoCloseable {
     private final CompletableFuture<Void> terminate = new CompletableFuture<>();
     private final Path logDirectory;
     private final HyperfoilInstances instances;
+    /**
+     * Worker thread that handles the actual provisioning and benchmarking.
+     */
     private final Future<?> worker;
     private final List<Compute.Instance> computeInstances = new CopyOnWriteArrayList<>();
     private ClientSession controllerSession;
@@ -125,7 +142,7 @@ public class HyperfoilRunner implements AutoCloseable {
         }
     }
 
-    private void terminateAndWait() throws Exception {
+    private void terminateAndWait() {
         for (Compute.Instance computeInstance : computeInstances) {
             computeInstance.terminateAsync();
         }
@@ -148,7 +165,7 @@ public class HyperfoilRunner implements AutoCloseable {
 
             setupTasks.add(() -> {
                 SshUtil.run(controllerSession, "sudo yum install jdk-17-headless -y", log);
-                ScpClientCreator.instance().createScpClient(controllerSession).upload(LOCAL_HYPERFOIL_LOCATION, REMOTE_HYPERFOIL_LOCATION, ScpClient.Option.Recursive, ScpClient.Option.PreserveAttributes);
+                ScpClientCreator.instance().createScpClient(controllerSession).upload(factory.config.location, REMOTE_HYPERFOIL_LOCATION, ScpClient.Option.Recursive, ScpClient.Option.PreserveAttributes);
                 factory.sshFactory.deployPrivateKey(controllerSession);
 
                 SshUtil.openFirewallPorts(controllerSession);
@@ -227,6 +244,14 @@ public class HyperfoilRunner implements AutoCloseable {
         this.relay.complete(relay);
     }
 
+    /**
+     * Create a new benchmark closure to run benchmarks for a given request definition.
+     *
+     * @param outputDirectory The output directory for benchmark results
+     * @param protocol        The HTTP protocol settings to use
+     * @param body            The HTTP request
+     * @return The benchmark closure
+     */
     public FrameworkRun.BenchmarkClosure benchmarkClosure(Path outputDirectory, ProtocolSettings protocol, RequestDefinition.SampleRequestDefinition body) {
         return new FrameworkRun.BenchmarkClosure() {
             @Override
@@ -296,7 +321,7 @@ public class HyperfoilRunner implements AutoCloseable {
                 .failurePolicy(Benchmark.FailurePolicy.CANCEL);
         for (int i = 0; i < factory.config.agentCount; i++) {
             benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
-                    "threads", String.valueOf(factory.compute.getCoreCount(AGENT_INSTANCE_TYPE)),
+                    "threads", String.valueOf((int) factory.compute.getInstanceType(AGENT_INSTANCE_TYPE).ocpus()),
                     "extras", "-XX:+UseG1GC -XX:MaxGCPauseMillis=50"
             ));
         }
@@ -480,8 +505,21 @@ public class HyperfoilRunner implements AutoCloseable {
         }
     }
 
+    /**
+     * @param location           Location of the hyperfoil directory
+     * @param agentCount         Number of agents to create
+     * @param warmupDuration     Duration of the warmup run
+     * @param benchmarkDuration  Duration of each main benchmark run
+     * @param pgoDuration        Duration of the PGO run
+     * @param sessionLimitFactor Factor of the hyperfoil session limit. If a particular run is 1000 ops/s, and this
+     *                           factor is 2, the maximum number of hyperfoil sessions is 2000.
+     * @param status             Optional requests to do before the benchmark run to get metadata from the SUT. This
+     *                           metadata will be saved in the result directory. Can be used to verify that the SUT has
+     *                           started with the correct settings.
+     */
     @ConfigurationProperties("hyperfoil")
     public record HyperfoilConfiguration(
+            Path location,
             int agentCount,
             Duration warmupDuration,
             Duration benchmarkDuration,

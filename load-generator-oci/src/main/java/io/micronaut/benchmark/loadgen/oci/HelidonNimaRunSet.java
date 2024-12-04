@@ -5,8 +5,11 @@ import jakarta.inject.Singleton;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * Runs of the {@code test-case-helidon-nima} submodule.
+ */
 @Singleton
-public class HelidonNimaRunSet implements FrameworkRunSet {
+public final class HelidonNimaRunSet implements FrameworkRunSet {
     private final JavaRunFactory javaRunFactory;
 
     public HelidonNimaRunSet(JavaRunFactory javaRunFactory) {

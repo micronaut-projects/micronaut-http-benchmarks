@@ -9,7 +9,4 @@ public record LoadVariant(
         @JsonIgnore
         RequestDefinition.SampleRequestDefinition definition
 ) {
-    public String getLoadName() {
-        return definition.getName();
-    }
 }

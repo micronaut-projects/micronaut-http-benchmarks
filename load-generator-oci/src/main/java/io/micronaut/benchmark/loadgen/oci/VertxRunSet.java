@@ -5,8 +5,11 @@ import jakarta.inject.Singleton;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * Runs of the {@code test-case-vertx} submodule.
+ */
 @Singleton
-public class VertxRunSet implements FrameworkRunSet {
+public final class VertxRunSet implements FrameworkRunSet {
     private final JavaRunFactory javaRunFactory;
 
     public VertxRunSet(JavaRunFactory javaRunFactory) {

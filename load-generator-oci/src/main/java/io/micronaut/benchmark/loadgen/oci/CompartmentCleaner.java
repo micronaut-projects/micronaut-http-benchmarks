@@ -44,6 +44,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
+/**
+ * This class deletes all resources in a compartment, before and after a benchmark.
+ */
 @Singleton
 public final class CompartmentCleaner {
     private static final Logger LOG = LoggerFactory.getLogger(CompartmentCleaner.class);
@@ -60,9 +63,17 @@ public final class CompartmentCleaner {
         this.compute = compute;
     }
 
+    /**
+     * Clean a compartment in a given region.
+     *
+     * @param location The compartment to clean
+     * @param delete If {@code true}, delete the compartment itself at the end of this method.
+     */
     public void cleanCompartment(OciLocation location, boolean delete) {
         String compartment = location.compartmentId();
         LOG.info("Cleaning compartment {} in region {}...", compartment, location.region());
+
+        // delete sub-compartments recursively
         Throttle.IDENTITY.takeUninterruptibly();
         identityClient.forRegion(location).listCompartments(ListCompartmentsRequest.builder()
                         .compartmentId(compartment)
@@ -72,6 +83,7 @@ public final class CompartmentCleaner {
                 .filter(c -> c.getLifecycleState() == Compartment.LifecycleState.Active)
                 .forEach(child -> cleanCompartment(new OciLocation(child.getId(), location.region(), location.availabilityDomain()), true));
 
+        // trigger deletion of compute instances
         Throttle.COMPUTE.takeUninterruptibly();
         for (Instance instance : list(
                 computeClient.forRegion(location)::listInstances,
@@ -88,6 +100,7 @@ public final class CompartmentCleaner {
             }
         }
 
+        // delete route tables
         Throttle.VCN.takeUninterruptibly();
         List<RouteTable> routeTables = list(
                 vcnClient.forRegion(location)::listRouteTables,
@@ -110,6 +123,7 @@ public final class CompartmentCleaner {
             }
         }
 
+        // wait for any compute instances to terminate before we can delete the subnets
         while (true) {
             Throttle.COMPUTE.takeUninterruptibly();
             List<Instance> instances = list(
@@ -139,6 +153,7 @@ public final class CompartmentCleaner {
             }
         }
 
+        // delete subnets
         Throttle.VCN.takeUninterruptibly();
         for (Subnet subnet : list(
                 vcnClient.forRegion(location)::listSubnets,
@@ -169,6 +184,7 @@ public final class CompartmentCleaner {
                 ListVcnsResponse::getItems
         );
 
+        // delete route tables
         for (RouteTable routeTable : routeTables) {
             if (vcns.stream().noneMatch(vcn -> vcn.getDefaultRouteTableId().equals(routeTable.getId()))) {
                 LOG.info("Deleting route table {}", routeTable.getDisplayName());
@@ -183,6 +199,7 @@ public final class CompartmentCleaner {
             }
         }
 
+        // delete internet gateways
         Throttle.VCN.takeUninterruptibly();
         for (InternetGateway ig : list(
                 vcnClient.forRegion(location)::listInternetGateways,
@@ -199,6 +216,7 @@ public final class CompartmentCleaner {
                     .build());
         }
 
+        // delete NAT gateways
         Throttle.VCN.takeUninterruptibly();
         for (NatGateway nat : list(
                 vcnClient.forRegion(location)::listNatGateways,
@@ -215,6 +233,7 @@ public final class CompartmentCleaner {
                     .build());
         }
 
+        // delete VCNs
         for (Vcn vcn : vcns) {
             LOG.info("Deleting VCN {}", vcn.getDisplayName());
             try {
@@ -228,6 +247,7 @@ public final class CompartmentCleaner {
         }
 
         if (delete) {
+            // delete compartment if requested
             LOG.info("Deleting compartment {}", compartment);
             Throttle.IDENTITY.takeUninterruptibly();
             identityClient.forRegion(location).deleteCompartment(DeleteCompartmentRequest.builder()

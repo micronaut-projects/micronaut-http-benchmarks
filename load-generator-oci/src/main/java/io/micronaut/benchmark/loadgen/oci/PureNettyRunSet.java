@@ -5,8 +5,11 @@ import jakarta.inject.Singleton;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * Runs of the {@code test-case-pure-netty} submodule.
+ */
 @Singleton
-public class PureNettyRunSet implements FrameworkRunSet {
+public final class PureNettyRunSet implements FrameworkRunSet {
     private final JavaRunFactory javaRunFactory;
 
     public PureNettyRunSet(JavaRunFactory javaRunFactory) {

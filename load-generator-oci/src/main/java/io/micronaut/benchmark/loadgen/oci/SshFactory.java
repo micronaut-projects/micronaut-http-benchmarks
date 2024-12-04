@@ -37,8 +37,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Factory class for SSH connections.
+ */
 @Singleton
-public class SshFactory {
+public final class SshFactory {
     private static final Logger LOG = LoggerFactory.getLogger(SshFactory.class);
 
     private final String publicKey;
@@ -85,6 +88,14 @@ public class SshFactory {
         return sshClient;
     }
 
+    /**
+     * Connect to the given compute instance.
+     *
+     * @param instance   The instance to connect to, if it hasn't started yet this method will block until it has
+     * @param instanceIp The instance's IP
+     * @param relay      Optional SSH relay to use for the connection
+     * @return The SSH connection
+     */
     public ClientSession connect(
             @Nullable Compute.Instance instance,
             String instanceIp,
@@ -137,6 +148,10 @@ public class SshFactory {
         scpClient.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", permissions, time);
     }
 
+    /**
+     * @param privateKeyLocation For debugging, the location of the private key to use. Do NOT use a valuable key here,
+     *                           as it will be copied to the SSH relay for hyperfoil controller remote control
+     */
     @ConfigurationProperties("ssh")
     public record SshConfiguration(@Nullable Path privateKeyLocation) {
     }

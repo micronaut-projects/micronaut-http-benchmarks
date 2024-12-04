@@ -39,20 +39,51 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Base class for a set of OCI resources that can be used to run benchmarks. This abstract class is responsible for the
+ * VCN, subnets, and the SSH relay server.
+ * <p>
+ * The basic idea is that we have a group of benchmark-related servers (controllers, servers-under-test, benchmarking
+ * agents) running in a private, protected subnet. There is also an SSH relay in a separate public subnet in the same
+ * VCN. The SSH relay is used as a jump host to connect to the other servers.
+ */
 public abstract class AbstractInfrastructure implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(AbstractInfrastructure.class);
 
+    /**
+     * Full VCN CIDR.
+     */
     private static final String NETWORK = "10.0.0.0/16";
+    /**
+     * Private subnet CIDR, for all servers except the SSH relay.
+     *
+     * @see #privateSubnetId
+     */
     private static final String PRIVATE_SUBNET = "10.0.0.0/18";
+    /**
+     * Public subnet CIDR, only the SSH relay lives here.
+     *
+     * @see #publicSubnetId
+     */
     private static final String RELAY_SUBNET = "10.0.254.0/24";
 
+    /**
+     * Location (compartment, region, AD) of this infrastructure.
+     */
     protected final OciLocation location;
+    /**
+     * Infrastructure log directory.
+     */
     protected final Path logDirectory;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
     private final RegionalClient<ComputeClient> computeClient;
     private final Compute compute;
 
     private String publicSubnetId;
+    /**
+     * Subnet for all benchmark-related servers. Not internet-accessible, all transfers must happen through the SSH
+     * relay.
+     */
     protected String privateSubnetId;
     private String privateRouteTable;
     private String publicRouteTable;
@@ -179,6 +210,11 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                 .launch();
     }
 
+    /**
+     * Lazily create the SSH relay. This method will block until the relay is available. Not thread-safe.
+     *
+     * @return The SSH relay
+     */
     protected final SshFactory.Relay relay() throws Exception {
         if (relay == null) {
             relayServerInstance.awaitStartup();

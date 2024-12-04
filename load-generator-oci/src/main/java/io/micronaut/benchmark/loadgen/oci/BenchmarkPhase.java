@@ -1,5 +1,8 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+/**
+ * Phases, for rough progress logging.
+ */
 public enum BenchmarkPhase {
     BEFORE,
     CREATING_VCN,

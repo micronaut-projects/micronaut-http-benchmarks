@@ -13,16 +13,25 @@ import java.util.stream.IntStream;
 public final class SshUtil {
     private SshUtil() {}
 
+    /**
+     * Forward stdout/err output to the given listeners.
+     */
     public static void forwardOutput(ChannelExec command, OutputListener... listeners) throws IOException {
         OutputListener.Stream stream = new OutputListener.Stream(List.of(listeners));
         command.setOut(stream);
         command.setErr(stream);
     }
 
+    /**
+     * Join a given command and make sure it exits with status 0.
+     */
     public static void joinAndCheck(ChannelExec cmd) throws IOException {
         joinAndCheck(cmd, 0);
     }
 
+    /**
+     * Join a given command and make sure it exits with one of the given statuses.
+     */
     public static void joinAndCheck(ChannelExec cmd, int... expectedStatus) throws IOException {
         cmd.waitFor(ClientSession.REMOTE_COMMAND_WAIT_EVENTS, 0);
         if (cmd.getExitSignal() != null) {
@@ -33,6 +42,9 @@ public final class SshUtil {
         }
     }
 
+    /**
+     * Open the firewall ports on the given machine using {@code main.nft}.
+     */
     public static void openFirewallPorts(ClientSession benchmarkServerClient, OutputListener... log) throws IOException {
         try (ChannelExec session = benchmarkServerClient.createExecChannel("sudo tee /etc/nftables/main.nft");
              InputStream nft = Infrastructure.class.getResourceAsStream("/main.nft")) {
@@ -44,11 +56,24 @@ public final class SshUtil {
         run(benchmarkServerClient, "sudo systemctl restart nftables", log);
     }
 
-
+    /**
+     * Run the given command and wait until it completes.
+     *
+     * @param client  The client to run the command on
+     * @param command The command
+     * @param log     Loggers for the output
+     */
     public static void run(ClientSession client, String command, OutputListener log) throws IOException {
         run(client, command, new OutputListener[]{log});
     }
 
+    /**
+     * Run the given command and wait until it completes.
+     *
+     * @param client  The client to run the command on
+     * @param command The command
+     * @param log     Loggers for the output
+     */
     public static void run(ClientSession client, String command, OutputListener... log) throws IOException {
         try (ChannelExec chan = client.createExecChannel(command)) {
             forwardOutput(chan, log);
@@ -57,6 +82,14 @@ public final class SshUtil {
         }
     }
 
+    /**
+     * Run the given command and wait until it completes.
+     *
+     * @param client        The client to run the command on
+     * @param command       The command
+     * @param log           Loggers for the output
+     * @param allowedStatus Allowed exit statuses
+     */
     public static void run(ClientSession client, String command, OutputListener log, int... allowedStatus) throws IOException {
         try (ChannelExec chan = client.createExecChannel(command)) {
             forwardOutput(chan, log);
@@ -65,10 +98,16 @@ public final class SshUtil {
         }
     }
 
+    /**
+     * Send a SIGINT to the given command.
+     */
     public static void interrupt(ChannelExec cmd) throws IOException {
         signal(cmd, "INT");
     }
 
+    /**
+     * Send a signal to the given command.
+     */
     public static void signal(ChannelExec cmd, String signal) throws IOException {
         Buffer buffer = cmd.getSession().createBuffer(SshConstants.SSH_MSG_CHANNEL_REQUEST, 0);
         buffer.putInt(cmd.getRecipient());

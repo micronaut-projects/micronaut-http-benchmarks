@@ -36,6 +36,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
+/**
+ * SSH port forwarder that re-establishes the forwarded connection if it dies.
+ */
 public final class ResilientSshPortForwarder implements Closeable {
     private static final Logger LOG = LoggerFactory.getLogger(ResilientSshPortForwarder.class);
 
@@ -213,7 +216,7 @@ public final class ResilientSshPortForwarder implements Closeable {
     }
 
     @Singleton
-    public static class Factory {
+    public static final class Factory {
         private final EventLoop loop;
         private final Executor blocking;
 

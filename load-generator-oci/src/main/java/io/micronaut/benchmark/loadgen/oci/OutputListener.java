@@ -15,17 +15,27 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Listener for SSH command output.
+ */
 public interface OutputListener {
     void onData(ByteBuffer data);
 
     void onComplete();
 
+    /**
+     * This listener waits until a given output is found. This is used to wait for the 'startup complete' log message
+     * of different frameworks.
+     */
     class Waiter implements OutputListener {
         private final Lock lock = new ReentrantLock();
         private final Condition foundCondition = lock.newCondition();
         private ByteBuffer pattern;
         private boolean done = false;
 
+        /**
+         * @param initialPattern The initial pattern to look for
+         */
         public Waiter(ByteBuffer initialPattern) {
             this.pattern = initialPattern;
         }
@@ -60,6 +70,12 @@ public interface OutputListener {
             }
         }
 
+        /**
+         * Wait for the last defined pattern to occur in the output (or the {@code initialPattern} if this method was
+         * not called before).
+         *
+         * @param nextPattern The next pattern to look for, or {@code null} to stop looking
+         */
         public void awaitWithNextPattern(ByteBuffer nextPattern) {
             lock.lock();
             try {
@@ -76,6 +92,9 @@ public interface OutputListener {
         }
     }
 
+    /**
+     * A listener that writes all input data to a file.
+     */
     class Write implements OutputListener, Closeable {
         private static final Logger LOG = LoggerFactory.getLogger(Write.class);
 
@@ -113,6 +132,9 @@ public interface OutputListener {
         }
     }
 
+    /**
+     * An {@link OutputStream} that forwards the output to a number of {@link OutputListener}s.
+     */
     class Stream extends OutputStream {
         private final List<OutputListener> listeners;
 
@@ -121,19 +143,19 @@ public interface OutputListener {
         }
 
         @Override
-        public void write(int b) throws IOException {
+        public void write(int b) {
             write(new byte[] {(byte) b}, 0, 1);
         }
 
         @Override
-        public void write(byte[] b, int off, int len) throws IOException {
+        public void write(byte[] b, int off, int len) {
             for (OutputListener listener : listeners) {
                 listener.onData(ByteBuffer.wrap(b, off, len));
             }
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             for (OutputListener listener : listeners) {
                 listener.onComplete();
             }

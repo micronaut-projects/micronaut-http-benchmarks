@@ -13,8 +13,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
+/**
+ * Infrastructure for hyperfoil benchmarks, with a single server-under-test, and a hyperfoil cluster sending HTTP
+ * requests to it.
+ */
 @Singleton
-public class Infrastructure extends AbstractInfrastructure {
+public final class Infrastructure extends AbstractInfrastructure {
     private static final Logger LOG = LoggerFactory.getLogger(Infrastructure.class);
 
     static final String SERVER_IP = "10.0.0.2";
@@ -79,6 +83,15 @@ public class Infrastructure extends AbstractInfrastructure {
         super.close();
     }
 
+    /**
+     * Run the given benchmark on this infrastructure. This method is synchronized, so if multiple benchmarks call
+     * this simultaneously, the infrastructure will run them one-by-one.
+     *
+     * @param outputDirectory The benchmark output directory
+     * @param run             The framework configuration to run
+     * @param loadVariant     The benchmark load (HTTP protocol settings, request info)
+     * @param progress        Progress updater
+     */
     public synchronized void run(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, PhaseTracker.PhaseUpdater progress) throws Exception {
         if (stopped) {
             throw new InterruptedException("Already stopped");

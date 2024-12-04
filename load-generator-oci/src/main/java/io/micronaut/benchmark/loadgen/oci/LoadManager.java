@@ -7,19 +7,21 @@ import jakarta.inject.Singleton;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * Computes different {@link LoadVariant}s based on configuration, e.g. different HTTP protocols to test and different
+ * requests to make.
+ */
 @Singleton
-public class LoadManager {
+public final class LoadManager {
     private final LoadConfiguration loadConfiguration;
 
-    public LoadManager(LoadConfiguration loadConfiguration) {
+    LoadManager(LoadConfiguration loadConfiguration) {
         this.loadConfiguration = loadConfiguration;
     }
 
     public List<LoadVariant> getLoadVariants() {
         return loadConfiguration.documents.stream()
-                .flatMap(doc -> {
-                    return loadConfiguration.protocols.stream().map(prot -> new LoadVariant(loadName(prot.protocol(), doc), prot, doc));
-                })
+                .flatMap(doc -> loadConfiguration.protocols.stream().map(prot -> new LoadVariant(loadName(prot.protocol(), doc), prot, doc)))
                 .toList();
     }
 

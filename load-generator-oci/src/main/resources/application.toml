@@ -46,7 +46,7 @@ availability-domain="hkYI:AP-MELBOURNE-1-AD-1"
 #compile-ops=25
 #shared-connections=10000
 #pipelining-limit=1
-#ops=[2000, 8000, 32000, 64000, 80000, 96000, 112000, 128000, 256000, 512000]
+#ops=[2000, 8000, 16000, 32000, 64000, 96000, 128000, 160000, 192000, 256000]
 
 #[[load.protocols]]
 #protocol="HTTPS1"
@@ -72,6 +72,7 @@ response-body='{"listIndex":3,"stringIndex":2}'
 
 # configuration for the hyperfoil cluster
 [hyperfoil]
+location="/home/yawkat/bin/hyperfoil-0.27"
 agent-count=8
 
 warmup-duration="1m"

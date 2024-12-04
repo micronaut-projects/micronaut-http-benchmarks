@@ -3,7 +3,10 @@ package io.micronaut.benchmark.loadgen.oci;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
-public class Throttle {
+/**
+ * Throttles for OCI API endpoints.
+ */
+public final class Throttle {
     public static final Throttle IDENTITY = new Throttle(Duration.ofSeconds(5));
     public static final Throttle COMPUTE = new Throttle(Duration.ofSeconds(1));
     public static final Throttle VCN = new Throttle(Duration.ofMillis(500));

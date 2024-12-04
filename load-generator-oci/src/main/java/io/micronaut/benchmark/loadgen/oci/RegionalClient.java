@@ -11,12 +11,17 @@ import jakarta.inject.Singleton;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * OCI clients that are region-specific (compute, VCN, identity).
+ *
+ * @param <C> The OCI client class
+ */
 public interface RegionalClient<C> {
     C forRegion(OciLocation location);
 
     @Factory
     @Singleton
-    class RegionalFactory {
+    final class RegionalFactory {
         private final AbstractAuthenticationDetailsProvider authenticationDetailsProvider;
 
         RegionalFactory(AbstractAuthenticationDetailsProvider authenticationDetailsProvider) {

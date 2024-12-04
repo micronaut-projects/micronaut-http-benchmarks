@@ -1,14 +1,13 @@
 #!/usr/bin/python3
 import json
 import math
-import typing
-
 import matplotlib.axes
 import matplotlib.axis
 import matplotlib.patches
 import matplotlib.pyplot as plt
 import matplotlib.scale
 import numpy as np
+import typing
 
 
 def percentile_transform(values):
@@ -166,6 +165,7 @@ def main():
     discriminator_properties = [("type",), ("parameters", "compileConfiguration", "micronaut"), ("parameters", "compileConfiguration", "json"), ("parameters", "compileConfiguration", "transport"), ("parameters", "compileConfiguration", "tcnative")]
     filter_properties = {
         #("type",): "mn-hotspot"
+        #("load", "protocol"): "HTTPS2"
     }
     combine_runs = True
     mode = MODE_HISTOGRAM
@@ -208,7 +208,7 @@ def main():
         discriminator_tuple = get_discriminator_tuple(run)
         if discriminator_tuple not in discriminated:
             discriminated.append(discriminator_tuple)
-        max_time = 0.5*10**6
+        max_time = 10*10**6
         max_percentile = 0.999
         print(min_time, max_time)
     colors_by_discriminator = {d: f'C{i}' for i, d in enumerate(discriminated)}
@@ -228,7 +228,7 @@ def main():
             ax.set_xscale("function", functions=(percentile_transform, percentile_transform_reverse))
             ax.set_xticks(percentile_ticks, [str(p) for p in percentile_ticks])
             ax.set_xlim(0, max_percentile)
-            #ax.set_yscale("log")
+            ax.set_yscale("log")
             ax.set_ylabel("Request time")
             ax.yaxis.set_major_formatter(lambda ns, _: ns_to_str(ns))
             ax.set_ylim(min_time, max_time)
@@ -281,7 +281,7 @@ def main():
             if any_shown:
                 ax.set_title(f"{ops} ops/s")
 
-                ax.axvline(0.5)
+                ax.axvline(0.5, color='grey', linestyle=':')
                 if phase_i == 0:
                     ax.legend(handles=[
                                           matplotlib.patches.Patch(color=v, label=" ".join(map(str, k)))

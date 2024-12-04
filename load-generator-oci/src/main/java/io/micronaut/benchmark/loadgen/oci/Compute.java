@@ -26,8 +26,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/**
+ * This class handles provisioning of compute instances (VMs) according to configured instance settings.
+ */
 @Singleton
-public class Compute {
+public final class Compute {
     private static final Logger LOG = LoggerFactory.getLogger(Compute.class);
 
     private final ComputeConfiguration computeConfiguration;
@@ -50,26 +53,36 @@ public class Compute {
                 .build()).getItems());
     }
 
+    /**
+     * Builder for a new compute instance.
+     *
+     * @param instanceType The instance type. This is used as key for the {@link ComputeConfiguration.InstanceType}
+     *                     config to select
+     * @param location     The location where to create the instance
+     * @param subnetId     Subnet for the instance VNIC
+     * @return The instance builder
+     */
     public Launch builder(String instanceType, OciLocation location, String subnetId) {
         return new Launch(instanceType, getInstanceType(instanceType), location, subnetId);
     }
 
-    public int getCoreCount(String instanceType) {
-        return (int) getInstanceType(instanceType).ocpus;
-    }
-
+    /**
+     * Get the instance configuration.
+     *
+     * @param instanceType The instance type config key
+     * @return The configuration
+     */
     public ComputeConfiguration.InstanceType getInstanceType(String instanceType) {
         return instanceTypes.get(instanceType);
     }
 
-    public class Launch {
+    public final class Launch {
         private final String displayName;
         private final ComputeConfiguration.InstanceType instanceType;
         private final OciLocation location;
         private final String subnetId;
         private String privateIp = null;
         private boolean publicIp = false;
-        private String publicKey = sshFactory.publicKey();
 
         private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, String subnetId) {
             this.displayName = displayName;
@@ -78,21 +91,33 @@ public class Compute {
             this.subnetId = subnetId;
         }
 
+        /**
+         * Set the private IP within the subnet.
+         *
+         * @param privateIp The IP
+         * @return This builder
+         */
         public Launch privateIp(String privateIp) {
             this.privateIp = privateIp;
             return this;
         }
 
+        /**
+         * Assign a public IP to this server.
+         *
+         * @param publicIp Whether to assign a public IP
+         * @return This builder
+         */
         public Launch publicIp(boolean publicIp) {
             this.publicIp = publicIp;
             return this;
         }
 
-        public Launch publicKey(String publicKey) {
-            this.publicKey = publicKey;
-            return this;
-        }
-
+        /**
+         * Create this instance. Note that it is not started immediately, it takes some time.
+         *
+         * @return The instance
+         */
         public Instance launch() throws InterruptedException {
             CreateVnicDetails.Builder vnicDetails = CreateVnicDetails.builder()
                     .subnetId(subnetId)
@@ -122,7 +147,7 @@ public class Compute {
                                     .imageId(image.getId())
                                     .metadata(Map.of(
                                             "ssh_authorized_keys",
-                                            Stream.concat(computeConfiguration.debugAuthorizedKeys.stream(), Stream.of(publicKey))
+                                            Stream.concat(computeConfiguration.debugAuthorizedKeys.stream(), Stream.of(sshFactory.publicKey()))
                                                     .collect(Collectors.joining("\n"))
                                     ))
                                     .launchOptions(LaunchOptions.builder()
@@ -143,7 +168,10 @@ public class Compute {
         }
     }
 
-    public class Instance implements AutoCloseable {
+    /**
+     * A compute instance.
+     */
+    public final class Instance implements AutoCloseable {
         private final OciLocation location;
         final String id;
 
@@ -187,6 +215,9 @@ public class Compute {
             }
         }
 
+        /**
+         * Block while this instance is starting.
+         */
         public void awaitStartup() throws InterruptedException {
             while (true) {
                 if (checkStarted()) {
@@ -196,6 +227,9 @@ public class Compute {
             }
         }
 
+        /**
+         * Trigger termination of this instance, asynchronously.
+         */
         public synchronized void terminateAsync() {
             LOG.info("Terminating compute instance {}", id);
             while (true) {
@@ -222,6 +256,10 @@ public class Compute {
             terminating = true;
         }
 
+        /**
+         * Terminate this instance and wait for it to shut down. The caller <i>should</i> call
+         * {@link #terminateAsync()} before this.
+         */
         @Override
         public synchronized void close() {
             if (!terminating) {
@@ -249,12 +287,24 @@ public class Compute {
         }
     }
 
+    /**
+     * @param instanceTypes       Instance types
+     * @param debugAuthorizedKeys Additional SSH keys to add to each instance for debugging
+     */
     @ConfigurationProperties("compute")
     public record ComputeConfiguration(
             List<InstanceType> instanceTypes,
             List<String> debugAuthorizedKeys
     ) {
 
+        /**
+         * An instance type.
+         *
+         * @param shape OCI shape
+         * @param ocpus Number of cores
+         * @param memoryInGb Memory in GB
+         * @param image OS image name
+         */
         @EachProperty("instance-types")
         public record InstanceType(
                 String shape,
