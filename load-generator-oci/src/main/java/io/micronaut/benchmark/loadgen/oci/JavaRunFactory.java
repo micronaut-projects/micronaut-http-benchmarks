@@ -5,17 +5,27 @@ import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import org.apache.sshd.client.channel.ChannelExec;
 import org.apache.sshd.client.session.ClientSession;
+import org.apache.sshd.scp.client.ScpClient;
 import org.apache.sshd.scp.client.ScpClientCreator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Collection;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.zip.ZipOutputStream;
 
 /**
  * Factory for {@link FrameworkRun}s that use a {@code java} command to run a shadow jar. This class handles things
@@ -25,6 +35,7 @@ import java.util.stream.Stream;
 public final class JavaRunFactory {
     private static final Logger LOG = LoggerFactory.getLogger(JavaRunFactory.class);
     private static final String SHADOW_JAR_LOCATION = "shadow.jar";
+    private static final String CLASSPATH_LOCATION = "classpath";
     private static final String PROFILER_LOCATION = "/tmp/libasyncProfiler.so";
 
     private final HotspotConfiguration hotspotConfiguration;
@@ -59,6 +70,9 @@ public final class JavaRunFactory {
     public final class RunBuilder {
         private final String typePrefix;
         private Path shadowJar;
+        private Collection<Path> classpath;
+        private String mainClass;
+        private String additionalJvmArgs;
         @Nullable
         private String configString;
         @Nullable
@@ -81,6 +95,28 @@ public final class JavaRunFactory {
                 throw new IllegalArgumentException("File does not exist: " + shadowJar);
             }
             this.shadowJar = shadowJar;
+            this.classpath = null;
+            this.mainClass = null;
+            return this;
+        }
+
+        /**
+         * Classpath and main class to run.
+         */
+        public RunBuilder classPath(Collection<Path> items, String mainClass) {
+            for (Path item : items) {
+                if (!Files.exists(item)) {
+                    throw new IllegalArgumentException("File does not exist: " + item);
+                }
+            }
+            this.classpath = items;
+            this.mainClass = mainClass;
+            this.shadowJar = null;
+            return this;
+        }
+
+        public RunBuilder additionalJvmArgs(String additionalJvmArgs) {
+            this.additionalJvmArgs = additionalJvmArgs;
             return this;
         }
 
@@ -117,6 +153,57 @@ public final class JavaRunFactory {
             return this;
         }
 
+        private void uploadClasspath(ClientSession benchmarkServerClient, OutputListener.Write log) throws IOException {
+            ScpClient scpClient = ScpClientCreator.instance().createScpClient(benchmarkServerClient);
+            if (shadowJar != null) {
+                scpClient.upload(shadowJar, SHADOW_JAR_LOCATION);
+            } else {
+                Path tmp = Files.createTempFile("micronaut-benchmark-JavaRunFactory-classpath", ".zip");
+                try {
+                    log.println("Zipping classpath");
+                    new ZipOutputStream(Files.newOutputStream(tmp)).close();
+                    try (FileSystem fs = FileSystems.newFileSystem(tmp)) {
+                        Path dest = fs.getPath(CLASSPATH_LOCATION);
+                        Files.createDirectory(dest);
+                        for (Path path : classpath) {
+                            Path d = dest.resolve(path.getFileName().toString());
+                            Files.walkFileTree(path, new SimpleFileVisitor<>() {
+                                @Override
+                                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                                    Files.createDirectory(d.resolve(path.relativize(dir).toString()));
+                                    return FileVisitResult.CONTINUE;
+                                }
+
+                                @Override
+                                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                                    Files.copy(file, d.resolve(path.relativize(file).toString()));
+                                    return FileVisitResult.CONTINUE;
+                                }
+                            });
+                        }
+                    }
+                    log.println("Uploading classpath");
+                    scpClient.upload(tmp, "classpath.zip");
+                    SshUtil.run(benchmarkServerClient, "rm -rf " + CLASSPATH_LOCATION, log);
+                    SshUtil.run(benchmarkServerClient, "unzip classpath.zip", log);
+                } finally {
+                    Files.delete(tmp);
+                }
+            }
+        }
+
+        private String jarArgument() {
+            if (shadowJar != null) {
+                return "-jar " + SHADOW_JAR_LOCATION;
+            } else {
+                return "-cp " +
+                        classpath.stream()
+                                .map(p -> CLASSPATH_LOCATION + "/" + p.getFileName())
+                                .collect(Collectors.joining(":"))
+                        + " " + mainClass;
+            }
+        }
+
         /**
          * Build the runs for this jar. This returns multiple runs if multiple different JVM flag choices are
          * configured, and for native-image.
@@ -151,8 +238,7 @@ public final class JavaRunFactory {
                             progress.update(BenchmarkPhase.INSTALLING_SOFTWARE);
                             SshUtil.run(benchmarkServerClient, "sudo yum install jdk-" + hotspotConfiguration.version() + "-headless -y", log, 0, 1);
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
-                            ScpClientCreator.instance().createScpClient(benchmarkServerClient)
-                                    .upload(shadowJar, SHADOW_JAR_LOCATION);
+                            uploadClasspath(benchmarkServerClient, log);
                             String start = perfStatConfiguration.asCommandPrefix() + "java ";
                             if (asyncProfilerConfiguration.enabled()) {
                                 SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.perf_event_paranoid=1", log);
@@ -162,7 +248,8 @@ public final class JavaRunFactory {
                                 start += "-agentpath:" + PROFILER_LOCATION + "=" + asyncProfilerConfiguration.args() + " ";
                             }
                             LOG.info("Starting benchmark server (hotspot, " + typePrefix + ")");
-                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(start + combinedOptions() + " -jar " + SHADOW_JAR_LOCATION + (args == null ? "" : " " + args))) {
+                            String c = start + combinedOptions() + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs) + " " + jarArgument() + (args == null ? "" : " " + args);
+                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(c)) {
                                 OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
                                 SshUtil.forwardOutput(cmd, log, waiter);
                                 cmd.open().verify();
@@ -213,11 +300,10 @@ public final class JavaRunFactory {
                             SshUtil.run(benchmarkServerClient, "sudo yum config-manager --set-enabled ol9_codeready_builder", log, 0, 1);
                             SshUtil.run(benchmarkServerClient, "sudo yum install graalvm-" + nativeImageConfiguration.version() + "-native-image -y", log, 0, 1);
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
-                            ScpClientCreator.instance().createScpClient(benchmarkServerClient)
-                                    .upload(shadowJar, SHADOW_JAR_LOCATION);
+                            uploadClasspath(benchmarkServerClient, log);
                             progress.update(BenchmarkPhase.BUILDING_PGO_IMAGE);
-                            String niCommandBase = "native-image --no-fallback " + nativeImageOptions + " " + additionalNativeImageOptions;
-                            SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo-instrument -jar " + SHADOW_JAR_LOCATION + " pgo-instrument", log);
+                            String niCommandBase = "native-image --no-fallback " + nativeImageOptions + " " + additionalNativeImageOptions + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs);
+                            SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo-instrument " + jarArgument() + " pgo-instrument", log);
                             LOG.info("Starting benchmark server for PGO (native, micronaut)");
                             try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./pgo-instrument" + (args == null ? "" : " " + args))) {
                                 OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
@@ -233,7 +319,7 @@ public final class JavaRunFactory {
                                 }
                             }
                             progress.update(BenchmarkPhase.BUILDING_IMAGE);
-                            SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo -jar " + SHADOW_JAR_LOCATION + " optimized", log);
+                            SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo " + jarArgument() + " optimized", log);
                             LOG.info("Starting benchmark server (native, " + typePrefix + ")");
                             try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./optimized" + (args == null ? "" : " " + args))) {
                                 OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
