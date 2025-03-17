@@ -353,10 +353,11 @@ public final class HyperfoilRunner implements AutoCloseable {
         BenchmarkBuilder benchmark = BenchmarkBuilder.builder()
                 .name(name)
                 .failurePolicy(Benchmark.FailurePolicy.CANCEL);
+        Compute.ComputeConfiguration.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
         for (int i = 0; i < factory.config.agentCount; i++) {
             benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
-                    "threads", String.valueOf((int) factory.compute.getInstanceType(AGENT_INSTANCE_TYPE).ocpus()),
-                    "extras", "-XX:+UseG1GC -XX:MaxGCPauseMillis=50"
+                    "threads", String.valueOf((int) agentInstanceType.ocpus() - 1),
+                    "extras", "-XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G"
             ));
         }
 
