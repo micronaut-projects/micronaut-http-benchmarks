@@ -13,12 +13,14 @@ import io.hyperfoil.controller.model.RequestStatisticsResponse;
 import io.hyperfoil.controller.model.RequestStats;
 import io.hyperfoil.core.util.ConstantBytesGenerator;
 import io.hyperfoil.http.config.ConnectionStrategy;
+import io.hyperfoil.http.config.HttpBuilder;
 import io.hyperfoil.http.config.HttpPluginBuilder;
 import io.hyperfoil.http.statistics.HttpStats;
 import io.hyperfoil.http.steps.HttpStepCatalog;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.scheduling.TaskExecutors;
+import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClosedException;
 import jakarta.inject.Named;
@@ -37,9 +39,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -90,6 +98,9 @@ public final class HyperfoilRunner implements AutoCloseable {
     private ClientSession controllerSession;
     private final CompletableFuture<ResilientSshPortForwarder> controllerPortForward = new CompletableFuture<>();
 
+    private final X509Certificate mtlsCert;
+    private final PrivateKey mtlsKey;
+
     static {
         // 30s is too short for agent log download
         System.setProperty("io.hyperfoil.cli.request.timeout", "60000");
@@ -115,6 +126,15 @@ public final class HyperfoilRunner implements AutoCloseable {
             terminate.complete(null);
             return null;
         }));
+        if (factory.config.mtls) {
+            SelfSignedCertificate ssc = new SelfSignedCertificate();
+            mtlsCert = ssc.cert();
+            mtlsKey = ssc.key();
+            ssc.delete();
+        } else {
+            mtlsCert = null;
+            mtlsKey = null;
+        }
     }
 
     private HyperfoilInstances createInstances(OciLocation location, String privateSubnetId) throws Exception {
@@ -265,11 +285,25 @@ public final class HyperfoilRunner implements AutoCloseable {
             }
         };
     }
+    
+    private static byte[] pem(String type, byte[] der) {
+        return ("-----BEGIN " + type + "-----\n" + Base64.getEncoder().encodeToString(der) + "\n-----END " + type + "-----").getBytes(StandardCharsets.UTF_8);
+    }
 
-    private static String createCurlCommand(Protocol protocol, RequestDefinition definition, String socketUri, boolean verbose) {
+    private String createCurlCommand(Protocol protocol, RequestDefinition definition, String socketUri, boolean verbose) throws CertificateEncodingException {
         StringBuilder builder = new StringBuilder("curl");
         builder.append(protocol == Protocol.HTTP1 ? " --http1.1" : " --http2");
         builder.append(" --insecure");
+        if (mtlsCert != null) {
+            builder.append(" --cert <(echo '");
+            builder.append(Base64.getEncoder().encodeToString(pem("CERTIFICATE", mtlsCert.getEncoded())));
+            builder.append("' | base64 -d)");
+        }
+        if (mtlsKey != null) {
+            builder.append(" --key <(echo '");
+            builder.append(Base64.getEncoder().encodeToString(pem("PRIVATE KEY", mtlsKey.getEncoded())));
+            builder.append("' | base64 -d)");
+        }
         builder.append(verbose ? " -v" : " --silent");
         builder.append(" -X ").append(definition.getMethod().name());
         builder.append(" --request-target '").append(definition.getUri()).append("'");
@@ -326,7 +360,7 @@ public final class HyperfoilRunner implements AutoCloseable {
             ));
         }
 
-        benchmark.addPlugin(HttpPluginBuilder::new)
+        HttpBuilder httpBuilder = benchmark.addPlugin(HttpPluginBuilder::new)
                 .http()
                 .protocol(prot)
                 .host(ip)
@@ -337,6 +371,17 @@ public final class HyperfoilRunner implements AutoCloseable {
                 .connectionStrategy(ConnectionStrategy.SHARED_POOL)
                 .pipeliningLimit(protocol.pipeliningLimit())
                 .maxHttp2Streams(protocol.maxHttp2Streams());
+
+        if (mtlsCert != null) {
+            KeyStore ks = KeyStore.getInstance("PKCS12");
+            ks.load(null, null);
+            ks.setKeyEntry("default", mtlsKey, "".toCharArray(), new Certificate[]{mtlsCert});
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ks.store(baos, "".toCharArray());
+            httpBuilder.keyManager()
+                    .storeBytes(baos.toByteArray())
+                    .password("");
+        }
 
         List<String> phaseNames = new ArrayList<>();
         if (!forPgo) {
@@ -525,7 +570,8 @@ public final class HyperfoilRunner implements AutoCloseable {
             Duration benchmarkDuration,
             Duration pgoDuration,
             double sessionLimitFactor,
-            List<StatusRequest> status
+            List<StatusRequest> status,
+            boolean mtls
     ) {
         @EachProperty(value = "status", list = true)
         interface StatusRequest extends RequestDefinition, io.micronaut.core.naming.Named {
