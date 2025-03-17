@@ -53,6 +53,7 @@ public final class SshUtil {
             session.open().await();
             joinAndCheck(session);
         }
+        run(benchmarkServerClient, "sudo systemctl stop firewalld", log);
         run(benchmarkServerClient, "sudo systemctl restart nftables", log);
     }
 
