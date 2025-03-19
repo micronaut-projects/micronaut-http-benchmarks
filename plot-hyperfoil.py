@@ -29,13 +29,23 @@ assert math.isclose(percentile_transform_reverse(3), 0.999)
 
 
 def generate_percentile_ticks(limit):
-    i = 0
+    yield 0.5
+    i = 1
     while True:
         percentile = percentile_transform_reverse(i)
         yield percentile
         if percentile >= limit:
             break
         i += 1
+
+
+def percentile_name(percentile):
+    percentile *= 100
+    if (percentile % 1) == 0:
+        s = str(int(percentile))
+    else:
+        s = str(percentile)
+    return "P" + s
 
 
 
@@ -226,7 +236,8 @@ def main():
             ax: matplotlib.axes.Axes = axs[phase_i // len(axs[0])][phase_i % len(axs[0])]
             percentile_ticks = list(generate_percentile_ticks(max_percentile))
             ax.set_xscale("function", functions=(percentile_transform, percentile_transform_reverse))
-            ax.set_xticks(percentile_ticks, [str(p) for p in percentile_ticks])
+            ax.set_xticks(percentile_ticks, [percentile_name(p) for p in percentile_ticks])
+            ax.grid(axis="x", linestyle=":", color="grey")
             ax.set_xlim(0, max_percentile)
             ax.set_yscale("log")
             ax.set_ylabel("Request time")
@@ -281,7 +292,6 @@ def main():
             if any_shown:
                 ax.set_title(f"{ops} ops/s")
 
-                ax.axvline(0.5, color='grey', linestyle=':')
                 if phase_i == 0:
                     ax.legend(handles=[
                                           matplotlib.patches.Patch(color=v, label=" ".join(map(str, k)))
