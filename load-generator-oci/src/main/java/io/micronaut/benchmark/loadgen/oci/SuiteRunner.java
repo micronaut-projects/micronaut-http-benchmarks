@@ -99,7 +99,14 @@ public final class SuiteRunner {
                     }
                     for (LoadVariant loadVariant : loadVariants) {
                         String name = run.name() + "-" + loadVariant.name() + "-" + repetition;
-                        index.add(new BenchmarkParameters(name, run.type(), run.parameters(), loadVariant, repetition));
+                        index.add(new BenchmarkParameters(
+                                name,
+                                run.type(),
+                                run.parameters(),
+                                loadVariant,
+                                repetition,
+                                infraFactory.compute().getInstanceType(Infrastructure.BENCHMARK_SERVER_INSTANCE_TYPE)
+                        ));
                         PhaseTracker.PhaseUpdater phaseUpdater = phaseTracker.updater(name);
                         phaseUpdater.update(BenchmarkPhase.BEFORE);
                         Path out = outputDir.resolve(name);
@@ -217,7 +224,8 @@ public final class SuiteRunner {
             String type,
             Object parameters,
             LoadVariant load,
-            int repetition
+            int repetition,
+            Compute.ComputeConfiguration.InstanceType sutSpecs
     ) {
     }
 }

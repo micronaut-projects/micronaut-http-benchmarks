@@ -22,6 +22,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private static final Logger LOG = LoggerFactory.getLogger(Infrastructure.class);
 
     static final String SERVER_IP = "10.0.0.2";
+    static final String BENCHMARK_SERVER_INSTANCE_TYPE = "benchmark-server";
 
     private final Factory factory;
 
@@ -39,7 +40,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private void start(PhaseTracker.PhaseUpdater progress) throws Exception {
         setupBase(progress);
 
-        benchmarkServer = factory.compute.builder("benchmark-server", location, privateSubnetId)
+        benchmarkServer = factory.compute.builder(BENCHMARK_SERVER_INSTANCE_TYPE, location, privateSubnetId)
                 .privateIp(SERVER_IP)
                 .launch();
         hyperfoilRunner = factory.hyperfoilRunnerFactory.launch(logDirectory, location, privateSubnetId);
