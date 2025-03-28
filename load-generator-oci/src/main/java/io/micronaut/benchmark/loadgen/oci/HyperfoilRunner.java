@@ -83,6 +83,7 @@ public final class HyperfoilRunner implements AutoCloseable {
      * {@link Compute} instance type name for hyperfoil agents.
      */
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
+    private static final String PROFILER_LOCATION = "/tmp/libasyncProfiler.so";
 
     private final Factory factory;
     private final CompletableFuture<SshFactory.Relay> relay = new CompletableFuture<>();
@@ -201,6 +202,12 @@ public final class HyperfoilRunner implements AutoCloseable {
                     try (ClientSession agentSession = factory.sshFactory.connect(agent, agentIp, relay)) {
                         SshUtil.openFirewallPorts(agentSession);
                         SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
+                        if (factory.config.agentAsyncProfiler) {
+                            SshUtil.run(agentSession, "sudo sysctl kernel.perf_event_paranoid=1", log);
+                            SshUtil.run(agentSession, "sudo sysctl kernel.kptr_restrict=0", log);
+                            ScpClientCreator.instance().createScpClient(agentSession)
+                                    .upload(factory.asyncProfilerConfiguration.path(), PROFILER_LOCATION);
+                        }
                     }
                     return null;
                 });
@@ -252,6 +259,20 @@ public final class HyperfoilRunner implements AutoCloseable {
             } finally {
                 this.controllerSession = null;
                 LOG.info("Closing benchmark client");
+
+                if (factory.config.agentAsyncProfiler) {
+                    for (int i = 0; i < instances.agents.size(); i++) {
+                        try (ClientSession agentSession = factory.sshFactory.connect(null, agentIp(i), relay)) {
+                            LOG.info("Downloading agent {} profiler result", i);
+                            for (String output : factory.asyncProfilerConfiguration.outputs()) {
+                                ScpClientCreator.instance().createScpClient(agentSession)
+                                        .download(output, logDirectory.resolve("agent" + i + "-" + output));
+                            }
+                        } catch (Exception e) {
+                            LOG.error("Failed to download agent profiler results", e);
+                        }
+                    }
+                }
             }
         } catch (Throwable t) {
             this.client.completeExceptionally(t);
@@ -355,9 +376,13 @@ public final class HyperfoilRunner implements AutoCloseable {
                 .failurePolicy(Benchmark.FailurePolicy.CANCEL);
         Compute.ComputeConfiguration.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
         for (int i = 0; i < factory.config.agentCount; i++) {
+            String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
+            if (factory.config.agentAsyncProfiler) {
+                extras += " -agentpath:" + PROFILER_LOCATION + "=" + factory.asyncProfilerConfiguration.args();
+            }
             benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
                     "threads", String.valueOf((int) agentInstanceType.ocpus() - 1),
-                    "extras", "-XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G"
+                    "extras", extras
             ));
         }
 
@@ -371,7 +396,8 @@ public final class HyperfoilRunner implements AutoCloseable {
                 .sharedConnections(protocol.sharedConnections())
                 .connectionStrategy(ConnectionStrategy.SHARED_POOL)
                 .pipeliningLimit(protocol.pipeliningLimit())
-                .maxHttp2Streams(protocol.maxHttp2Streams());
+                .maxHttp2Streams(protocol.maxHttp2Streams())
+                .useHttpCache(false); // caching is expensive, disable it
 
         if (mtlsCert != null) {
             KeyStore ks = KeyStore.getInstance("PKCS12");
@@ -533,14 +559,16 @@ public final class HyperfoilRunner implements AutoCloseable {
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
+        private final AsyncProfilerConfiguration asyncProfilerConfiguration;
 
-        Factory(Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
+        Factory(Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, AsyncProfilerConfiguration asyncProfilerConfiguration) {
             this.compute = compute;
             this.sshFactory = sshFactory;
             this.executor = executor;
             this.config = config;
             this.objectMapper = objectMapper;
             this.resilientForwarderFactory = resilientForwarderFactory;
+            this.asyncProfilerConfiguration = asyncProfilerConfiguration;
             this.vertx = Vertx.vertx();
 
             objectMapper.registerSubtypes(HttpStats.class);
@@ -572,7 +600,8 @@ public final class HyperfoilRunner implements AutoCloseable {
             Duration pgoDuration,
             double sessionLimitFactor,
             List<StatusRequest> status,
-            boolean mtls
+            boolean mtls,
+            boolean agentAsyncProfiler
     ) {
         @EachProperty(value = "status", list = true)
         interface StatusRequest extends RequestDefinition, io.micronaut.core.naming.Named {
