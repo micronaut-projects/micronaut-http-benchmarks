@@ -48,6 +48,12 @@ tasks.withType<Jar>().configureEach {
     archiveBaseName.set(artifactName)
 }
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
 /*
 graalvmNative {
     toolchainDetection.set(false)

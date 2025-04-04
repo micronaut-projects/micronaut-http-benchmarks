@@ -8,9 +8,6 @@
         </encoder>
     </appender>
 
-    <logger name="io.micronaut.context.event.ApplicationEventPublisher" level="info"/>
-    <logger name="io.micronaut.http.server.netty.NettyRequestLifecycle" level="info"/>
-
     <root level="info">
         <appender-ref ref="STDOUT" />
     </root>

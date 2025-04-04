@@ -39,9 +39,5 @@ configure<io.micronaut.bench.AppVariants> {
         dimension("micronaut") {
             variant("latest")
         }
-        dimension("java") {
-            //variant("11")
-            variant("17")
-        }
     }
 }
