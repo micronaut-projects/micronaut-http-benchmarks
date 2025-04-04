@@ -7,18 +7,8 @@ foo="bar"
 #private-key-location="/home/yawkat/.ssh/id_rsa"
 
 [suite]
-enabled-run-types=[
-    "mn-hotspot",
-    #"mn-native",
-    "pure-netty-hotspot",
-    #"pure-netty-native", broken
-    "helidon-nima-hotspot",
-    "spring-boot-hotspot",
-    "vertx-hotspot",
-    #"vertx-native",
-]
 # independent repetitions of each benchmark
-repetitions=8
+repetitions=1
 max-concurrent-runs=25 # only respected for infrastructure-per-run
 infrastructure-mode="reuse"
 
@@ -41,49 +31,39 @@ region="ap-melbourne-1"
 availability-domain="hkYI:AP-MELBOURNE-1-AD-1"
 
 # protocols to test
-#[[load.protocols]]
-#protocol="HTTP1"
-#compile-ops=25
-#shared-connections=10000
-#pipelining-limit=1
-#ops=[2000, 8000, 16000, 32000, 64000, 96000, 128000, 160000, 192000, 256000]
+[load.protocols.http1]
+protocol="HTTP1"
+compile-ops=1000
+shared-connections=16000
+pipelining-limit=1
+sla={"0.99"="200ms"}
 
-#[[load.protocols]]
-#protocol="HTTPS1"
-#compile-ops=25
-#shared-connections=5000
-#pipelining-limit=1
-#ops=[2000, 8000, 32000, 48000, 64000, 72000, 80000, 128000]
+[load.protocols.https1]
+protocol="HTTPS1"
+compile-ops=1000
+shared-connections=20000
+pipelining-limit=1
+sla={"0.99"="200ms"}
 
-[[load.protocols]]
+[load.protocols.https2]
 protocol="HTTPS2"
 compile-ops=25
-shared-connections=64
+shared-connections=265
 max-http2-streams=100
-ops=[2000, 8000, 32000, 64000, 80000, 96000, 112000, 128000, 256000, 512000]
-
-# different json body sizes to test
-[[load.documents]]
-name="6-6"
-method="POST"
-uri="/search/find"
-request-body='{"haystack":["ssxvnj","hpdqdx","vcrast","vybcwv","mgnykr","xvzxkg"],"needle":"bcw"}'
-response-body='{"listIndex":3,"stringIndex":2}'
+sla={"0.99"="200ms"}
 
 # configuration for the hyperfoil cluster
 [hyperfoil]
 location="/home/yawkat/bin/hyperfoil-0.27"
-agent-count=8
+agent-count=2
 
 warmup-duration="1m"
 pgo-duration="2m"
-session-limit-factor=1
+session-limit-factor=2
 # duration per ops/s benchmark
 benchmark-duration="2m"
-
-[[hyperfoil.status]]
-name="status"
-uri="/status"
+mtls=true
+agent-async-profiler=false
 
 [perf-stat]
 enabled=false
@@ -108,31 +88,31 @@ debug-authorized-keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIObBGYqEuujvGhBwr1S/
 shape="VM.Standard.E4.Flex"
 ocpus=3
 memory-in-gb=24
-image="Oracle-Linux-9.4-2024.09.30-0"
+image="Oracle-Linux-9.5-2025.02.28-0"
 
 # relay server used as an SSH gateway to other servers
 [compute.instance-types.relay-server]
 shape="VM.Standard.A1.Flex"
 ocpus=1
 memory-in-gb=2
-image="Oracle-Linux-9.4-aarch64-2024.09.30-0"
+image="Oracle-Linux-9.5-aarch64-2025.02.28-0"
 
 # hyperfoil controller
 [compute.instance-types.hyperfoil-controller]
 shape="VM.Standard.A1.Flex"
 ocpus=2
 memory-in-gb=4
-image="Oracle-Linux-9.4-aarch64-2024.09.30-0"
+image="Oracle-Linux-9.5-aarch64-2025.02.28-0"
 
 # hyperfoil agent
 [compute.instance-types.hyperfoil-agent]
 shape="VM.Standard.E5.Flex"
-ocpus=16
-memory-in-gb=32
-image="Oracle-Linux-9.4-2024.09.30-0"
+ocpus=8
+memory-in-gb=16
+image="Oracle-Linux-9.5-2025.02.28-0"
 
 [variants.hotspot]
-version=23
+version=24
 common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192"
 option-choices=[""]
 
@@ -167,7 +147,6 @@ json=[
 micronaut=[
     "latest",
 ]
-java=["17"]
 
 [techempower]
 compartment-id="ocid1.compartment.oc1..aaaaaaaaxhkap5z4hpt3zbbxrxmohfd3nkaf7bxh2p6f6ufalbtaxupgyj2q"
@@ -178,19 +157,19 @@ availability-domain="hkYI:AP-TOKYO-1-AD-1"
 shape="BM.Standard3.64"
 ocpus=64
 memory-in-gb=1024
-image="Oracle-Linux-9.4-2024.09.30-0"
+image="Oracle-Linux-9.5-2025.02.28-0"
 [compute.instance-types.te-client]
 shape="VM.Standard.E4.Flex"
 ocpus=64
 memory-in-gb=64
-image="Oracle-Linux-9.4-2024.09.30-0"
+image="Oracle-Linux-9.5-2025.02.28-0"
 [compute.instance-types.te-database]
 shape="VM.Standard.E4.Flex"
 ocpus=64
 memory-in-gb=256
-image="Oracle-Linux-9.4-2024.09.30-0"
+image="Oracle-Linux-9.5-2025.02.28-0"
 [compute.instance-types.te-toolset]
 shape="VM.Standard.E4.Flex"
 ocpus=2
 memory-in-gb=4
-image="Oracle-Linux-9.4-2024.09.30-0"
+image="Oracle-Linux-9.5-2025.02.28-0"

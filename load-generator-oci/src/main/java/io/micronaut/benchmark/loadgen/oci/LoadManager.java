@@ -21,7 +21,9 @@ public final class LoadManager {
 
     public List<LoadVariant> getLoadVariants() {
         return loadConfiguration.documents.stream()
-                .flatMap(doc -> loadConfiguration.protocols.stream().map(prot -> new LoadVariant(loadName(prot.protocol(), doc), prot, doc)))
+                .flatMap(doc -> loadConfiguration.protocols.stream()
+                        .filter(ProtocolSettings::isEnabled)
+                        .map(prot -> new LoadVariant(loadName(prot.protocol(), doc), prot, doc)))
                 .toList();
     }
 

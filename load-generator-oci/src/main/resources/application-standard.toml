@@ -1,0 +1,26 @@
+[suite]
+enabled-run-types=[
+    "mn-hotspot",
+    #"mn-native",
+    "pure-netty-hotspot",
+    #"pure-netty-native", broken
+    "helidon-nima-hotspot",
+    #"spring-boot-hotspot",
+    "vertx-hotspot",
+    #"vertx-native",
+]
+
+[[load.documents]]
+name="6-6"
+method="POST"
+uri="/search/find"
+request-body='{"haystack":["ssxvnj","hpdqdx","vcrast","vybcwv","mgnykr","xvzxkg"],"needle":"bcw"}'
+response-body='{"listIndex":3,"stringIndex":2}'
+
+[[hyperfoil.status]]
+name="status"
+uri="/status"
+
+[load.protocols.http1]
+enabled=true
+ops=[2000, 8000, 16000, 32000, 64000, 96000, 128000, 160000, 192000, 256000]
