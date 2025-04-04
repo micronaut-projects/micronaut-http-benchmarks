@@ -49,6 +49,9 @@ public class Main {
                         .privateKeyCertChain(List.of(ssc.cert()))
                         .build())
                         .host("0.0.0.0").port(httpsPort)
+                        .connectionOptions(SocketOptions.builder()
+                                .tcpNoDelay(true)
+                                .build())
                         .addConnectionSelector(Http1ConnectionSelector.builder().config(Http1Config.builder().build()).build())
                         .addConnectionSelector(Http2ConnectionSelector.builder().http2Config(Http2Config.builder().build()).build())
                         .routing(routing));
