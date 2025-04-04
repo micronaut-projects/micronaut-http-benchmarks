@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyperfoil.api.config.Benchmark;
 import io.hyperfoil.api.config.BenchmarkBuilder;
+import io.hyperfoil.api.config.SLABuilder;
 import io.hyperfoil.api.config.ScenarioBuilder;
 import io.hyperfoil.api.statistics.StatisticsSummary;
 import io.hyperfoil.client.RestClient;
@@ -16,6 +17,7 @@ import io.hyperfoil.http.config.ConnectionStrategy;
 import io.hyperfoil.http.config.HttpBuilder;
 import io.hyperfoil.http.config.HttpPluginBuilder;
 import io.hyperfoil.http.statistics.HttpStats;
+import io.hyperfoil.http.steps.HttpRequestStepBuilder;
 import io.hyperfoil.http.steps.HttpStepCatalog;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
@@ -424,14 +426,18 @@ public final class HyperfoilRunner implements AutoCloseable {
                 int ops = protocol.ops().get(i);
                 String phaseName = "main/" + i;
                 phaseNames.add(phaseName);
-                prepareScenario(body, ip, port, benchmark.addPhase(phaseName)
+                SLABuilder<?>.LimitsBuilder limits = prepareScenario(body, ip, port, benchmark.addPhase(phaseName)
                         .constantRate(0)
                         .usersPerSec(ops)
                         .maxSessions(Math.min((int) (ops * factory.config.sessionLimitFactor), protocol.sharedConnections()))
                         .duration(TimeUnit.MILLISECONDS.convert(factory.config.benchmarkDuration))
                         .isWarmup(false)
                         .startAfter(lastPhase)
-                        .scenario());
+                        .scenario())
+                        .sla().addItem().limits();
+                for (Map.Entry<Double, Duration> e : protocol.sla().entrySet()) {
+                    limits.add(e.getKey(), e.getValue().toNanos());
+                }
                 lastPhase = phaseName;
             }
         } else {
@@ -510,7 +516,7 @@ public final class HyperfoilRunner implements AutoCloseable {
                     Infrastructure.retry(() -> client.downloadLog(agent, null, 0, outputDirectory.resolve(agent.replaceAll("[^0-9a-zA-Z]", "") + ".log").toFile()), controllerPortForward.get()::disconnect);
                 }
             } catch (Exception e) {
-                LOG.error("Failed to download agent logs", e);
+                LOG.warn("Failed to download agent logs", e);
             }
 
             LOG.info("Benchmark complete, writing output");
@@ -525,8 +531,8 @@ public final class HyperfoilRunner implements AutoCloseable {
         }
     }
 
-    private static void prepareScenario(RequestDefinition sampleRequest, String ip, int port, ScenarioBuilder warmup) {
-        warmup.initialSequence("test")
+    private static HttpRequestStepBuilder prepareScenario(RequestDefinition sampleRequest, String ip, int port, ScenarioBuilder warmup) {
+        return warmup.initialSequence("test")
                 .step(HttpStepCatalog.class)
                 .httpRequest(sampleRequest.getMethod())
                 .authority(ip + ":" + port)

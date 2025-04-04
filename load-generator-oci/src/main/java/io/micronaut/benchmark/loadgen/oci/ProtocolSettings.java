@@ -3,7 +3,9 @@ package io.micronaut.benchmark.loadgen.oci;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.core.bind.annotation.Bindable;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Different HTTP settings to test
@@ -25,6 +27,7 @@ public record ProtocolSettings(
         @Bindable(defaultValue = "1")
         int maxHttp2Streams,
         int compileOps,
-        List<Integer> ops
+        List<Integer> ops,
+        Map<Double, Duration> sla
 ) {
 }
