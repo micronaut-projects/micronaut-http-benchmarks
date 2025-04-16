@@ -77,7 +77,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     protected final Path logDirectory;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
     private final RegionalClient<ComputeClient> computeClient;
-    private final Compute compute;
+    final Compute compute;
 
     private String publicSubnetId;
     /**

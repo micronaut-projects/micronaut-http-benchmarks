@@ -542,8 +542,9 @@ public final class HyperfoilRunner implements AutoCloseable {
                 .body(sampleRequest.getRequestBody() == null ? null : new ConstantBytesGenerator(sampleRequest.getRequestBody().getBytes(StandardCharsets.UTF_8)));
     }
 
-    public void terminateAsync() {
+    public CompletableFuture<?> terminateAsync() {
         worker.cancel(true);
+        return terminate;
     }
 
     @Override
