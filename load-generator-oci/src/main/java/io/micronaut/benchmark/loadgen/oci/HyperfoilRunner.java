@@ -85,7 +85,6 @@ public final class HyperfoilRunner implements AutoCloseable {
      * {@link Compute} instance type name for hyperfoil agents.
      */
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
-    private static final String PROFILER_LOCATION = "/tmp/libasyncProfiler.so";
 
     private final Factory factory;
     private final CompletableFuture<SshFactory.Relay> relay = new CompletableFuture<>();
@@ -205,10 +204,7 @@ public final class HyperfoilRunner implements AutoCloseable {
                         SshUtil.openFirewallPorts(agentSession);
                         SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
                         if (factory.config.agentAsyncProfiler) {
-                            SshUtil.run(agentSession, "sudo sysctl kernel.perf_event_paranoid=1", log);
-                            SshUtil.run(agentSession, "sudo sysctl kernel.kptr_restrict=0", log);
-                            ScpClientCreator.instance().createScpClient(agentSession)
-                                    .upload(factory.asyncProfilerConfiguration.path(), PROFILER_LOCATION);
+                            factory.asyncProfilerHelper.initialize(agentSession, log);
                         }
                     }
                     return null;
@@ -264,12 +260,12 @@ public final class HyperfoilRunner implements AutoCloseable {
 
                 if (factory.config.agentAsyncProfiler) {
                     for (int i = 0; i < instances.agents.size(); i++) {
-                        try (ClientSession agentSession = factory.sshFactory.connect(null, agentIp(i), relay)) {
-                            LOG.info("Downloading agent {} profiler result", i);
-                            for (String output : factory.asyncProfilerConfiguration.outputs()) {
-                                ScpClientCreator.instance().createScpClient(agentSession)
-                                        .download(output, logDirectory.resolve("agent" + i + "-" + output));
-                            }
+                        Path dir = logDirectory.resolve("agent" + i);
+                        try {
+                            Files.createDirectories(dir);
+                        } catch (FileAlreadyExistsException ignored) {}
+                        try (ClientSession agentSession = instances.agents.get(i).connectSsh()) {
+                            factory.asyncProfilerHelper.finish(agentSession, log, dir);
                         } catch (Exception e) {
                             LOG.error("Failed to download agent profiler results", e);
                         }
@@ -317,6 +313,7 @@ public final class HyperfoilRunner implements AutoCloseable {
         StringBuilder builder = new StringBuilder("curl");
         builder.append(protocol == Protocol.HTTP1 ? " --http1.1" : " --http2");
         builder.append(" --insecure");
+        builder.append(" --max-time 20");
         if (mtlsCert != null) {
             builder.append(" --cert <(echo '");
             builder.append(Base64.getEncoder().encodeToString(pem("CERTIFICATE", mtlsCert.getEncoded())));
@@ -380,7 +377,7 @@ public final class HyperfoilRunner implements AutoCloseable {
         for (int i = 0; i < factory.config.agentCount; i++) {
             String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
             if (factory.config.agentAsyncProfiler) {
-                extras += " -agentpath:" + PROFILER_LOCATION + "=" + factory.asyncProfilerConfiguration.args();
+                extras += " " + factory.asyncProfilerHelper.getJvmArgument();
             }
             benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
                     "threads", String.valueOf((int) agentInstanceType.ocpus() - 1),
@@ -563,19 +560,19 @@ public final class HyperfoilRunner implements AutoCloseable {
         private final SshFactory sshFactory;
         private final ExecutorService executor;
         private final HyperfoilConfiguration config;
+        private final AsyncProfilerHelper asyncProfilerHelper;
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
-        private final AsyncProfilerConfiguration asyncProfilerConfiguration;
 
-        Factory(Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, AsyncProfilerConfiguration asyncProfilerConfiguration) {
+        Factory(Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
             this.compute = compute;
             this.sshFactory = sshFactory;
             this.executor = executor;
             this.config = config;
+            this.asyncProfilerHelper = asyncProfilerHelper;
             this.objectMapper = objectMapper;
             this.resilientForwarderFactory = resilientForwarderFactory;
-            this.asyncProfilerConfiguration = asyncProfilerConfiguration;
             this.vertx = Vertx.vertx();
 
             objectMapper.registerSubtypes(HttpStats.class);

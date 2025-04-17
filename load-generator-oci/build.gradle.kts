@@ -25,6 +25,9 @@ dependencies {
     implementation("io.hyperfoil:hyperfoil-api:0.27")
     implementation("io.hyperfoil:hyperfoil-core:0.27")
     implementation("io.hyperfoil:hyperfoil-clustering:0.27")
+    implementation("tools.profiler:async-profiler:4.0:linux-x64")
+    implementation("tools.profiler:async-profiler:4.0:linux-arm64")
+    implementation("tools.profiler:jfr-converter:4.0")
 }
 
 micronaut {

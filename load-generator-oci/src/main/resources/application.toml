@@ -119,8 +119,17 @@ option-choices=[""]
 [variants.hotspot.async-profiler]
 enabled=false
 path="/home/yawkat/bin/async-profiler-3.0-linux-x64/lib/libasyncProfiler.so"
-args="start,event=cpu,file=flamegraph.html"
-outputs=["flamegraph.html"]
+args="start,event=cpu,cstack=vm,file=profile.jfr,loglevel=debug"
+outputs=["profile.jfr"]
+
+[[variants.hotspot.async-profiler.conversion]]
+input="profile.jfr"
+output="flamegraph.html"
+args="--output html"
+[[variants.hotspot.async-profiler.conversion]]
+input="profile.jfr"
+output="heatmap.html"
+args="--output heatmap"
 
 [variants.native-image]
 version=23

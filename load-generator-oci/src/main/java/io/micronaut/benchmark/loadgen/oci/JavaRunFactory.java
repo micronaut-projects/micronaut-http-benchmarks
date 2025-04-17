@@ -36,17 +36,18 @@ public final class JavaRunFactory {
     private static final Logger LOG = LoggerFactory.getLogger(JavaRunFactory.class);
     private static final String SHADOW_JAR_LOCATION = "shadow.jar";
     private static final String CLASSPATH_LOCATION = "classpath";
-    private static final String PROFILER_LOCATION = "/tmp/libasyncProfiler.so";
 
     private final HotspotConfiguration hotspotConfiguration;
     private final NativeImageConfiguration nativeImageConfiguration;
-    private final AsyncProfilerConfiguration asyncProfilerConfiguration;
+    private final AsyncProfilerHelper.AsyncProfilerConfiguration asyncProfilerConfiguration;
+    private final AsyncProfilerHelper asyncProfilerHelper;
     private final PerfStatConfiguration perfStatConfiguration;
 
-    public JavaRunFactory(HotspotConfiguration hotspotConfiguration, NativeImageConfiguration nativeImageConfiguration, AsyncProfilerConfiguration asyncProfilerConfiguration, PerfStatConfiguration perfStatConfiguration) {
+    public JavaRunFactory(HotspotConfiguration hotspotConfiguration, NativeImageConfiguration nativeImageConfiguration, AsyncProfilerHelper.AsyncProfilerConfiguration asyncProfilerConfiguration, AsyncProfilerHelper asyncProfilerHelper, PerfStatConfiguration perfStatConfiguration) {
         this.hotspotConfiguration = hotspotConfiguration;
         this.nativeImageConfiguration = nativeImageConfiguration;
         this.asyncProfilerConfiguration = asyncProfilerConfiguration;
+        this.asyncProfilerHelper = asyncProfilerHelper;
         this.perfStatConfiguration = perfStatConfiguration;
     }
 
@@ -241,14 +242,12 @@ public final class JavaRunFactory {
                             uploadClasspath(benchmarkServerClient, log);
                             String start = perfStatConfiguration.asCommandPrefix() + "java ";
                             if (asyncProfilerConfiguration.enabled()) {
-                                SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.perf_event_paranoid=1", log);
-                                SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.kptr_restrict=0", log);
-                                ScpClientCreator.instance().createScpClient(benchmarkServerClient)
-                                        .upload(asyncProfilerConfiguration.path(), PROFILER_LOCATION);
-                                start += "-agentpath:" + PROFILER_LOCATION + "=" + asyncProfilerConfiguration.args() + " ";
+                                asyncProfilerHelper.initialize(benchmarkServerClient, log);
+                                start += asyncProfilerHelper.getJvmArgument() + " ";
                             }
                             LOG.info("Starting benchmark server (hotspot, " + typePrefix + ")");
                             String c = start + combinedOptions() + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs) + " " + jarArgument() + (args == null ? "" : " " + args);
+                            log.println("$ " + c);
                             try (ChannelExec cmd = benchmarkServerClient.createExecChannel(c)) {
                                 OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
                                 SshUtil.forwardOutput(cmd, log, waiter);
@@ -264,11 +263,7 @@ public final class JavaRunFactory {
                                 }
                             }
                             if (asyncProfilerConfiguration.enabled()) {
-                                LOG.info("Downloading async-profiler results");
-                                for (String output : asyncProfilerConfiguration.outputs()) {
-                                    ScpClientCreator.instance().createScpClient(benchmarkServerClient)
-                                            .download(output, outputDirectory.resolve(output));
-                                }
+                                asyncProfilerHelper.finish(benchmarkServerClient, log, outputDirectory);
                             }
                         }
                     }),
