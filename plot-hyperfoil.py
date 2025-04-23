@@ -162,6 +162,41 @@ def ns_to_str(ns: int) -> str:
     return f'{ns / factor:g}{unit}'
 
 
+def select_colors(discriminated: typing.Sequence[tuple]) -> typing.Mapping[tuple, str]:
+    def options(i):
+        return list(set(map(lambda t: t[i], discriminated)))
+    h = None
+    s = None
+    v = None
+    fallback = False
+    for i in range(len(discriminated[0])):
+        if len(options(i)) <= 1:
+            continue
+        if h is None:
+            h = i
+            continue
+        if s is None:
+            s = i
+            continue
+        if v is None:
+            v = i
+            continue
+        fallback = True
+    if h is None:
+        fallback = True
+    if fallback:
+        return {d: f'C{i}' for i, d in enumerate(discriminated)}
+    hues = (278/255, 230/255, 157/255)
+    out = {}
+    for d in discriminated:
+        hv = hues[options(h).index(d[h])]
+        sv = 1 - options(s).index(d[s]) / len(options(s)) if s is not None else 1
+        vv = 1 - options(v).index(d[v]) / len(options(v)) if v is not None else 1
+        out[d] = matplotlib.colors.to_hex(matplotlib.colors.hsv_to_rgb((hv, sv, vv)))
+    return out
+
+
+
 MODE_HISTOGRAM = "histogram"
 MODE_SIMPLE = "simple"
 SIMPLE_OPS = 1000
@@ -221,7 +256,7 @@ def main():
         max_time = 10*10**6
         max_percentile = 0.999
         print(min_time, max_time)
-    colors_by_discriminator = {d: f'C{i}' for i, d in enumerate(discriminated)}
+    colors_by_discriminator = select_colors(discriminated)
 
     if mode == MODE_HISTOGRAM:
         rows = 2
