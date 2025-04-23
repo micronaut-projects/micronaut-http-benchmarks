@@ -87,7 +87,6 @@ public final class HyperfoilRunner implements AutoCloseable {
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
 
     private final Factory factory;
-    private final CompletableFuture<SshFactory.Relay> relay = new CompletableFuture<>();
     private final CompletableFuture<Client> client = new CompletableFuture<>();
     private final CompletableFuture<Void> terminate = new CompletableFuture<>();
     private final Path logDirectory;
@@ -108,7 +107,7 @@ public final class HyperfoilRunner implements AutoCloseable {
         System.setProperty("io.hyperfoil.cli.request.timeout", "60000");
     }
 
-    private HyperfoilRunner(Factory factory, Path logDirectory, OciLocation location, String privateSubnetId) throws Exception {
+    private HyperfoilRunner(Factory factory, Path logDirectory, AbstractInfrastructure infrastructure) throws Exception {
         this.factory = factory;
         this.logDirectory = logDirectory;
 
@@ -117,7 +116,7 @@ public final class HyperfoilRunner implements AutoCloseable {
         } catch (FileAlreadyExistsException ignored) {}
 
         // fail fast if we can't create the instances
-        instances = createInstances(location, privateSubnetId);
+        instances = createInstances(infrastructure);
         worker = factory.executor.submit(MdcTracker.copyMdc(() -> {
             try (AutoCloseable ignored = this::terminateAndWait) {
                 deploy();
@@ -139,15 +138,15 @@ public final class HyperfoilRunner implements AutoCloseable {
         }
     }
 
-    private HyperfoilInstances createInstances(OciLocation location, String privateSubnetId) throws Exception {
-        Compute.Instance hyperfoilController = factory.compute.builder("hyperfoil-controller", location, privateSubnetId)
+    private HyperfoilInstances createInstances(AbstractInfrastructure infrastructure) throws Exception {
+        Compute.Instance hyperfoilController = infrastructure.computeBuilder("hyperfoil-controller")
                 .privateIp(HYPERFOIL_CONTROLLER_IP)
                 .launch();
         try {
             computeInstances.add(hyperfoilController);
             List<Compute.Instance> agents = new ArrayList<>();
             for (int i = 0; i < factory.config.agentCount; i++) {
-                Compute.Instance instance = factory.compute.builder(AGENT_INSTANCE_TYPE, location, privateSubnetId)
+                Compute.Instance instance = infrastructure.computeBuilder(AGENT_INSTANCE_TYPE)
                         .privateIp(agentIp(i))
                         .launch();
                 agents.add(instance);
@@ -176,11 +175,9 @@ public final class HyperfoilRunner implements AutoCloseable {
     private void deploy() throws Exception {
         instances.controller.awaitStartup();
 
-        SshFactory.Relay relay = this.relay.get();
-
         try (
                 OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("hyperfoil.log")));
-                ClientSession controllerSession = factory.sshFactory.connect(instances.controller, HYPERFOIL_CONTROLLER_IP, relay)) {
+                ClientSession controllerSession = instances.controller.connectSsh()) {
             this.controllerSession = controllerSession;
 
             List<Callable<Void>> setupTasks = new ArrayList<>();
@@ -197,10 +194,9 @@ public final class HyperfoilRunner implements AutoCloseable {
             for (int i = 0; i < instances.agents.size(); i++) {
                 Compute.Instance agent = instances.agents.get(i);
 
-                String agentIp = agentIp(i);
                 setupTasks.add(() -> {
                     agent.awaitStartup();
-                    try (ClientSession agentSession = factory.sshFactory.connect(agent, agentIp, relay)) {
+                    try (ClientSession agentSession = agent.connectSsh()) {
                         SshUtil.openFirewallPorts(agentSession);
                         SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
                         if (factory.config.agentAsyncProfiler) {
@@ -217,7 +213,7 @@ public final class HyperfoilRunner implements AutoCloseable {
 
             try (ChannelExec controllerCommand = controllerSession.createExecChannel(REMOTE_HYPERFOIL_LOCATION + "/bin/controller.sh -Djgroups.join_timeout=20000");
                  ResilientSshPortForwarder controllerPortForward = factory.resilientForwarderFactory.create(
-                         () -> factory.sshFactory.connect(instances.controller, HYPERFOIL_CONTROLLER_IP, relay),
+                         instances.controller::connectSsh,
                          new SshdSocketAddress("localhost", 8090)
                  );
                  RestClient client = new RestClient(
@@ -274,13 +270,8 @@ public final class HyperfoilRunner implements AutoCloseable {
             }
         } catch (Throwable t) {
             this.client.completeExceptionally(t);
-            this.relay.completeExceptionally(t);
             throw t;
         }
-    }
-
-    public void setRelay(SshFactory.Relay relay) {
-        this.relay.complete(relay);
     }
 
     /**
@@ -578,8 +569,8 @@ public final class HyperfoilRunner implements AutoCloseable {
             objectMapper.registerSubtypes(HttpStats.class);
         }
 
-        public HyperfoilRunner launch(Path outputDirectory, OciLocation location, String privateSubnetId) throws Exception {
-            return new HyperfoilRunner(this, outputDirectory, location, privateSubnetId);
+        public HyperfoilRunner launch(Path outputDirectory, AbstractInfrastructure infrastructure) throws Exception {
+            return new HyperfoilRunner(this, outputDirectory, infrastructure);
         }
     }
 

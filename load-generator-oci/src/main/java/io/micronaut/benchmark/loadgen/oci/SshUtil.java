@@ -115,6 +115,6 @@ public final class SshUtil {
         buffer.putString("signal");
         buffer.putBoolean(false);
         buffer.putString(signal);
-        cmd.writePacket(buffer);
+        cmd.writePacket(buffer).await();
     }
 }

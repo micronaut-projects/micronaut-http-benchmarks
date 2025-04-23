@@ -1,5 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import com.oracle.bmc.bastion.BastionClient;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import io.micronaut.core.annotation.Indexed;
@@ -41,14 +42,14 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final List<AttachmentEntry<?>> attachments = Collections.synchronizedList(new ArrayList<>());
 
     private Infrastructure(Factory factory, OciLocation location, Path logDirectory) {
-        super(location, logDirectory, factory.vcnClient, factory.computeClient, factory.compute);
+        super(location, logDirectory, factory.vcnClient, factory.computeClient, factory.bastionClient, factory.compute);
         this.factory = factory;
     }
 
     private void start(PhaseTracker.PhaseUpdater progress) throws Exception {
         setupBase(progress);
 
-        benchmarkServer = factory.compute.builder(BENCHMARK_SERVER_INSTANCE_TYPE, location, privateSubnetId)
+        benchmarkServer = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE)
                 .privateIp(SERVER_IP)
                 .launch();
 
@@ -60,12 +61,11 @@ public final class Infrastructure extends AbstractInfrastructure {
             );
         }
 
-        hyperfoilRunner = factory.hyperfoilRunnerFactory.launch(logDirectory, location, privateSubnetId);
-        hyperfoilRunner.setRelay(relay());
+        hyperfoilRunner = factory.hyperfoilRunnerFactory.launch(logDirectory, this);
 
         benchmarkServer.awaitStartup();
 
-        try (ClientSession benchmarkServerClient = factory.sshFactory.connect(benchmarkServer, SERVER_IP, relay());
+        try (ClientSession benchmarkServerClient = benchmarkServer.connectSsh();
              OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("update.log")))) {
 
             progress.update(BenchmarkPhase.DEPLOYING_OS);
@@ -183,7 +183,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     }
 
     private void run0(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, PhaseTracker.PhaseUpdater progress) throws Exception {
-        try (ClientSession benchmarkServerClient = factory.sshFactory.connect(benchmarkServer, SERVER_IP, relay());
+        try (ClientSession benchmarkServerClient = benchmarkServer.connectSsh();
              OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve("server.log")))) {
             // special PhaseUpdater that logs the current benchmark phase for reference.
             progress = new PhaseTracker.DelegatePhaseUpdater(progress) {
@@ -231,6 +231,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     public record Factory(
             RegionalClient<ComputeClient> computeClient,
             RegionalClient<VirtualNetworkClient> vcnClient,
+            RegionalClient<BastionClient> bastionClient,
             Compute compute,
             HyperfoilRunner.Factory hyperfoilRunnerFactory,
             SshFactory sshFactory,

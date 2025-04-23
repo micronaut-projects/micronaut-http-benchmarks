@@ -1,5 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci.techempower;
 
+import com.oracle.bmc.bastion.BastionClient;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import io.micronaut.benchmark.loadgen.oci.AbstractInfrastructure;
@@ -44,7 +45,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
     private final Map<DockerServer, DockerServerRuntime> dockerServers = new EnumMap<>(DockerServer.class);
 
     private TeInfrastructure(Factory factory, OciLocation location, Path logDirectory) {
-        super(location, logDirectory, factory.vcnClient, factory.computeClient, factory.compute);
+        super(location, logDirectory, factory.vcnClient, factory.computeClient, factory.bastionClient, factory.compute);
         this.factory = factory;
     }
 
@@ -52,7 +53,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
         setupBase(phaseUpdater);
 
         for (DockerServer dockerServer : DockerServer.values()) {
-            dockerServers.put(dockerServer, new DockerServerRuntime(factory.compute.builder(dockerServer.instanceType, location, privateSubnetId)
+            dockerServers.put(dockerServer, new DockerServerRuntime(computeBuilder(dockerServer.instanceType)
                     .privateIp(dockerServer.ip)
                     .launch(), new OutputListener.Write(Files.newOutputStream(logDirectory.resolve(dockerServer.instanceType + ".log")))));
         }
@@ -63,7 +64,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
                 DockerServerRuntime instance = dockerServers.get(dockerServer);
                 instance.instance.awaitStartup();
 
-                try (ClientSession session = factory.sshFactory.connect(instance.instance, dockerServer.ip, relay())) {
+                try (ClientSession session = instance.instance.connectSsh()) {
                     // set up docker on the main runtime servers
                     SshUtil.openFirewallPorts(session, instance.log);
 
@@ -112,7 +113,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
         toolsetCommand.append("'");
 
         DockerServerRuntime toolset = dockerServers.get(DockerServer.TOOLSET);
-        try (ClientSession session = factory.sshFactory.connect(toolset.instance, DockerServer.TOOLSET.ip, relay())) {
+        try (ClientSession session = toolset.instance.connectSsh()) {
             for (Revision revision : revisions) {
                 LOG.info("Downloading {}", revision.githubRepoName());
                 String dest = revision.equals(tefbRepoRevision) ? revision.folderName() : tefbRepoRevision.folderName() + "/frameworks/Java/micronaut/" + revision.folderName();
@@ -209,6 +210,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
     public record Factory(
             RegionalClient<ComputeClient> computeClient,
             RegionalClient<VirtualNetworkClient> vcnClient,
+            RegionalClient<BastionClient> bastionClient,
             Compute compute,
             SshFactory sshFactory,
             SutMonitor sutMonitor,

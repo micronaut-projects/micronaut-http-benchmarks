@@ -1,5 +1,9 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import com.oracle.bmc.bastion.BastionClient;
+import com.oracle.bmc.bastion.model.CreateBastionDetails;
+import com.oracle.bmc.bastion.requests.CreateBastionRequest;
+import com.oracle.bmc.bastion.requests.DeleteBastionRequest;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.core.model.CreateInternetGatewayDetails;
@@ -10,6 +14,7 @@ import com.oracle.bmc.core.model.CreateVcnDetails;
 import com.oracle.bmc.core.model.IngressSecurityRule;
 import com.oracle.bmc.core.model.RouteRule;
 import com.oracle.bmc.core.model.SecurityList;
+import com.oracle.bmc.core.model.Subnet;
 import com.oracle.bmc.core.model.UpdateSecurityListDetails;
 import com.oracle.bmc.core.model.Vcn;
 import com.oracle.bmc.core.requests.CreateInternetGatewayRequest;
@@ -23,8 +28,7 @@ import com.oracle.bmc.core.requests.DeleteRouteTableRequest;
 import com.oracle.bmc.core.requests.DeleteSubnetRequest;
 import com.oracle.bmc.core.requests.DeleteVcnRequest;
 import com.oracle.bmc.core.requests.GetSecurityListRequest;
-import com.oracle.bmc.core.requests.GetVnicRequest;
-import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
+import com.oracle.bmc.core.requests.GetSubnetRequest;
 import com.oracle.bmc.core.requests.UpdateSecurityListRequest;
 import com.oracle.bmc.model.BmcException;
 import io.netty.channel.ConnectTimeoutException;
@@ -34,9 +38,11 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -67,6 +73,8 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
      */
     private static final String RELAY_SUBNET = "10.0.254.0/24";
 
+    private static final SshRelayMode RELAY_MODE = SshRelayMode.BASTION;
+
     /**
      * Location (compartment, region, AD) of this infrastructure.
      */
@@ -77,6 +85,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     protected final Path logDirectory;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
     private final RegionalClient<ComputeClient> computeClient;
+    private final RegionalClient<BastionClient> bastionClient;
     final Compute compute;
 
     private String publicSubnetId;
@@ -84,22 +93,22 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
      * Subnet for all benchmark-related servers. Not internet-accessible, all transfers must happen through the SSH
      * relay.
      */
-    protected String privateSubnetId;
+    private String privateSubnetId;
     private String privateRouteTable;
     private String publicRouteTable;
     private String vcnId;
     private String natId;
     private String internetId;
 
-    private RelayServer relayServer;
-    private SshFactory.Relay relay;
     private Compute.Instance relayServerInstance;
+    private String bastionId;
 
-    protected AbstractInfrastructure(OciLocation location, Path logDirectory, RegionalClient<VirtualNetworkClient> vcnClient, RegionalClient<ComputeClient> computeClient, Compute compute) {
+    protected AbstractInfrastructure(OciLocation location, Path logDirectory, RegionalClient<VirtualNetworkClient> vcnClient, RegionalClient<ComputeClient> computeClient, RegionalClient<BastionClient> bastionClient, Compute compute) {
         this.location = location;
         this.logDirectory = logDirectory;
         this.vcnClient = vcnClient;
         this.computeClient = computeClient;
+        this.bastionClient = bastionClient;
         this.compute = compute;
     }
 
@@ -143,19 +152,21 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                                 .build()))
                         .build())
                 .build()).getRouteTable().getId();
-        Throttle.VCN.take();
-        publicRouteTable = vcnClient.forRegion(location).createRouteTable(CreateRouteTableRequest.builder()
-                .createRouteTableDetails(CreateRouteTableDetails.builder()
-                        .compartmentId(location.compartmentId())
-                        .vcnId(vcnId)
-                        .routeRules(List.of(RouteRule.builder()
-                                .destinationType(RouteRule.DestinationType.CidrBlock)
-                                .destination("0.0.0.0/0")
-                                .networkEntityId(internetId)
-                                .routeType(RouteRule.RouteType.Static)
-                                .build()))
-                        .build())
-                .build()).getRouteTable().getId();
+        if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
+            Throttle.VCN.take();
+            publicRouteTable = vcnClient.forRegion(location).createRouteTable(CreateRouteTableRequest.builder()
+                    .createRouteTableDetails(CreateRouteTableDetails.builder()
+                            .compartmentId(location.compartmentId())
+                            .vcnId(vcnId)
+                            .routeRules(List.of(RouteRule.builder()
+                                    .destinationType(RouteRule.DestinationType.CidrBlock)
+                                    .destination("0.0.0.0/0")
+                                    .networkEntityId(internetId)
+                                    .routeType(RouteRule.RouteType.Static)
+                                    .build()))
+                            .build())
+                    .build()).getRouteTable().getId();
+        }
         Throttle.VCN.take();
         privateSubnetId = vcnClient.forRegion(location).createSubnet(CreateSubnetRequest.builder()
                 .createSubnetDetails(CreateSubnetDetails.builder()
@@ -167,17 +178,19 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                         .availabilityDomain(location.availabilityDomain())
                         .build())
                 .build()).getSubnet().getId();
-        Throttle.VCN.take();
-        publicSubnetId = vcnClient.forRegion(location).createSubnet(CreateSubnetRequest.builder()
-                .createSubnetDetails(CreateSubnetDetails.builder()
-                        .compartmentId(location.compartmentId())
-                        .vcnId(vcnId)
-                        .displayName("Relay subnet")
-                        .cidrBlock(RELAY_SUBNET)
-                        .routeTableId(publicRouteTable)
-                        .availabilityDomain(location.availabilityDomain())
-                        .build())
-                .build()).getSubnet().getId();
+        if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
+            Throttle.VCN.take();
+            publicSubnetId = vcnClient.forRegion(location).createSubnet(CreateSubnetRequest.builder()
+                    .createSubnetDetails(CreateSubnetDetails.builder()
+                            .compartmentId(location.compartmentId())
+                            .vcnId(vcnId)
+                            .displayName("Relay subnet")
+                            .cidrBlock(RELAY_SUBNET)
+                            .routeTableId(publicRouteTable)
+                            .availabilityDomain(location.availabilityDomain())
+                            .build())
+                    .build()).getSubnet().getId();
+        }
 
         Throttle.VCN.take();
         SecurityList securityList = retry(() -> vcnClient.forRegion(location).getSecurityList(GetSecurityListRequest.builder()
@@ -202,36 +215,39 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
             return null;
         });
 
+        if (RELAY_MODE == SshRelayMode.BASTION) {
+
+            while (true) {
+                Subnet subnet = vcnClient.forRegion(location).getSubnet(GetSubnetRequest.builder()
+                        .subnetId(privateSubnetId)
+                        .build()).getSubnet();
+                if (subnet.getLifecycleState() == Subnet.LifecycleState.Available) {
+                    break;
+                } else if (subnet.getLifecycleState() != Subnet.LifecycleState.Provisioning) {
+                    throw new IllegalStateException("Failed to get private subnet ready. Subnet state: " + subnet.getLifecycleState());
+                }
+            }
+
+            bastionId = bastionClient.forRegion(location).createBastion(CreateBastionRequest.builder()
+                    .createBastionDetails(CreateBastionDetails.builder()
+                            .name("ssh-gateway-bastion" + ThreadLocalRandom.current().nextLong())
+                            .bastionType("standard")
+                            .compartmentId(location.compartmentId())
+                            .maxSessionTtlInSeconds((int) Duration.ofHours(3).toSeconds())
+                            .targetSubnetId(privateSubnetId)
+                            .clientCidrBlockAllowList(List.of("0.0.0.0/0"))
+                            .build())
+                    .build()).getBastion().getId();
+        }
+
         progress.update(BenchmarkPhase.SETTING_UP_INSTANCES);
 
-        LOG.info("Creating relay server");
-        relayServerInstance = compute.builder("relay-server", location, publicSubnetId)
-                .publicIp(true)
-                .launch();
-    }
-
-    /**
-     * Lazily create the SSH relay. This method will block until the relay is available. Not thread-safe.
-     *
-     * @return The SSH relay
-     */
-    protected final SshFactory.Relay relay() throws Exception {
-        if (relay == null) {
-            relayServerInstance.awaitStartup();
-
-            Throttle.COMPUTE.take();
-            String vnic = computeClient.forRegion(location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
-                    .compartmentId(location.compartmentId())
-                    .availabilityDomain(location.availabilityDomain())
-                    .instanceId(relayServerInstance.id)
-                    .build()).getItems().get(0).getVnicId();
-            String publicIp = vcnClient.forRegion(location).getVnic(GetVnicRequest.builder()
-                    .vnicId(vnic)
-                    .build()).getVnic().getPublicIp();
-            relayServer = new RelayServer(relayServerInstance, publicIp);
-            relay = new SshFactory.Relay("opc", relayServer.publicIp);
+        if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
+            LOG.info("Creating relay server");
+            relayServerInstance = compute.builder("relay-server", location, publicSubnetId)
+                    .publicIp(true)
+                    .launch();
         }
-        return relay;
     }
 
     private Vcn createVcn(OciLocation location) throws InterruptedException {
@@ -267,20 +283,35 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         return vcn;
     }
 
+    public final Compute.Launch computeBuilder(String instanceType) {
+        return compute.builder(instanceType, location, privateSubnetId)
+                .bastionId(bastionId)
+                .relayInstance(relayServerInstance)
+                .publicIp(RELAY_MODE == SshRelayMode.PUBLIC_IP);
+    }
+
     protected final void terminateRelayAsync() {
-        if (relayServer != null) {
-            relayServer.instance.terminateAsync();
+        if (relayServerInstance != null) {
+            relayServerInstance.terminateAsync();
         }
     }
 
     @Override
     public void close() throws Exception {
-        if (relayServer != null) {
-            relayServer.close();
+        if (relayServerInstance != null) {
+            relayServerInstance.close();
         }
 
         LOG.info("Terminating network resources");
         try {
+            if (bastionId != null) {
+                retry(() -> {
+                    Throttle.VCN.takeUninterruptibly();
+                    return bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
+                            .bastionId(bastionId)
+                            .build());
+                });
+            }
             for (String subnet : new String[]{privateSubnetId, publicSubnetId}) {
                 if (subnet != null) {
                     retry(() -> {
@@ -325,8 +356,12 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     }
 
     static <T> T retry(Callable<T> callable, Runnable onFailure) throws Exception {
+        return retry(callable, onFailure, 3);
+    }
+
+    static <T> T retry(Callable<T> callable, Runnable onFailure, int n) throws Exception {
         Exception err = null;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < n; i++) {
             try {
                 return callable.call();
             } catch (InvalidatesBenchmarkException ibe) {
@@ -344,13 +379,9 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         throw err;
     }
 
-    private record RelayServer(
-            Compute.Instance instance,
-            String publicIp
-    ) implements AutoCloseable {
-        @Override
-        public void close() throws Exception {
-            instance.close();
-        }
+    private enum SshRelayMode {
+        BASTION,
+        RELAY_SERVER,
+        PUBLIC_IP,
     }
 }

@@ -2,7 +2,6 @@ package io.micronaut.benchmark.loadgen.oci;
 
 import org.slf4j.MDC;
 
-import java.util.Objects;
 import java.util.concurrent.Callable;
 
 /**
@@ -24,7 +23,9 @@ public class MdcTracker {
 
     public static <T> Callable<T> copyMdc(Callable<T> actual) {
         String benchmarkName = MDC.get(KEY);
-        Objects.requireNonNull(benchmarkName, "benchmarkName");
+        if (benchmarkName == null) {
+            return actual;
+        }
         return () -> withMdc(benchmarkName, actual);
     }
 }

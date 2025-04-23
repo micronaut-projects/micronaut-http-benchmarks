@@ -1,5 +1,11 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import com.oracle.bmc.bastion.BastionClient;
+import com.oracle.bmc.bastion.model.BastionLifecycleState;
+import com.oracle.bmc.bastion.model.BastionSummary;
+import com.oracle.bmc.bastion.requests.DeleteBastionRequest;
+import com.oracle.bmc.bastion.requests.ListBastionsRequest;
+import com.oracle.bmc.bastion.responses.ListBastionsResponse;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.core.model.Instance;
@@ -43,6 +49,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * This class deletes all resources in a compartment, before and after a benchmark.
@@ -54,12 +61,14 @@ public final class CompartmentCleaner {
     private final RegionalClient<IdentityClient> identityClient;
     private final RegionalClient<ComputeClient> computeClient;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
+    private final RegionalClient<BastionClient> bastionClient;
     private final Compute compute;
 
-    public CompartmentCleaner(RegionalClient<IdentityClient> identityClient, RegionalClient<ComputeClient> computeClient, RegionalClient<VirtualNetworkClient> vcnClient, Compute compute) {
+    public CompartmentCleaner(RegionalClient<IdentityClient> identityClient, RegionalClient<ComputeClient> computeClient, RegionalClient<VirtualNetworkClient> vcnClient, RegionalClient<BastionClient> bastionClient, Compute compute) {
         this.identityClient = identityClient;
         this.computeClient = computeClient;
         this.vcnClient = vcnClient;
+        this.bastionClient = bastionClient;
         this.compute = compute;
     }
 
@@ -95,9 +104,39 @@ public final class CompartmentCleaner {
         )) {
             Instance.LifecycleState lifecycleState = instance.getLifecycleState();
             if (lifecycleState != Instance.LifecycleState.Terminated && lifecycleState != Instance.LifecycleState.Terminating) {
-                //noinspection resource
-                compute.new Instance(location, instance.getId()).terminateAsync();
+                compute.terminateAsync(location, instance.getId());
             }
+        }
+
+        bastions:
+        while (true) {
+            for (BastionSummary bastion : list(
+                    bastionClient.forRegion(location)::listBastions,
+                    ListBastionsRequest.builder()
+                            .compartmentId(compartment),
+                    ListBastionsRequest.Builder::page,
+                    ListBastionsResponse::getOpcNextPage,
+                    ListBastionsResponse::getItems
+            )) {
+                BastionLifecycleState lifecycleState = bastion.getLifecycleState();
+                if (lifecycleState == BastionLifecycleState.Creating) {
+                    LOG.info("Waiting for bastion {} to finish creating, so that we can delete it", bastion.getName());
+                    try {
+                        TimeUnit.SECONDS.sleep(5);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    continue bastions;
+                }
+
+                if (lifecycleState != BastionLifecycleState.Deleted && lifecycleState != BastionLifecycleState.Deleting) {
+                    LOG.info("Deleting bastion {}", bastion.getName());
+                    bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
+                            .bastionId(bastion.getId())
+                            .build());
+                }
+            }
+            break;
         }
 
         // delete route tables
@@ -124,34 +163,23 @@ public final class CompartmentCleaner {
         }
 
         // wait for any compute instances to terminate before we can delete the subnets
-        while (true) {
-            Throttle.COMPUTE.takeUninterruptibly();
-            List<Instance> instances = list(
-                    computeClient.forRegion(location)::listInstances,
-                    ListInstancesRequest.builder()
-                            .compartmentId(compartment),
-                    ListInstancesRequest.Builder::page,
-                    ListInstancesResponse::getOpcNextPage,
-                    ListInstancesResponse::getItems
-            );
-            int terminating = 0;
-            for (Instance instance : instances) {
-                switch (instance.getLifecycleState()) {
-                    case Terminating -> terminating++;
-                    case Terminated -> {} // fine
-                    default -> throw new IllegalStateException("Unexpected state for compute instance " + instance.getId() + " " + instance.getLifecycleState() + ". All instances should be terminating.");
-                }
-            }
-            if (terminating == 0) {
-                break;
-            }
-            LOG.info("Waiting for {} instances to terminate", terminating);
-            try {
-                TimeUnit.SECONDS.sleep(1);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }
+        waitForTermination(() -> list(
+                computeClient.forRegion(location)::listInstances,
+                ListInstancesRequest.builder()
+                        .compartmentId(compartment),
+                ListInstancesRequest.Builder::page,
+                ListInstancesResponse::getOpcNextPage,
+                ListInstancesResponse::getItems
+        ), Instance::getLifecycleState, Instance.LifecycleState.Terminating, Instance.LifecycleState.Terminated);
+
+        waitForTermination(() -> list(
+                bastionClient.forRegion(location)::listBastions,
+                ListBastionsRequest.builder()
+                        .compartmentId(compartment),
+                ListBastionsRequest.Builder::page,
+                ListBastionsResponse::getOpcNextPage,
+                ListBastionsResponse::getItems
+        ), BastionSummary::getLifecycleState, BastionLifecycleState.Deleting, BastionLifecycleState.Deleted);
 
         // delete subnets
         Throttle.VCN.takeUninterruptibly();
@@ -253,6 +281,35 @@ public final class CompartmentCleaner {
             identityClient.forRegion(location).deleteCompartment(DeleteCompartmentRequest.builder()
                     .compartmentId(compartment)
                     .build());
+        }
+    }
+
+    private <R, LS> void waitForTermination(
+            Supplier<List<R>> list,
+            Function<R, LS> getLifecycleState,
+            LS deleting, LS deleted
+    ) {
+        while (true) {
+            Throttle.COMPUTE.takeUninterruptibly();
+            List<R> instances = list.get();
+            int terminating = 0;
+            for (R instance : instances) {
+                LS ls = getLifecycleState.apply(instance);
+                if (ls.equals(deleting)) {
+                    terminating++;
+                } else if (!ls.equals(deleted)) {
+                    throw new IllegalStateException("Unexpected state for instance " + ls + ". All instances should be terminating.");
+                }
+            }
+            if (terminating == 0) {
+                break;
+            }
+            LOG.info("Waiting for {} instances to terminate", terminating);
+            try {
+                TimeUnit.SECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 

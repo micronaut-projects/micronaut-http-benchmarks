@@ -101,7 +101,6 @@ public final class SshFactory {
             String instanceIp,
             @Nullable Relay relay
     ) throws Exception {
-        LOG.info("Connecting to SSH server at opc@{}", instanceIp);
         int attempts = 0;
         while (true) {
             try {
@@ -115,7 +114,7 @@ public final class SshFactory {
                     try {
                         SshUtil.run(sess, "echo keepalive");
                     } catch (Exception e) {
-                        LOG.error("Failed to send keepalive", e);
+                        LOG.warn("Failed to send keepalive", e);
                     }
                 }, 1, 1, TimeUnit.MINUTES);
                 return sess;
@@ -129,9 +128,6 @@ public final class SshFactory {
                         }
                     }
                 }
-            }
-            if (instance != null) {
-                instance.checkStarted();
             }
             TimeUnit.SECONDS.sleep(1);
             if (attempts++ > 500) {
