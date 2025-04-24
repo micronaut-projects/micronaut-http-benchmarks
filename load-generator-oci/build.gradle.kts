@@ -1,5 +1,5 @@
 plugins {
-    id("io.micronaut.application")
+    id("io.micronaut.library")
 }
 
 group = "org.example"
@@ -7,10 +7,6 @@ version = "unspecified"
 
 repositories {
     mavenCentral()
-    mavenLocal()
-    maven {
-        url = uri("https://s01.oss.sonatype.org/content/repositories/snapshots")
-    }
 }
 
 dependencies {
@@ -22,11 +18,11 @@ dependencies {
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-computeinstanceagent")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-httpclient-netty")
     implementation("io.micronaut.toml:micronaut-toml")
-    implementation("io.micronaut:micronaut-jackson-databind")
+    api("io.micronaut:micronaut-jackson-databind")
     implementation("io.micronaut:micronaut-http-client")
-    implementation("io.hyperfoil:hyperfoil-api:0.27")
-    implementation("io.hyperfoil:hyperfoil-core:0.27")
-    implementation("io.hyperfoil:hyperfoil-clustering:0.27")
+    api("io.hyperfoil:hyperfoil-api:0.27")
+    api("io.hyperfoil:hyperfoil-core:0.27")
+    api("io.hyperfoil:hyperfoil-clustering:0.27")
     implementation("tools.profiler:async-profiler:4.0:linux-x64")
     implementation("tools.profiler:async-profiler:4.0:linux-arm64")
     implementation("tools.profiler:jfr-converter:4.0")

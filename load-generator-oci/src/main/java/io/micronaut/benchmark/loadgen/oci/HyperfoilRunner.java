@@ -25,6 +25,7 @@ import io.micronaut.scheduling.TaskExecutors;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClosedException;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import org.apache.sshd.client.channel.ChannelExec;
@@ -492,7 +493,7 @@ public final class HyperfoilRunner implements AutoCloseable {
         }
         for (StatsAll.Stats stats : wrapper.statsAll.stats) {
             if (stats.total.summary.responseCount == 0) {
-                benchmarkFailures.add("No responses in phase " + stats.phase);
+                benchmarkFailures.add("No responses in phase " + stats.name);
                 invalidatesBenchmark = true;
             }
         }
@@ -609,17 +610,17 @@ public final class HyperfoilRunner implements AutoCloseable {
     ) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record StatsAll(
+    public record StatsAll(
             Info info,
             List<SlaFailure> failures,
             List<Stats> stats
     ) {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        private record Info(
+        public record Info(
                 List<Error> errors
         ) {
             @JsonIgnoreProperties(ignoreUnknown = true)
-            private record Error(
+            public record Error(
                     String agent,
                     String msg
             ) {
@@ -628,19 +629,46 @@ public final class HyperfoilRunner implements AutoCloseable {
         }
 
         @JsonIgnoreProperties(ignoreUnknown = true)
-        private record SlaFailure(
+        public record SlaFailure(
                 String phase,
                 String message
         ) {}
 
         @JsonIgnoreProperties(ignoreUnknown = true)
-        private record Stats(
+        public record Stats(
                 String phase,
-                Total total
+                String name,
+                Total total,
+                Histogram histogram
         ) {
             @JsonIgnoreProperties(ignoreUnknown = true)
-            private record Total(StatisticsSummary summary) {
+            public record Total(StatisticsSummary summary) {
             }
+        }
+
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public record Histogram(
+                List<Percentile> percentiles
+        ) {
+        }
+
+        public record Percentile(
+                double from,
+                double to,
+                double percentile,
+                long count,
+                long totalCount
+        ) {
+        }
+
+        @Nullable
+        public Stats findPhase(String name) {
+            for (Stats phase : stats) {
+                if (phase.name.equals(name)) {
+                    return phase;
+                }
+            }
+            return null;
         }
     }
 
