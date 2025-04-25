@@ -399,9 +399,13 @@ public class Main {
                             .findFirst().orElseThrow()));
                     medians.addPointBorderColor(color);
                     medians.addPointStyle("crossRot");
+                    medians.addPointBorderWidth(2);
+                    medians.addPointRadius(5);
                     averages.addData(new ScatterDataPoint(i + 0.5, stats.total().summary().meanResponseTime));
                     averages.addPointBorderColor(color);
                     averages.addPointStyle("cross");
+                    averages.addPointBorderWidth(2);
+                    averages.addPointRadius(5);
                 }
                 if (percentiles != null) {
                     LineDataset dataset = new LineDataset();
@@ -430,6 +434,7 @@ public class Main {
             mainOptions.setAnimation(new DefaultAnimation().setDuration(0));
             mainOptions.getScales().addScale(Scales.ScaleAxis.X, new CartesianScaleOptions("percentile")
                     .setBorder(new BorderConfiguration().setDisplay(false))
+                            .setTicks(new CartesianTickOptions().setAlign("end"))
                     .setMin(0).setMax(MAX_PERCENTILE));
             mainOptions.getScales().addScale(Scales.ScaleAxis.Y, new CartesianScaleOptions("custom-log")
                     .setMin(minTime).setMax(maxTime)
@@ -463,7 +468,7 @@ public class Main {
             scatterOptions.getScales().addScale(Scales.ScaleAxis.Y, new CartesianScaleOptions("custom-log")
                     .setMin(minTime).setMax(maxTime)
                     .setBorder(new BorderConfiguration().setDisplay(false))
-                    .setTicks(new CartesianTickOptions().setAutoSkip(false).setCallback(new JavaScriptFunction("noTicks"))));
+                    .setTicks(new CartesianTickOptions().setAutoSkip(false).setDisplay(false)));
             scatterOptions.setLayout(new Layout().setPadding(0));
             new ChartEmitter(new ScatterChart()
                     .setData(scatterData)
