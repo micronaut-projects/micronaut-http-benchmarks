@@ -4,23 +4,39 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.hyperfoil.http.statistics.HttpStats;
+import io.micronaut.benchmark.loadgen.oci.Compute;
 import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
 import io.micronaut.benchmark.loadgen.oci.ProtocolSettings;
 import io.micronaut.benchmark.loadgen.oci.SuiteRunner;
+import one.jfr.JfrReader;
+import one.jfr.event.Event;
+import one.jfr.event.ExecutionSample;
+import software.xdev.chartjs.model.charts.BarChart;
+import software.xdev.chartjs.model.charts.Chart;
 import software.xdev.chartjs.model.charts.MixedChart;
+import software.xdev.chartjs.model.charts.ScatterChart;
+import software.xdev.chartjs.model.data.BarData;
 import software.xdev.chartjs.model.data.MixedData;
+import software.xdev.chartjs.model.data.ScatterData;
 import software.xdev.chartjs.model.datapoint.ScatterDataPoint;
+import software.xdev.chartjs.model.dataset.BarDataset;
 import software.xdev.chartjs.model.dataset.LineDataset;
 import software.xdev.chartjs.model.dataset.ScatterDataset;
 import software.xdev.chartjs.model.javascript.JavaScriptFunction;
+import software.xdev.chartjs.model.options.BarOptions;
 import software.xdev.chartjs.model.options.LegendOptions;
 import software.xdev.chartjs.model.options.LineOptions;
 import software.xdev.chartjs.model.options.Title;
 import software.xdev.chartjs.model.options.animation.DefaultAnimation;
+import software.xdev.chartjs.model.options.layout.Layout;
+import software.xdev.chartjs.model.options.scale.GridLineConfiguration;
 import software.xdev.chartjs.model.options.scale.Scales;
 import software.xdev.chartjs.model.options.scale.cartesian.AbstractCartesianScaleOptions;
+import software.xdev.chartjs.model.options.scale.cartesian.BorderConfiguration;
 import software.xdev.chartjs.model.options.scale.cartesian.CartesianScaleOptions;
 import software.xdev.chartjs.model.options.scale.cartesian.CartesianTickOptions;
+import software.xdev.chartjs.model.options.scale.cartesian.linear.LinearScaleOptions;
+import software.xdev.chartjs.model.options.scale.cartesian.linear.LinearTickOptions;
 
 import java.awt.*;
 import java.io.IOException;
@@ -36,6 +52,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -48,8 +65,8 @@ public class Main {
             new Discriminator("JSON implementation", p -> compileConfiguration(p, "json")),
             new Discriminator("Netty transport", p -> compileConfiguration(p, "transport")),
             new Discriminator("tcnative support", p -> compileConfiguration(p, "tcnative")),
-            new Discriminator("loom support", p -> compileConfiguration(p, "loom")),
-            new Discriminator("http client thread affinity mode", p -> compileConfiguration(p, "affinity"))
+            new Discriminator("loom support", p -> compileConfiguration(p, "loom"), List.of("off", "carried", "on")),
+            new Discriminator("http client thread affinity mode", p -> compileConfiguration(p, "affinity"), List.of("enforced", "preferred", "off"))
     );
     private static final double MAX_PERCENTILE = 0.999;
 
@@ -64,9 +81,12 @@ public class Main {
     private final List<List<String>> optionsByDiscriminator = new ArrayList<>();
     private final Map<DiscriminatorLabel, String> colors;
     private final List<SuiteRunner.BenchmarkParameters> index;
+    private final boolean asyncProfiler;
+    private final Map<SuiteRunner.BenchmarkParameters, JfrSummary> jfrSummaries;
+    private int chartIndex;
 
     private Main() throws IOException {
-        index = mapper.readValue(OUTPUT.resolve("index-full-loop.json").toFile(), new TypeReference<>() {
+        index = mapper.readValue(OUTPUT.resolve("index.json").toFile(), new TypeReference<>() {
         });
         index.sort(Comparator.comparing(SuiteRunner.BenchmarkParameters::name));
         index.removeIf(p -> {
@@ -89,14 +109,52 @@ public class Main {
         discriminated = index.stream()
                 .map(Main::getDiscriminator)
                 .distinct()
+                .sorted()
                 .toList();
 
         for (int i = 0; i < discriminated.getFirst().values.size(); i++) {
             int finalI = i;
-            optionsByDiscriminator.add(discriminated.stream().map(d -> d.values.get(finalI)).distinct().toList());
+            optionsByDiscriminator.add(discriminated.stream().map(d -> d.values.get(finalI)).distinct()
+                    .sorted(Comparator.comparingInt(DISCRIMINATORS.get(i).order::indexOf))
+                    .toList());
         }
 
         colors = selectColors(discriminated);
+
+        asyncProfiler = index.stream().anyMatch(p -> p.name().contains("-async-profiler"));
+        if (asyncProfiler && !index.stream().allMatch(p -> p.name().contains("-async-profiler"))) {
+            throw new IllegalStateException("Can't mix async-profiler with normal results");
+        }
+
+        if (asyncProfiler) {
+            jfrSummaries = new HashMap<>();
+            for (SuiteRunner.BenchmarkParameters parameters : index) {
+                JfrSummary summary = new JfrSummary();
+                jfrSummaries.put(parameters, summary);
+                try (JfrReader jfr = new JfrReader(OUTPUT.resolve(parameters.name()).resolve("profile.jfr").toString())) {
+                    while (true) {
+                        Event event = jfr.readEvent();
+                        if (event == null) {
+                            break;
+                        }
+                        if (event instanceof ExecutionSample) {
+                            // from JfrToHeatmap
+                            long msFromStart = (event.time - jfr.chunkStartTicks) * 1_000 / jfr.ticksPerSec;
+                            long timeMs = jfr.chunkStartNanos / 1_000_000 + msFromStart;
+
+                            for (HyperfoilRunner.StatsAll.Stats phase : getBenchmark(parameters.name()).stats()) {
+                                if (phase.total().summary().startTime < timeMs && phase.total().summary().endTime > timeMs) {
+                                    AtomicLong ctr = summary.phaseSampleCount.computeIfAbsent(phase.name(), k -> new AtomicLong());
+                                    ctr.setPlain(ctr.getPlain() + 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            jfrSummaries = null;
+        }
     }
 
     private static DiscriminatorLabel getDiscriminator(SuiteRunner.BenchmarkParameters p) {
@@ -167,19 +225,19 @@ public class Main {
         return v == null ? "" : v.toString();
     }
 
-    private static double percentileTransform(double values) {
-        return -Math.log10(1 - values);
-    }
-
-    private static double percentileTransformReverse(double values) {
-        return 1 - Math.pow(10, -values);
-    }
-
     private static String loadStatic(String name) {
         try (InputStream is = Main.class.getResourceAsStream(name)) {
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    private static String roundIfWhole(double d) {
+        if (d == (int) d) {
+            return (int) d + "";
+        } else {
+            return d + "";
         }
     }
 
@@ -230,6 +288,16 @@ public class Main {
                 }
             }
         }
+        Compute.ComputeConfiguration.InstanceType sut = index.getFirst().sutSpecs();
+        html.append("<dt>SUT</dt><dd>")
+                .append(sut.shape()).append(" ")
+                .append(roundIfWhole(sut.ocpus())).append("CPU&nbsp;")
+                .append(roundIfWhole(sut.memoryInGb())).append("G ")
+                .append(sut.image())
+                .append("</dd>");
+        if (asyncProfiler) {
+            html.append("<dt>async-profiler</dt><dd class='warning'>enabled</dd>");
+        }
         html.append("</dl></div>");
         html.append("<div>");
         if (rowDisc != null) {
@@ -245,7 +313,7 @@ public class Main {
             for (int i = 0; i < optionsByDiscriminator.get(rowDisc).size(); i++) {
                 html.append("<tr>");
                 if (i == 0) {
-                    html.append("<th rowspan='").append(optionsByDiscriminator.get(rowDisc).size()).append("'>").append(DISCRIMINATORS.get(rowDisc).name).append("</th>");
+                    html.append("<th class='sideways' rowspan='").append(optionsByDiscriminator.get(rowDisc).size()).append("'><span>").append(DISCRIMINATORS.get(rowDisc).name).append("</span></th>");
                 }
                 html.append("<th>").append(optionsByDiscriminator.get(rowDisc).get(i)).append("</th>");
                 for (String colValue : colDisc == null ? List.of("") : optionsByDiscriminator.get(colDisc)) {
@@ -272,37 +340,57 @@ public class Main {
         html.append("</div>");
         html.append("</div>");
 
+        double maxCpuUsage = asyncProfiler ? index.stream()
+                .flatMapToDouble(params -> getBenchmark(params.name()).stats().stream().mapToDouble(phase -> getCpuUsage(params, phase.name())))
+                .max().orElseThrow()
+                : 0;
+
         for (int phaseI = 0; phaseI < protocolSettings.ops().size(); phaseI++) {
             int ops = protocolSettings.ops().get(phaseI);
             String phase = "main/" + phaseI;
-            MixedData mixedData = new MixedData();
+            ScatterData scatterData = new ScatterData();
+            MixedData mainData = new MixedData();
+            BarData cpuData = asyncProfiler ? new BarData() : null;
 
             for (int i = 0; i < discriminated.size(); i++) {
                 DiscriminatorLabel discriminator = discriminated.get(i);
                 List<HyperfoilRunner.StatsAll.Histogram> percentiles = new ArrayList<>();
                 ScatterDataset medians = new ScatterDataset();
-                double medianX = percentileTransformReverse(percentileTransform(MAX_PERCENTILE) - (i + 1) * 0.1 - 0.05);
                 ScatterDataset averages = new ScatterDataset();
-                double averageX = percentileTransformReverse(percentileTransform(MAX_PERCENTILE) - (i + 1) * 0.1);
                 String color = colors.get(discriminator);
                 for (SuiteRunner.BenchmarkParameters parameters : index) {
                     if (!getDiscriminator(parameters).equals(discriminator)) {
                         continue;
                     }
-                    HyperfoilRunner.StatsAll.Stats stats = getBenchmark(parameters.name()).findPhase(phase);
+                    HyperfoilRunner.StatsAll benchmark = getBenchmark(parameters.name());
+                    HyperfoilRunner.StatsAll.Stats stats = benchmark.findPhase(phase);
                     if (stats == null) {
                         percentiles = null;
                         break;
                     }
+                    if (asyncProfiler) {
+                        cpuData.addLabel("");
+                        cpuData.addDataset(new BarDataset()
+                                .addData(getCpuUsage(parameters, phase))
+                                .addBackgroundColor(color)
+                                .setCategoryPercentage(1)
+                                .setBarPercentage(0.8)
+                                .setBarThickness("flex")
+                        );
+                    }
+                    if (benchmark.failures().stream().anyMatch(f -> f.phase().equals(phase))) {
+                        percentiles = null;
+                        break;
+                    }
                     percentiles.add(stats.histogram());
-                    medians.addData(new ScatterDataPoint(medianX, stats.histogram()
+                    medians.addData(new ScatterDataPoint((double) i, stats.histogram()
                             .percentiles().stream()
                             .filter(p -> p.percentile() >= 0.5)
                             .mapToDouble(HyperfoilRunner.StatsAll.Percentile::to)
                             .findFirst().orElseThrow()));
                     medians.addPointBorderColor(color);
                     medians.addPointStyle("crossRot");
-                    averages.addData(new ScatterDataPoint(averageX, stats.total().summary().meanResponseTime));
+                    averages.addData(new ScatterDataPoint(i + 0.5, stats.total().summary().meanResponseTime));
                     averages.addPointBorderColor(color);
                     averages.addPointStyle("cross");
                 }
@@ -317,46 +405,118 @@ public class Main {
                     }
                     dataset.setBorderColor(color);
                     dataset.setBorderWidth(2);
-                    mixedData.addDataset(dataset.withDefaultType());
+                    mainData.addDataset(dataset.withDefaultType());
                 }
                 if (!medians.getData().isEmpty()) {
-                    mixedData.addDataset(medians.withDefaultType());
-                    mixedData.addDataset(averages.withDefaultType());
+                    scatterData.addDataset(medians.withDefaultType());
+                    scatterData.addDataset(averages.withDefaultType());
                 }
             }
 
-            if (mixedData.getDatasets().isEmpty()) {
+            if (mainData.getDatasets().isEmpty() && scatterData.getDatasets().isEmpty() && (cpuData == null || cpuData.getDatasets().isEmpty())) {
                 continue;
             }
 
-            LineOptions lineOptions = new LineOptions();
-            lineOptions.setAnimation(new DefaultAnimation().setDuration(0));
-            lineOptions.getScales().addScale(Scales.ScaleAxis.X, new CartesianScaleOptions("percentile")
-                    .setMin(0).setMax(MAX_PERCENTILE)
-            );
-            lineOptions.getScales().addScale(Scales.ScaleAxis.Y, new CartesianScaleOptions("custom-log")
+            LineOptions mainOptions = new LineOptions();
+            mainOptions.setAnimation(new DefaultAnimation().setDuration(0));
+            mainOptions.getScales().addScale(Scales.ScaleAxis.X, new CartesianScaleOptions("percentile")
+                    .setBorder(new BorderConfiguration().setDisplay(false))
+                    .setMin(0).setMax(MAX_PERCENTILE));
+            mainOptions.getScales().addScale(Scales.ScaleAxis.Y, new CartesianScaleOptions("custom-log")
                     .setMin(minTime).setMax(maxTime)
                     .setTitle(new AbstractCartesianScaleOptions.Title().setDisplay(true).setText("Request latency"))
+                    .setBorder(new BorderConfiguration().setDisplay(false))
                     .setTicks(new CartesianTickOptions()
                             .setAutoSkip(false)
-                            .setCallback(new JavaScriptFunction("formatYTicks")))
-            );
-            lineOptions.getPlugins().setLegend(new LegendOptions().setDisplay(false));
-            lineOptions.getPlugins().setTitle(new Title().setDisplay(true).setText(ops + " ops/s"));
+                            .setCallback(new JavaScriptFunction("formatYTicks"))));
+            mainOptions.getPlugins().setLegend(new LegendOptions().setDisplay(false));
+            mainOptions.getPlugins().setTitle(new Title().setDisplay(true).setText(ops + " ops/s"));
+            mainOptions.setLayout(new Layout().setPadding(0));
             MixedChart chart = new MixedChart()
-                    .setData(mixedData)
-                    .setOptions(lineOptions);
-            html.append("<div class='run'><canvas id='c")
-                    .append(phaseI)
-                    .append("'></canvas><script>timedCharts.push(new Chart(document.getElementById('c")
-                    .append(phaseI)
-                    .append("').getContext('2d'), ")
-                    .append(chart.toJson())
-                    .append("))</script></div>");
+                    .setData(mainData)
+                    .setOptions(mainOptions);
+            html.append("<div class='run-wrapper'><div class='run");
+            if (asyncProfiler) {
+                html.append(" async-profiler");
+            }
+            html.append("'>");
+            emitTimedChart(html, chart);
+            LineOptions scatterOptions = new LineOptions();
+            scatterOptions.setMaintainAspectRatio(false);
+            scatterOptions.getPlugins().setLegend(new LegendOptions().setDisplay(false));
+            scatterOptions.setAnimation(new DefaultAnimation().setDuration(0));
+            scatterOptions.getPlugins().setTitle(new Title().setDisplay(true).setText(""));
+            scatterOptions.getScales().addScale(Scales.ScaleAxis.X, new LinearScaleOptions()
+                    .setMin(-0.5).setMax(discriminated.size())
+                    .setGrid(new GridLineConfiguration().setDisplay(false))
+                    .setBorder(new BorderConfiguration().setDisplay(false))
+                    .setTicks(new LinearTickOptions().setCallback(new JavaScriptFunction("noTicks"))));
+            scatterOptions.getScales().addScale(Scales.ScaleAxis.Y, new CartesianScaleOptions("custom-log")
+                    .setMin(minTime).setMax(maxTime)
+                    .setBorder(new BorderConfiguration().setDisplay(false))
+                    .setTicks(new CartesianTickOptions().setAutoSkip(false).setCallback(new JavaScriptFunction("noTicks"))));
+            scatterOptions.setLayout(new Layout().setPadding(0));
+            emitTimedChart(html, new ScatterChart()
+                    .setData(scatterData)
+                    .setOptions(scatterOptions)
+            );
+            if (asyncProfiler) {
+                BarOptions cpuOptions = new BarOptions();
+                cpuOptions.setMaintainAspectRatio(false);
+                cpuOptions.getPlugins().setLegend(new LegendOptions().setDisplay(false));
+                cpuOptions.setAnimation(new DefaultAnimation().setDuration(0));
+                cpuOptions.getPlugins().setTitle(new Title().setDisplay(true).setText("CPU"));
+                cpuOptions.getScales().addScale(Scales.ScaleAxis.Y, new LinearScaleOptions()
+                        .setMin(0).setMax(maxCpuUsage).setDisplay(false)
+                        .setBorder(new BorderConfiguration().setDisplay(false))
+                        .setTicks(new LinearTickOptions().setDisplay(false))
+                        .setGrid(new GridLineConfiguration().setDisplay(false).setDrawTicks(false))
+                );
+                cpuOptions.getScales().addScale(Scales.ScaleAxis.X, new LinearScaleOptions()
+                        .setDisplay(false)
+                        .setBorder(new BorderConfiguration().setDisplay(false))
+                        .setTicks(new LinearTickOptions().setDisplay(false).setPadding(0))
+                        .setGrid(new GridLineConfiguration().setDisplay(false).setDrawTicks(false))
+                );
+                cpuOptions.setLayout(new Layout().setPadding(0));
+                emitChart(html, new BarChart()
+                        .setData(cpuData)
+                        .setOptions(cpuOptions));
+            }
+            html.append("</div></div>");
         }
 
         html.append("</body></html>");
         return html.toString();
+    }
+
+    private double getCpuUsage(SuiteRunner.BenchmarkParameters parameters, String phase) {
+        HyperfoilRunner.StatsAll.Stats stats = getBenchmark(parameters.name()).findPhase(phase);
+        long sampleCount = jfrSummaries.get(parameters).phaseSampleCount.get(phase).getPlain();
+        long duration = stats.total().summary().endTime - stats.total().summary().startTime;
+        return (double) sampleCount / duration;
+    }
+
+    private void emitTimedChart(StringBuilder html, Chart<?, ?, ?> chart) {
+        int i = chartIndex++;
+        html.append("<div><canvas id='c")
+                .append(i)
+                .append("'></canvas><script>timedCharts.push(new Chart(document.getElementById('c")
+                .append(i)
+                .append("').getContext('2d'), ")
+                .append(chart.toJson())
+                .append("))</script></div>");
+    }
+
+    private void emitChart(StringBuilder html, Chart<?, ?, ?> chart) {
+        int i = chartIndex++;
+        html.append("<div><canvas id='c")
+                .append(i)
+                .append("'></canvas><script>new Chart(document.getElementById('c")
+                .append(i)
+                .append("').getContext('2d'), ")
+                .append(chart.toJson())
+                .append(")</script></div>");
     }
 
     private static HyperfoilRunner.StatsAll.Histogram combineHistograms(List<HyperfoilRunner.StatsAll.Histogram> histograms) {
@@ -404,12 +564,37 @@ public class Main {
 
     private record Discriminator(
             String name,
-            Function<SuiteRunner.BenchmarkParameters, String> extractor
+            Function<SuiteRunner.BenchmarkParameters, String> extractor,
+            List<String> order
     ) {
+        Discriminator(String name, Function<SuiteRunner.BenchmarkParameters, String> extractor) {
+            this(name, extractor, List.of());
+        }
     }
 
     private record DiscriminatorLabel(
             List<String> values
-    ) {
+    ) implements Comparable<DiscriminatorLabel> {
+        @Override
+        public int compareTo(DiscriminatorLabel o) {
+            for (int i = 0; i < values.size(); i++) {
+                String l = values.get(i);
+                String r = o.values.get(i);
+                List<String> order = DISCRIMINATORS.get(i).order;
+                int cmp = Integer.compare(order.indexOf(l), order.indexOf(r));
+                if (cmp != 0) {
+                    return cmp;
+                }
+                cmp = l.compareTo(r);
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            return 0;
+        }
+    }
+
+    private static class JfrSummary {
+        final Map<String, AtomicLong> phaseSampleCount = new HashMap<>();
     }
 }

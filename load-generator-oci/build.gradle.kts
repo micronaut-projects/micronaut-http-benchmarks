@@ -25,10 +25,11 @@ dependencies {
     api("io.hyperfoil:hyperfoil-clustering:0.27")
     implementation("tools.profiler:async-profiler:4.0:linux-x64")
     implementation("tools.profiler:async-profiler:4.0:linux-arm64")
-    implementation("tools.profiler:jfr-converter:4.0")
+    api("tools.profiler:jfr-converter:4.0")
     implementation("org.apache.sshd:sshd-core:2.15.0")
     implementation("org.apache.sshd:sshd-scp:2.15.0")
     implementation("org.apache.sshd:sshd-sftp:2.15.0")
+    implementation("ch.qos.logback:logback-classic:1.5.18")
 }
 
 micronaut {

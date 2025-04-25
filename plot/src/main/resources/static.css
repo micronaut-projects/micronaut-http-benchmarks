@@ -28,15 +28,9 @@ dd {
     grid-template-columns: 2fr 1fr 1fr;
 }
 #legend > * {
-    margin: 1em;
+    margin: 0.8em;
     padding: 1em;
     border: 1px solid #999;
-}
-
-.run {
-    width: 33%;
-    height: auto;
-    display: inline-block;
 }
 
 h3, th {
@@ -49,4 +43,38 @@ h3, th {
 #max-time {
     margin-top: 1em;
     display: block;
+}
+
+.sideways {
+    min-width: 1.5em;
+}
+
+.sideways span {
+    writing-mode: sideways-lr;
+    display: block;
+}
+
+.warning {
+    background-color: #ffcc00;
+}
+
+.run-wrapper {
+    width: 33%;
+    display: inline-block;
+}
+
+.run {
+    margin: 0.8em;
+    height: auto;
+    display: grid;
+    grid-template-columns: 90% 10%;
+    border: 1px solid #999;
+}
+
+.run.async-profiler {
+    grid-template-columns: 80% 10% 10%;
+}
+
+.run canvas {
+    height: 100%;
 }

@@ -5,12 +5,22 @@ class PercentileScale extends Chart.Scale {
     }
 
     buildTicks() {
-        return [
-            {value: 0.5, label: "P50", major: true},
-            {value: 0.9, label: "P90", major: true},
-            {value: 0.99, label: "P99", major: true},
-            {value: 0.999, label: "P99.9", major: true},
-        ]
+        const ticks = [];
+        ticks.push({value: 0.5, major: true});
+        for (let i = -1; ; i--) {
+            const percentile = 1 - Math.pow(10, i);
+            if (percentile > this.max) {
+                break;
+            }
+            ticks.push({value: percentile, major: true});
+        }
+        return ticks;
+    }
+
+    generateTickLabels() {
+        for (const tick of this.ticks) {
+            tick.label = "P" + (tick.value * 100);
+        }
     }
 
     percentileTransform(value) {
@@ -67,6 +77,10 @@ function formatTime(value) {
 function formatYTicks(value) {
     if (Math.round(Math.log10(value)) !== Math.log10(value)) return "";
     return formatTime(value)
+}
+
+function noTicks() {
+    return '';
 }
 
 timedCharts = [];
