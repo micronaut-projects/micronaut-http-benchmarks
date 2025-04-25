@@ -75,6 +75,10 @@ h3, th {
     grid-template-columns: 80% 10% 10%;
 }
 
+.run .cpu-usage-metric {
+    grid-column: 3 / 4;
+}
+
 .run canvas {
     height: 100%;
 }

@@ -9,6 +9,7 @@ import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
 import io.micronaut.benchmark.loadgen.oci.ProtocolSettings;
 import io.micronaut.benchmark.loadgen.oci.SuiteRunner;
 import one.jfr.JfrReader;
+import one.jfr.event.CPULoad;
 import one.jfr.event.Event;
 import one.jfr.event.ExecutionSample;
 import software.xdev.chartjs.model.charts.BarChart;
@@ -47,12 +48,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -137,16 +139,18 @@ public class Main {
                         if (event == null) {
                             break;
                         }
-                        if (event instanceof ExecutionSample) {
-                            // from JfrToHeatmap
-                            long msFromStart = (event.time - jfr.chunkStartTicks) * 1_000 / jfr.ticksPerSec;
-                            long timeMs = jfr.chunkStartNanos / 1_000_000 + msFromStart;
+                        // from JfrToHeatmap
+                        long msFromStart = (event.time - jfr.chunkStartTicks) * 1_000 / jfr.ticksPerSec;
+                        Instant time = Instant.ofEpochMilli(jfr.chunkStartNanos / 1_000_000 + msFromStart);
+                        HyperfoilRunner.StatsAll.Stats phase = getBenchmark(parameters.name()).findPhaseContaining(time);
 
-                            for (HyperfoilRunner.StatsAll.Stats phase : getBenchmark(parameters.name()).stats()) {
-                                if (phase.total().summary().startTime < timeMs && phase.total().summary().endTime > timeMs) {
-                                    AtomicLong ctr = summary.phaseSampleCount.computeIfAbsent(phase.name(), k -> new AtomicLong());
-                                    ctr.setPlain(ctr.getPlain() + 1);
-                                }
+                        if (phase != null) {
+                            if (event instanceof ExecutionSample es) {
+                                summary.phase(phase).executionSamples += es.samples;
+                            } else if (event instanceof CPULoad cl) {
+                                summary.phase(phase).jvmUser.add(cl.jvmUser);
+                                summary.phase(phase).jvmSystem.add(cl.jvmSystem);
+                                summary.phase(phase).machineTotal.add(cl.machineTotal);
                             }
                         }
                     }
@@ -337,20 +341,22 @@ public class Main {
                 .append("' max='").append(Math.log10(Duration.ofSeconds(2).toNanos()))
                 .append("' value='").append(Math.log10(maxTime))
                 .append("' oninput='updateMaxTime(Math.pow(10, this.value))' step='any'> <span></span></label>");
+        if (asyncProfiler) {
+            html.append("<label>CPU Usage Metric: <select id='cpu-usage-metric-select' onchange='setCpuUsageMetric(this.value)'>");
+            for (CpuUsageMetric metric : CpuUsageMetric.values()) {
+                html.append("<option value='cpu-usage-metric-").append(metric.name()).append("'>").append(metric.name()).append("</option>");
+            }
+            html.append("</select></label>");
+        }
         html.append("</div>");
         html.append("</div>");
-
-        double maxCpuUsage = asyncProfiler ? index.stream()
-                .flatMapToDouble(params -> getBenchmark(params.name()).stats().stream().mapToDouble(phase -> getCpuUsage(params, phase.name())))
-                .max().orElseThrow()
-                : 0;
 
         for (int phaseI = 0; phaseI < protocolSettings.ops().size(); phaseI++) {
             int ops = protocolSettings.ops().get(phaseI);
             String phase = "main/" + phaseI;
             ScatterData scatterData = new ScatterData();
             MixedData mainData = new MixedData();
-            BarData cpuData = asyncProfiler ? new BarData() : null;
+            Map<CpuUsageMetric, BarData> cpuData = new EnumMap<>(CpuUsageMetric.class);
 
             for (int i = 0; i < discriminated.size(); i++) {
                 DiscriminatorLabel discriminator = discriminated.get(i);
@@ -369,14 +375,17 @@ public class Main {
                         break;
                     }
                     if (asyncProfiler) {
-                        cpuData.addLabel("");
-                        cpuData.addDataset(new BarDataset()
-                                .addData(getCpuUsage(parameters, phase))
-                                .addBackgroundColor(color)
-                                .setCategoryPercentage(1)
-                                .setBarPercentage(0.8)
-                                .setBarThickness("flex")
-                        );
+                        for (CpuUsageMetric metric : CpuUsageMetric.values()) {
+                            BarData data = cpuData.computeIfAbsent(metric, k -> new BarData());
+                            data.addLabel("");
+                            data.addDataset(new BarDataset()
+                                    .addData(jfrSummaries.get(parameters).phase(stats).get(metric))
+                                    .addBackgroundColor(color)
+                                    .setCategoryPercentage(1)
+                                    .setBarPercentage(0.8)
+                                    .setBarThickness("flex")
+                            );
+                        }
                     }
                     if (benchmark.failures().stream().anyMatch(f -> f.phase().equals(phase))) {
                         percentiles = null;
@@ -413,7 +422,7 @@ public class Main {
                 }
             }
 
-            if (mainData.getDatasets().isEmpty() && scatterData.getDatasets().isEmpty() && (cpuData == null || cpuData.getDatasets().isEmpty())) {
+            if (mainData.getDatasets().isEmpty() && scatterData.getDatasets().isEmpty() && cpuData.values().stream().allMatch(d -> d.getDatasets().isEmpty())) {
                 continue;
             }
 
@@ -440,7 +449,7 @@ public class Main {
                 html.append(" async-profiler");
             }
             html.append("'>");
-            emitTimedChart(html, chart);
+            new ChartEmitter(chart).collection("timedCharts").emit(html);
             LineOptions scatterOptions = new LineOptions();
             scatterOptions.setMaintainAspectRatio(false);
             scatterOptions.getPlugins().setLegend(new LegendOptions().setDisplay(false));
@@ -456,67 +465,46 @@ public class Main {
                     .setBorder(new BorderConfiguration().setDisplay(false))
                     .setTicks(new CartesianTickOptions().setAutoSkip(false).setCallback(new JavaScriptFunction("noTicks"))));
             scatterOptions.setLayout(new Layout().setPadding(0));
-            emitTimedChart(html, new ScatterChart()
+            new ChartEmitter(new ScatterChart()
                     .setData(scatterData)
                     .setOptions(scatterOptions)
-            );
+            ).collection("timedCharts").emit(html);
             if (asyncProfiler) {
-                BarOptions cpuOptions = new BarOptions();
-                cpuOptions.setMaintainAspectRatio(false);
-                cpuOptions.getPlugins().setLegend(new LegendOptions().setDisplay(false));
-                cpuOptions.setAnimation(new DefaultAnimation().setDuration(0));
-                cpuOptions.getPlugins().setTitle(new Title().setDisplay(true).setText("CPU"));
-                cpuOptions.getScales().addScale(Scales.ScaleAxis.Y, new LinearScaleOptions()
-                        .setMin(0).setMax(maxCpuUsage).setDisplay(false)
-                        .setBorder(new BorderConfiguration().setDisplay(false))
-                        .setTicks(new LinearTickOptions().setDisplay(false))
-                        .setGrid(new GridLineConfiguration().setDisplay(false).setDrawTicks(false))
-                );
-                cpuOptions.getScales().addScale(Scales.ScaleAxis.X, new LinearScaleOptions()
-                        .setDisplay(false)
-                        .setBorder(new BorderConfiguration().setDisplay(false))
-                        .setTicks(new LinearTickOptions().setDisplay(false).setPadding(0))
-                        .setGrid(new GridLineConfiguration().setDisplay(false).setDrawTicks(false))
-                );
-                cpuOptions.setLayout(new Layout().setPadding(0));
-                emitChart(html, new BarChart()
-                        .setData(cpuData)
-                        .setOptions(cpuOptions));
+                for (CpuUsageMetric metric : CpuUsageMetric.values()) {
+                    BarOptions cpuOptions = new BarOptions();
+                    cpuOptions.setMaintainAspectRatio(false);
+                    cpuOptions.getPlugins().setLegend(new LegendOptions().setDisplay(false));
+                    cpuOptions.setAnimation(new DefaultAnimation().setDuration(0));
+                    cpuOptions.getPlugins().setTitle(new Title().setDisplay(true).setText("CPU"));
+                    double maxCpu = jfrSummaries.values().stream()
+                            .flatMap(s -> s.phases.values().stream())
+                            .mapToDouble(s -> s.get(metric))
+                            .max().orElseThrow();
+                    cpuOptions.getScales().addScale(Scales.ScaleAxis.Y, new LinearScaleOptions()
+                            .setMin(0).setMax(maxCpu).setDisplay(false)
+                            .setBorder(new BorderConfiguration().setDisplay(false))
+                            .setTicks(new LinearTickOptions().setDisplay(false))
+                            .setGrid(new GridLineConfiguration().setDisplay(false).setDrawTicks(false))
+                    );
+                    cpuOptions.getScales().addScale(Scales.ScaleAxis.X, new LinearScaleOptions()
+                            .setDisplay(false)
+                            .setBorder(new BorderConfiguration().setDisplay(false))
+                            .setTicks(new LinearTickOptions().setDisplay(false).setPadding(0))
+                            .setGrid(new GridLineConfiguration().setDisplay(false).setDrawTicks(false))
+                    );
+                    cpuOptions.setLayout(new Layout().setPadding(0));
+                    new ChartEmitter(new BarChart()
+                            .setData(cpuData.get(metric))
+                            .setOptions(cpuOptions))
+                            .wrapperClass("cpu-usage-metric cpu-usage-metric-" + metric)
+                            .emit(html);
+                }
             }
             html.append("</div></div>");
         }
 
         html.append("</body></html>");
         return html.toString();
-    }
-
-    private double getCpuUsage(SuiteRunner.BenchmarkParameters parameters, String phase) {
-        HyperfoilRunner.StatsAll.Stats stats = getBenchmark(parameters.name()).findPhase(phase);
-        long sampleCount = jfrSummaries.get(parameters).phaseSampleCount.get(phase).getPlain();
-        long duration = stats.total().summary().endTime - stats.total().summary().startTime;
-        return (double) sampleCount / duration;
-    }
-
-    private void emitTimedChart(StringBuilder html, Chart<?, ?, ?> chart) {
-        int i = chartIndex++;
-        html.append("<div><canvas id='c")
-                .append(i)
-                .append("'></canvas><script>timedCharts.push(new Chart(document.getElementById('c")
-                .append(i)
-                .append("').getContext('2d'), ")
-                .append(chart.toJson())
-                .append("))</script></div>");
-    }
-
-    private void emitChart(StringBuilder html, Chart<?, ?, ?> chart) {
-        int i = chartIndex++;
-        html.append("<div><canvas id='c")
-                .append(i)
-                .append("'></canvas><script>new Chart(document.getElementById('c")
-                .append(i)
-                .append("').getContext('2d'), ")
-                .append(chart.toJson())
-                .append(")</script></div>");
     }
 
     private static HyperfoilRunner.StatsAll.Histogram combineHistograms(List<HyperfoilRunner.StatsAll.Histogram> histograms) {
@@ -562,6 +550,43 @@ public class Main {
         Runtime.getRuntime().exec(new String[]{"firefox", tmp.toString()});
     }
 
+    private final class ChartEmitter {
+        private final Chart<?, ?, ?> chart;
+        private String collection = null;
+        private String wrapperClass = "";
+
+        private ChartEmitter(Chart<?, ?, ?> chart) {
+            this.chart = chart;
+        }
+
+        public ChartEmitter collection(String collection) {
+            this.collection = collection;
+            return this;
+        }
+
+        public ChartEmitter wrapperClass(String wrapperClass) {
+            this.wrapperClass = wrapperClass;
+            return this;
+        }
+
+        void emit(StringBuilder html) {
+            int i = chartIndex++;
+            html.append("<div class='").append(wrapperClass).append("'><canvas id='c").append(i).append("'></canvas><script>");
+            if (collection != null) {
+                html.append(collection).append(".push(");
+            }
+            html.append("new Chart(document.getElementById('c")
+                    .append(i)
+                    .append("').getContext('2d'), ")
+                    .append(chart.toJson())
+                    .append(")");
+            if (collection != null) {
+                html.append(")");
+            }
+            html.append("</script></div>");
+        }
+    }
+
     private record Discriminator(
             String name,
             Function<SuiteRunner.BenchmarkParameters, String> extractor,
@@ -594,7 +619,41 @@ public class Main {
         }
     }
 
-    private static class JfrSummary {
-        final Map<String, AtomicLong> phaseSampleCount = new HashMap<>();
+    private static final class JfrSummary {
+        final Map<String, PhaseSummary> phases = new HashMap<>();
+
+        PhaseSummary phase(HyperfoilRunner.StatsAll.Stats phase) {
+            return phases.computeIfAbsent(phase.name(), k -> new PhaseSummary(Duration.ofNanos(phase.total().summary().endTime - phase.total().summary().startTime)));
+        }
+    }
+
+    private static final class PhaseSummary {
+        final Duration duration;
+        long executionSamples;
+        final List<Float> jvmUser = new ArrayList<>();
+        final List<Float> jvmSystem = new ArrayList<>();
+        final List<Float> machineTotal = new ArrayList<>();
+
+        PhaseSummary(Duration duration) {
+            this.duration = duration;
+        }
+
+        double get(CpuUsageMetric metric) {
+            return switch (metric) {
+                case EXECUTION_SAMPLES -> (double) executionSamples / duration.toNanos();
+                case JVM_USER -> jvmUser.stream().mapToDouble(Float::doubleValue).average().orElseThrow();
+                case JVM_SYSTEM -> jvmSystem.stream().mapToDouble(Float::doubleValue).average().orElseThrow();
+                case JVM -> get(CpuUsageMetric.JVM_USER) + get(CpuUsageMetric.JVM_SYSTEM);
+                case MACHINE_TOTAL -> machineTotal.stream().mapToDouble(Float::doubleValue).average().orElseThrow();
+            };
+        }
+    }
+
+    private enum CpuUsageMetric {
+        EXECUTION_SAMPLES,
+        JVM_USER,
+        JVM_SYSTEM,
+        JVM,
+        MACHINE_TOTAL,
     }
 }
