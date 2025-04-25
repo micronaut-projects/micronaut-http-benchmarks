@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import org.apache.sshd.client.channel.ChannelExec;
+import org.apache.sshd.client.channel.ClientChannelEvent;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.scp.client.ScpClient;
 import org.apache.sshd.scp.client.ScpClientCreator;
@@ -20,9 +21,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipOutputStream;
@@ -92,9 +93,6 @@ public final class JavaRunFactory {
          * Location of the jar to run.
          */
         public RunBuilder shadowJar(Path shadowJar) {
-            if (!Files.exists(shadowJar)) {
-                throw new IllegalArgumentException("File does not exist: " + shadowJar);
-            }
             this.shadowJar = shadowJar;
             this.classpath = null;
             this.mainClass = null;
@@ -238,6 +236,7 @@ public final class JavaRunFactory {
                         public void setupAndRun(ClientSession benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
                             progress.update(BenchmarkPhase.INSTALLING_SOFTWARE);
                             SshUtil.run(benchmarkServerClient, "sudo yum install jdk-" + hotspotConfiguration.version() + "-headless -y", log, 0, 1);
+                            SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.yama.ptrace_scope=1", log, 0, 1);
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
                             uploadClasspath(benchmarkServerClient, log);
                             String start = perfStatConfiguration.asCommandPrefix() + "java ";
@@ -257,9 +256,13 @@ public final class JavaRunFactory {
                                 try {
                                     benchmarkClosure.benchmark(progress);
                                 } finally {
-                                    SshUtil.interrupt(cmd);
-                                    TimeUnit.SECONDS.sleep(1);
-                                    SshUtil.signal(cmd, "KILL");
+                                    SshUtil.signal(cmd, "INT");
+                                    if (cmd.waitFor(ClientSession.REMOTE_COMMAND_WAIT_EVENTS, Duration.ofMinutes(1)).contains(ClientChannelEvent.TIMEOUT)) {
+                                        LOG.warn("Timeout waiting for process to terminate status={} {}", cmd.getChannelState(), benchmarkServerClient.getSessionState());
+                                        SshUtil.run(benchmarkServerClient, "ps -aux", log);
+                                        SshUtil.run(benchmarkServerClient, "sudo jhsdb jstack --pid $(pgrep java)", log);
+                                        SshUtil.signal(cmd, "KILL");
+                                    }
                                 }
                             }
                             if (asyncProfilerConfiguration.enabled()) {

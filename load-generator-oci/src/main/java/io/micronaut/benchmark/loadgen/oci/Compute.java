@@ -190,7 +190,7 @@ public final class Compute {
          *
          * @return The instance
          */
-        public Instance launch() throws InterruptedException {
+        public Instance launch() throws Exception {
             CreateVnicDetails.Builder vnicDetails = CreateVnicDetails.builder()
                     .subnetId(subnetId)
                     .assignPublicIp(publicIp);
@@ -205,7 +205,7 @@ public final class Compute {
                     .orElseThrow(() -> new NoSuchElementException("Image " + instanceType.image + " not found. Available images are: \n" + images.stream().map(Image::getDisplayName).collect(Collectors.joining("\n"))));
             while (true) {
                 try {
-                    String id = computeClient.forRegion(location).launchInstance(LaunchInstanceRequest.builder()
+                    String id = Infrastructure.retry(() -> computeClient.forRegion(location).launchInstance(LaunchInstanceRequest.builder()
                             .launchInstanceDetails(LaunchInstanceDetails.builder()
                                     .compartmentId(location.compartmentId())
                                     .availabilityDomain(location.availabilityDomain())
@@ -234,7 +234,7 @@ public final class Compute {
                                             ))
                                             .build())
                                     .build())
-                            .build()).getInstance().getId();
+                            .build()).getInstance().getId());
                     return new Instance(location, id, privateIp, publicIp, bastionId, relayInstance);
                 } catch (BmcException bmce) {
                     if (bmce.getStatusCode() == 429) {
@@ -310,11 +310,12 @@ public final class Compute {
                                                 .build())
                                 .build())
                         .build()).getSession());
+                String sessionId = session.getId();
                 while (session.getLifecycleState() == SessionLifecycleState.Creating) {
                     TimeUnit.SECONDS.sleep(1);
-                    session = bastionClient.forRegion(location).getSession(GetSessionRequest.builder()
-                            .sessionId(session.getId())
-                            .build()).getSession();
+                    session = Infrastructure.retry(() -> bastionClient.forRegion(location).getSession(GetSessionRequest.builder()
+                            .sessionId(sessionId)
+                            .build()).getSession());
                 }
                 relay = new SshFactory.Relay(session.getBastionUserName(), "host.bastion." + location.region() + ".oci.oraclecloud.com");
             } else if (relayInstance != null) {
