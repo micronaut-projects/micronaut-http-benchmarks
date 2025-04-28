@@ -48,6 +48,7 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -665,6 +666,16 @@ public final class HyperfoilRunner implements AutoCloseable {
         public Stats findPhase(String name) {
             for (Stats phase : stats) {
                 if (phase.name.equals(name)) {
+                    return phase;
+                }
+            }
+            return null;
+        }
+
+        @Nullable
+        public Stats findPhaseContaining(Instant time) {
+            for (Stats phase : stats) {
+                if (phase.total.summary.startTime < time.toEpochMilli() && phase.total.summary.endTime > time.toEpochMilli()) {
                     return phase;
                 }
             }

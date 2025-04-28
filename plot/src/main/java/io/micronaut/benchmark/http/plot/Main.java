@@ -65,6 +65,8 @@ public class Main {
 
     private static final List<Discriminator> DISCRIMINATORS = List.of(
             new Discriminator("type", SuiteRunner.BenchmarkParameters::type),
+            new Discriminator("Hotspot options", p -> ((Map<?, ?>) p.parameters()).get("hotspotOptions").toString()),
+            new Discriminator("Request", p -> p.load().protocol().protocol().name() + " " + p.load().definition().getMethod() + " " + p.load().definition().getUri()),
             new Discriminator("Micronaut version", p -> compileConfiguration(p, "micronaut")),
             new Discriminator("JSON implementation", p -> compileConfiguration(p, "json")),
             new Discriminator("Netty transport", p -> compileConfiguration(p, "transport")),
@@ -276,7 +278,7 @@ public class Main {
                 To visualize result spread, the median (+) and average (x) latency of each run is also shown. These are not merged between separate infrastructures, so if a framework only fails on one infra, median latency on the other infras is still shown.
                 </p>
                 """);
-        html.append("<div><h3>Common settings</h3><dl>");
+        html.append("<div><dl>");
         Integer rowDisc = null, colDisc = null;
         for (int i = 0; i < optionsByDiscriminator.size(); i++) {
             List<String> disc = optionsByDiscriminator.get(i);

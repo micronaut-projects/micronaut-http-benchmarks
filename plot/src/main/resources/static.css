@@ -9,8 +9,9 @@ body {
 
 dl {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 2fr;
     margin: 0;
+    font-size: 0.8em;
 }
 dt {
     width: auto;
@@ -19,13 +20,14 @@ dt {
 dd {
     margin-left: 2em;
     grid-column: 2 / 3;
+    word-break: keep-all;
 }
 #distinguisher-legend td {
     min-width: 2em;
 }
 #legend {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
+    grid-template-columns: 3fr 3fr 2fr;
 }
 #legend > * {
     margin: 0.8em;
