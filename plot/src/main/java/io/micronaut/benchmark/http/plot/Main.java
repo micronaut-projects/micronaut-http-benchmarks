@@ -61,6 +61,8 @@ import java.util.stream.Collectors;
 public class Main {
     private static final Path OUTPUT = Path.of("output");
 
+    private static final boolean COMBINE_HISTOGRAMS = true;
+
     private static final List<Discriminator> DISCRIMINATORS = List.of(
             new Discriminator("type", SuiteRunner.BenchmarkParameters::type),
             new Discriminator("Micronaut version", p -> compileConfiguration(p, "micronaut")),
@@ -360,7 +362,7 @@ public class Main {
 
             for (int i = 0; i < discriminated.size(); i++) {
                 DiscriminatorLabel discriminator = discriminated.get(i);
-                List<HyperfoilRunner.StatsAll.Histogram> percentiles = new ArrayList<>();
+                List<HyperfoilRunner.StatsAll.Histogram> percentiles = COMBINE_HISTOGRAMS ? new ArrayList<>() : null;
                 ScatterDataset medians = new ScatterDataset();
                 ScatterDataset averages = new ScatterDataset();
                 String color = colors.get(discriminator);
@@ -391,7 +393,11 @@ public class Main {
                         percentiles = null;
                         break;
                     }
-                    percentiles.add(stats.histogram());
+                    if (COMBINE_HISTOGRAMS) {
+                        percentiles.add(stats.histogram());
+                    } else {
+                        addHistogram(mainData, stats.histogram(), color);
+                    }
                     medians.addData(new ScatterDataPoint((double) i, stats.histogram()
                             .percentiles().stream()
                             .filter(p -> p.percentile() >= 0.5)
@@ -408,17 +414,7 @@ public class Main {
                     averages.addPointRadius(5);
                 }
                 if (percentiles != null) {
-                    LineDataset dataset = new LineDataset();
-                    for (HyperfoilRunner.StatsAll.Percentile percentile : combineHistograms(percentiles).percentiles()) {
-                        if (percentile.percentile() == 1.0) {
-                            continue;
-                        }
-                        dataset.addDataUnchecked(List.of(percentile.percentile(), percentile.to()));
-                        dataset.addPointRadius(0);
-                    }
-                    dataset.setBorderColor(color);
-                    dataset.setBorderWidth(2);
-                    mainData.addDataset(dataset.withDefaultType());
+                    addHistogram(mainData, combineHistograms(percentiles), color);
                 }
                 if (!medians.getData().isEmpty()) {
                     scatterData.addDataset(medians.withDefaultType());
@@ -510,6 +506,20 @@ public class Main {
 
         html.append("</body></html>");
         return html.toString();
+    }
+
+    private static void addHistogram(MixedData destPlot, HyperfoilRunner.StatsAll.Histogram histogram, String color) {
+        LineDataset dataset = new LineDataset();
+        for (HyperfoilRunner.StatsAll.Percentile percentile : histogram.percentiles()) {
+            if (percentile.percentile() == 1.0) {
+                continue;
+            }
+            dataset.addDataUnchecked(List.of(percentile.percentile(), percentile.to()));
+            dataset.addPointRadius(0);
+        }
+        dataset.setBorderColor(color);
+        dataset.setBorderWidth(2);
+        destPlot.addDataset(dataset.withDefaultType());
     }
 
     private static HyperfoilRunner.StatsAll.Histogram combineHistograms(List<HyperfoilRunner.StatsAll.Histogram> histograms) {
