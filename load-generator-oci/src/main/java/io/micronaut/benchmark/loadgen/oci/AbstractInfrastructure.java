@@ -1,10 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import com.oracle.bmc.bastion.BastionClient;
+import com.oracle.bmc.bastion.model.Bastion;
+import com.oracle.bmc.bastion.model.BastionLifecycleState;
 import com.oracle.bmc.bastion.model.CreateBastionDetails;
 import com.oracle.bmc.bastion.requests.CreateBastionRequest;
 import com.oracle.bmc.bastion.requests.DeleteBastionRequest;
-import com.oracle.bmc.core.ComputeClient;
+import com.oracle.bmc.bastion.requests.GetBastionRequest;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.core.model.CreateInternetGatewayDetails;
 import com.oracle.bmc.core.model.CreateNatGatewayDetails;
@@ -73,7 +75,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
      */
     private static final String RELAY_SUBNET = "10.0.254.0/24";
 
-    private static final SshRelayMode RELAY_MODE = SshRelayMode.BASTION;
+    private static final SshRelayMode RELAY_MODE = SshRelayMode.RELAY_SERVER;
 
     /**
      * Location (compartment, region, AD) of this infrastructure.
@@ -84,7 +86,6 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
      */
     protected final Path logDirectory;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
-    private final RegionalClient<ComputeClient> computeClient;
     private final RegionalClient<BastionClient> bastionClient;
     final Compute compute;
 
@@ -103,11 +104,10 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     private Compute.Instance relayServerInstance;
     private String bastionId;
 
-    protected AbstractInfrastructure(OciLocation location, Path logDirectory, RegionalClient<VirtualNetworkClient> vcnClient, RegionalClient<ComputeClient> computeClient, RegionalClient<BastionClient> bastionClient, Compute compute) {
+    protected AbstractInfrastructure(OciLocation location, Path logDirectory, RegionalClient<VirtualNetworkClient> vcnClient, RegionalClient<BastionClient> bastionClient, Compute compute) {
         this.location = location;
         this.logDirectory = logDirectory;
         this.vcnClient = vcnClient;
-        this.computeClient = computeClient;
         this.bastionClient = bastionClient;
         this.compute = compute;
     }
@@ -290,9 +290,14 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                 .publicIp(RELAY_MODE == SshRelayMode.PUBLIC_IP);
     }
 
-    protected final void terminateRelayAsync() {
+    protected final void terminateRelayAsync() throws Exception {
         if (relayServerInstance != null) {
             relayServerInstance.terminateAsync();
+        }
+        if (bastionId != null) {
+            retry(() -> bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
+                    .bastionId(bastionId)
+                    .build()));
         }
     }
 
@@ -305,12 +310,19 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         LOG.info("Terminating network resources");
         try {
             if (bastionId != null) {
-                retry(() -> {
-                    Throttle.VCN.takeUninterruptibly();
-                    return bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
-                            .bastionId(bastionId)
-                            .build());
-                });
+                while (true) {
+                    Bastion bastion = retry(() -> bastionClient.forRegion(location).getBastion(GetBastionRequest.builder().bastionId(bastionId).build())).getBastion();
+                    if (bastion.getLifecycleState() == BastionLifecycleState.Active) {
+                        retry(() -> bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
+                                .bastionId(bastionId)
+                                .build()));
+                    } else if (bastion.getLifecycleState() == BastionLifecycleState.Deleted) {
+                        break;
+                    } else if (bastion.getLifecycleState() != BastionLifecycleState.Deleting) {
+                        throw new IllegalStateException("Unexpected bastion state: " + bastion.getLifecycleState());
+                    }
+                    TimeUnit.SECONDS.sleep(1);
+                }
             }
             for (String subnet : new String[]{privateSubnetId, publicSubnetId}) {
                 if (subnet != null) {

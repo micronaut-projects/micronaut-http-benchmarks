@@ -1,7 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import com.oracle.bmc.bastion.BastionClient;
-import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import io.micronaut.core.annotation.Indexed;
 import io.micronaut.core.annotation.Nullable;
@@ -42,7 +41,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final List<AttachmentEntry<?>> attachments = Collections.synchronizedList(new ArrayList<>());
 
     private Infrastructure(Factory factory, OciLocation location, Path logDirectory) {
-        super(location, logDirectory, factory.vcnClient, factory.computeClient, factory.bastionClient, factory.compute);
+        super(location, logDirectory, factory.vcnClient, factory.bastionClient, factory.compute);
         this.factory = factory;
     }
 
@@ -229,12 +228,10 @@ public final class Infrastructure extends AbstractInfrastructure {
 
     @Singleton
     public record Factory(
-            RegionalClient<ComputeClient> computeClient,
             RegionalClient<VirtualNetworkClient> vcnClient,
             RegionalClient<BastionClient> bastionClient,
             Compute compute,
             HyperfoilRunner.Factory hyperfoilRunnerFactory,
-            SshFactory sshFactory,
             SutMonitor sutMonitor,
             List<Attachment<?>> attachments
     ) {
