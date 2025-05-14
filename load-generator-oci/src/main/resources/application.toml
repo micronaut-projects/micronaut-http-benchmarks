@@ -119,7 +119,8 @@ option-choices=[""]
 [variants.hotspot.async-profiler]
 enabled=false
 path="/home/yawkat/bin/async-profiler-3.0-linux-x64/lib/libasyncProfiler.so"
-args="start,event=cpu,cstack=vm,file=profile.jfr,loglevel=debug"
+args="start,event=cpu,cstack=vm,file=profile.jfr"
+jfr-config="jdk.ObjectAllocationSample#enabled=false"
 outputs=["profile.jfr"]
 
 [[variants.hotspot.async-profiler.conversion]]

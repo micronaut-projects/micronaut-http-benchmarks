@@ -235,8 +235,8 @@ public final class JavaRunFactory {
                         @Override
                         public void setupAndRun(ClientSession benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
                             progress.update(BenchmarkPhase.INSTALLING_SOFTWARE);
-                            SshUtil.run(benchmarkServerClient, "sudo yum install jdk-" + hotspotConfiguration.version() + "-headless -y", log, 0, 1);
-                            SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.yama.ptrace_scope=1", log, 0, 1);
+                            SshUtil.run(benchmarkServerClient, "sudo yum install jdk-" + hotspotConfiguration.version() + "-headful -y", log, 0, 1);
+                            SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.yama.ptrace_scope=1", log);
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
                             uploadClasspath(benchmarkServerClient, log);
                             String start = perfStatConfiguration.asCommandPrefix() + "java ";

@@ -185,7 +185,7 @@ public final class HyperfoilRunner implements AutoCloseable {
             List<Callable<Void>> setupTasks = new ArrayList<>();
 
             setupTasks.add(() -> {
-                SshUtil.run(controllerSession, "sudo yum install jdk-17-headless -y", log);
+                SshUtil.run(controllerSession, "sudo yum install jdk-17-headless -y", log, 0, 1);
                 ScpClientCreator.instance().createScpClient(controllerSession).upload(factory.config.location, REMOTE_HYPERFOIL_LOCATION, ScpClient.Option.Recursive, ScpClient.Option.PreserveAttributes);
                 factory.sshFactory.deployPrivateKey(controllerSession);
 

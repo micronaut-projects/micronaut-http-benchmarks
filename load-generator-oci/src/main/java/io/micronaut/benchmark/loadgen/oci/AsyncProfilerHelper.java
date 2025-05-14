@@ -2,6 +2,7 @@ package io.micronaut.benchmark.loadgen.oci;
 
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
+import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import one.convert.Arguments;
 import one.convert.FlameGraph;
@@ -34,6 +35,7 @@ public class AsyncProfilerHelper {
             "x86_64", JavaRunFactory.class.getResource("/linux-x64/libasyncProfiler.so"),
             "aarch64", JavaRunFactory.class.getResource("/linux-arm64/libasyncProfiler.so")
     );
+    private static final String JFR_CONFIG_LOCATION = "/tmp/config.jfc";
 
     private final AsyncProfilerConfiguration configuration;
 
@@ -63,10 +65,17 @@ public class AsyncProfilerHelper {
                         PosixFilePermission.OWNER_WRITE,
                         PosixFilePermission.OWNER_EXECUTE
                 ), null);
+        if (configuration.jfrConfig != null) {
+            SshUtil.run(ssh, "jfr configure --input default.jfc " + configuration.jfrConfig + " --output " + JFR_CONFIG_LOCATION, log);
+        }
     }
 
     public String getJvmArgument() {
-        return "-agentpath:" + PROFILER_LOCATION + "=" + configuration.args();
+        String s = "-agentpath:" + PROFILER_LOCATION + "=" + configuration.args();
+        if (configuration.jfrConfig != null) {
+            s += ",jfrsync=" + JFR_CONFIG_LOCATION;
+        }
+        return s;
     }
 
     public void finish(ClientSession ssh, OutputListener.Write log, Path outputDirectory) throws Exception {
@@ -141,6 +150,7 @@ public class AsyncProfilerHelper {
     public record AsyncProfilerConfiguration(
             boolean enabled,
             String args,
+            @Nullable String jfrConfig,
             List<String> outputs,
             List<AsyncProfilerConversion> conversions
     ) {
