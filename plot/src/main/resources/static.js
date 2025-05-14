@@ -99,17 +99,6 @@ function updateMaxTime(maxTime) {
     updateMaxTimeLabel(maxTime);
 }
 
-function setCpuUsageMetric(metricClass) {
-    for (const element of document.getElementsByClassName("cpu-usage-metric")) {
-        if (element.classList.contains(metricClass)) {
-            element.style.display = "block";
-        } else {
-            element.style.display = "none";
-        }
-    }
-}
-
 window.onload = function () {
     updateMaxTimeLabel(Math.pow(10, document.getElementById("max-time").getElementsByTagName("input").item(0).value));
-    setCpuUsageMetric(document.getElementById("cpu-usage-metric-select").value);
 };
