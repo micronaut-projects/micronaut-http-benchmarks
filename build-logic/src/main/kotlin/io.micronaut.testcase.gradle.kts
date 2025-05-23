@@ -33,6 +33,9 @@ dependencies {
     implementation("io.micronaut:micronaut-http-client")
     implementation("io.micronaut:micronaut-http-server-netty")
     implementation("ch.qos.logback:logback-classic")
+    implementation("io.projectreactor:reactor-core")
+    compileOnly("org.graalvm.nativeimage:svm:22.3.1")
+    runtimeOnly("org.bouncycastle:bcpkix-jdk18on:1.77")
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.1")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.1")
@@ -48,12 +51,6 @@ tasks.withType<Jar>().configureEach {
     archiveBaseName.set(artifactName)
 }
 
-java {
-    toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
-    }
-}
-
 /*
 graalvmNative {
     toolchainDetection.set(false)
@@ -62,6 +59,8 @@ graalvmNative {
 
         buildArgs.add("--gc=G1")
         buildArgs.add("--enable-monitoring=jfr")
+        buildArgs.add("--features=org.example.MyFeature")
+        buildArgs.add("-H:IncludeResources=.*"+"/?META-INF/native/.*")
         if (System.getProperty("pgoInstrument") != null) {
             buildArgs.add("--pgo-instrument")
         }

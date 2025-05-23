@@ -18,8 +18,15 @@ micronaut:
           ssl: true
       parent:
         event-loop-group: default
+  http:
+    client:
+      event-loop-group: default
+      pool:
+        connection-locality: ignore
+        max-concurrent-http1-connections: 300
   netty:
     event-loops:
       default:
-        num-threads: 3 # must match compute instance config
         prefer-native-transport: true
+
+loop-remote: http://10.0.0.10

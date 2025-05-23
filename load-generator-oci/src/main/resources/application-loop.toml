@@ -1,32 +1,25 @@
-[suite]
-enabled-run-types=[
-    "mn-hotspot",
-    #"mn-native",
-    #"pure-netty-hotspot",
-    #"pure-netty-native", broken
-    #"helidon-nima-hotspot",
-    #"spring-boot-hotspot",
-    #"vertx-hotspot",
-    #"vertx-native",
-]
-
-[variants.hotspot]
-common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,affinity --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
-
 [[load.documents]]
-name="6-6"
-method="POST"
-uri="/search/find"
-request-body='{"haystack":["ssxvnj","hpdqdx","vcrast","vybcwv","mgnykr","xvzxkg"],"needle":"bcw"}'
-response-body='{"listIndex":3,"stringIndex":2}'
+name="loop"
+method="GET"
+uri="/loop"
+response-body='Hello World'
+response-matching-mode='EQUAL'
 
 [[hyperfoil.status]]
 name="status"
 uri="/status"
 
+[suite]
+enabled-run-types=[
+    "mn-hotspot",
+]
+
+[variants.hotspot]
+common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,affinity --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
+
 [load.protocols.http1]
 enabled=true
-ops=[2000, 8000, 16000, 32000, 64000, 96000, 128000, 160000, 192000, 256000]
+ops=[2000, 8000, 16000, 32000, 48000, 64000, 96000, 128000, 160000, 192000, 256000]
 
 [load.protocols.https1]
 #enabled=true
