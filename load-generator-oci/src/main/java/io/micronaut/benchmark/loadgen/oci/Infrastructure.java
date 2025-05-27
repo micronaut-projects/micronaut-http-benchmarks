@@ -1,7 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.oracle.bmc.bastion.BastionClient;
-import com.oracle.bmc.core.VirtualNetworkClient;
+import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.core.annotation.Indexed;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -41,7 +40,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final List<AttachmentEntry<?>> attachments = Collections.synchronizedList(new ArrayList<>());
 
     private Infrastructure(Factory factory, OciLocation location, Path logDirectory) {
-        super(location, logDirectory, factory.vcnClient, factory.bastionClient, factory.compute);
+        super(location, logDirectory, factory.context, factory.compute);
         this.factory = factory;
     }
 
@@ -117,7 +116,6 @@ public final class Infrastructure extends AbstractInfrastructure {
             hyperfoilRunner.close();
         }
         attachmentsStopped.get();
-        terminateRelayAsync();
         if (benchmarkServer != null) {
             benchmarkServer.close();
         }
@@ -154,10 +152,7 @@ public final class Infrastructure extends AbstractInfrastructure {
         }
         try {
             if (!started) {
-                retry(() -> {
-                    start(progress);
-                    return null;
-                });
+                start(progress);
             }
 
             try {
@@ -228,8 +223,7 @@ public final class Infrastructure extends AbstractInfrastructure {
 
     @Singleton
     public record Factory(
-            RegionalClient<VirtualNetworkClient> vcnClient,
-            RegionalClient<BastionClient> bastionClient,
+            ResourceContext context,
             Compute compute,
             HyperfoilRunner.Factory hyperfoilRunnerFactory,
             SutMonitor sutMonitor,

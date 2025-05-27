@@ -1,76 +1,55 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import com.oracle.bmc.bastion.BastionClient;
-import com.oracle.bmc.bastion.model.BastionLifecycleState;
 import com.oracle.bmc.bastion.model.BastionSummary;
-import com.oracle.bmc.bastion.requests.DeleteBastionRequest;
-import com.oracle.bmc.bastion.requests.ListBastionsRequest;
-import com.oracle.bmc.bastion.responses.ListBastionsResponse;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.core.model.Instance;
 import com.oracle.bmc.core.model.InternetGateway;
 import com.oracle.bmc.core.model.NatGateway;
+import com.oracle.bmc.core.model.RouteRule;
 import com.oracle.bmc.core.model.RouteTable;
 import com.oracle.bmc.core.model.Subnet;
-import com.oracle.bmc.core.model.UpdateRouteTableDetails;
 import com.oracle.bmc.core.model.Vcn;
-import com.oracle.bmc.core.requests.DeleteInternetGatewayRequest;
-import com.oracle.bmc.core.requests.DeleteNatGatewayRequest;
-import com.oracle.bmc.core.requests.DeleteRouteTableRequest;
-import com.oracle.bmc.core.requests.DeleteSubnetRequest;
-import com.oracle.bmc.core.requests.DeleteVcnRequest;
-import com.oracle.bmc.core.requests.ListInstancesRequest;
-import com.oracle.bmc.core.requests.ListInternetGatewaysRequest;
-import com.oracle.bmc.core.requests.ListNatGatewaysRequest;
-import com.oracle.bmc.core.requests.ListRouteTablesRequest;
-import com.oracle.bmc.core.requests.ListSubnetsRequest;
-import com.oracle.bmc.core.requests.ListVcnsRequest;
-import com.oracle.bmc.core.requests.UpdateRouteTableRequest;
-import com.oracle.bmc.core.responses.ListInstancesResponse;
-import com.oracle.bmc.core.responses.ListInternetGatewaysResponse;
-import com.oracle.bmc.core.responses.ListNatGatewaysResponse;
-import com.oracle.bmc.core.responses.ListRouteTablesResponse;
-import com.oracle.bmc.core.responses.ListSubnetsResponse;
-import com.oracle.bmc.core.responses.ListVcnsResponse;
 import com.oracle.bmc.identity.IdentityClient;
 import com.oracle.bmc.identity.model.Compartment;
-import com.oracle.bmc.identity.requests.DeleteCompartmentRequest;
-import com.oracle.bmc.identity.requests.ListCompartmentsRequest;
-import com.oracle.bmc.model.BmcException;
+import com.oracle.bmc.psql.PostgresqlClient;
 import com.oracle.bmc.requests.BmcRequest;
+import io.micronaut.benchmark.loadgen.oci.resource.AbstractSimpleResource;
+import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
+import io.micronaut.benchmark.loadgen.oci.resource.CompartmentResource;
+import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
+import io.micronaut.benchmark.loadgen.oci.resource.InternetGatewayResource;
+import io.micronaut.benchmark.loadgen.oci.resource.NatGatewayResource;
+import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
+import io.micronaut.benchmark.loadgen.oci.resource.RouteTableResource;
+import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
+import io.micronaut.benchmark.loadgen.oci.resource.VcnResource;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 /**
  * This class deletes all resources in a compartment, before and after a benchmark.
  */
 @Singleton
-public final class CompartmentCleaner {
+public record CompartmentCleaner(
+        ResourceContext context,
+        RegionalClient<IdentityClient> identityClient,
+        RegionalClient<ComputeClient> computeClient,
+        RegionalClient<VirtualNetworkClient> vcnClient,
+        RegionalClient<BastionClient> bastionClient,
+        RegionalClient<PostgresqlClient> postgresqlClient,
+        Compute compute
+) {
     private static final Logger LOG = LoggerFactory.getLogger(CompartmentCleaner.class);
-
-    private final RegionalClient<IdentityClient> identityClient;
-    private final RegionalClient<ComputeClient> computeClient;
-    private final RegionalClient<VirtualNetworkClient> vcnClient;
-    private final RegionalClient<BastionClient> bastionClient;
-    private final Compute compute;
-
-    public CompartmentCleaner(RegionalClient<IdentityClient> identityClient, RegionalClient<ComputeClient> computeClient, RegionalClient<VirtualNetworkClient> vcnClient, RegionalClient<BastionClient> bastionClient, Compute compute) {
-        this.identityClient = identityClient;
-        this.computeClient = computeClient;
-        this.vcnClient = vcnClient;
-        this.bastionClient = bastionClient;
-        this.compute = compute;
-    }
 
     /**
      * Clean a compartment in a given region.
@@ -78,242 +57,124 @@ public final class CompartmentCleaner {
      * @param location The compartment to clean
      * @param delete If {@code true}, delete the compartment itself at the end of this method.
      */
-    public void cleanCompartment(OciLocation location, boolean delete) {
+    public void cleanCompartment(OciLocation location, boolean delete) throws Exception {
         String compartment = location.compartmentId();
         LOG.info("Cleaning compartment {} in region {}...", compartment, location.region());
 
-        // delete sub-compartments recursively
-        Throttle.IDENTITY.takeUninterruptibly();
-        identityClient.forRegion(location).listCompartments(ListCompartmentsRequest.builder()
-                        .compartmentId(compartment)
-                        .build())
-                .getItems()
-                .parallelStream()
-                .filter(c -> c.getLifecycleState() == Compartment.LifecycleState.Active)
-                .forEach(child -> cleanCompartment(new OciLocation(child.getId(), location.region(), location.availabilityDomain()), true));
-
-        // trigger deletion of compute instances
-        Throttle.COMPUTE.takeUninterruptibly();
-        for (Instance instance : list(
-                computeClient.forRegion(location)::listInstances,
-                ListInstancesRequest.builder()
-                        .compartmentId(compartment),
-                ListInstancesRequest.Builder::page,
-                ListInstancesResponse::getOpcNextPage,
-                ListInstancesResponse::getItems
-        )) {
-            Instance.LifecycleState lifecycleState = instance.getLifecycleState();
-            if (lifecycleState != Instance.LifecycleState.Terminated && lifecycleState != Instance.LifecycleState.Terminating) {
-                compute.terminateAsync(location, instance.getId());
-            }
-        }
-
-        bastions:
-        while (true) {
-            for (BastionSummary bastion : list(
-                    bastionClient.forRegion(location)::listBastions,
-                    ListBastionsRequest.builder()
-                            .compartmentId(compartment),
-                    ListBastionsRequest.Builder::page,
-                    ListBastionsResponse::getOpcNextPage,
-                    ListBastionsResponse::getItems
-            )) {
-                BastionLifecycleState lifecycleState = bastion.getLifecycleState();
-                if (lifecycleState == BastionLifecycleState.Creating) {
-                    LOG.info("Waiting for bastion {} to finish creating, so that we can delete it", bastion.getName());
-                    try {
-                        TimeUnit.SECONDS.sleep(5);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                    continue bastions;
-                }
-
-                if (lifecycleState != BastionLifecycleState.Deleted && lifecycleState != BastionLifecycleState.Deleting) {
-                    LOG.info("Deleting bastion {}", bastion.getName());
-                    bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
-                            .bastionId(bastion.getId())
-                            .build());
-                }
-            }
-            break;
-        }
-
-        // delete route tables
-        Throttle.VCN.takeUninterruptibly();
-        List<RouteTable> routeTables = list(
-                vcnClient.forRegion(location)::listRouteTables,
-                ListRouteTablesRequest.builder()
-                        .compartmentId(compartment),
-                ListRouteTablesRequest.Builder::page,
-                ListRouteTablesResponse::getOpcNextPage,
-                ListRouteTablesResponse::getItems
-        );
-        for (RouteTable routeTable : routeTables) {
-            if (!routeTable.getRouteRules().isEmpty()) {
-                LOG.info("Clearing route table {}", routeTable.getDisplayName());
-                Throttle.VCN.takeUninterruptibly();
-                vcnClient.forRegion(location).updateRouteTable(UpdateRouteTableRequest.builder()
-                        .rtId(routeTable.getId())
-                        .updateRouteTableDetails(UpdateRouteTableDetails.builder()
-                                .routeRules(Collections.emptyList())
-                                .build())
-                        .build());
-            }
-        }
-
-        // wait for any compute instances to terminate before we can delete the subnets
-        waitForTermination(() -> list(
-                computeClient.forRegion(location)::listInstances,
-                ListInstancesRequest.builder()
-                        .compartmentId(compartment),
-                ListInstancesRequest.Builder::page,
-                ListInstancesResponse::getOpcNextPage,
-                ListInstancesResponse::getItems
-        ), Instance::getLifecycleState, Instance.LifecycleState.Terminating, Instance.LifecycleState.Terminated);
-
-        waitForTermination(() -> list(
-                bastionClient.forRegion(location)::listBastions,
-                ListBastionsRequest.builder()
-                        .compartmentId(compartment),
-                ListBastionsRequest.Builder::page,
-                ListBastionsResponse::getOpcNextPage,
-                ListBastionsResponse::getItems
-        ), BastionSummary::getLifecycleState, BastionLifecycleState.Deleting, BastionLifecycleState.Deleted);
-
-        // delete subnets
-        Throttle.VCN.takeUninterruptibly();
-        for (Subnet subnet : list(
-                vcnClient.forRegion(location)::listSubnets,
-                ListSubnetsRequest.builder()
-                        .compartmentId(compartment),
-                ListSubnetsRequest.Builder::page,
-                ListSubnetsResponse::getOpcNextPage,
-                ListSubnetsResponse::getItems
-        )) {
-            LOG.info("Deleting subnet {}", subnet.getDisplayName());
-            try {
-                Throttle.VCN.takeUninterruptibly();
-                vcnClient.forRegion(location).deleteSubnet(DeleteSubnetRequest.builder()
-                        .subnetId(subnet.getId())
-                        .build());
-            } catch (BmcException e) {
-                LOG.warn("Failed to delete subnet: {}", e.getMessage());
-            }
-        }
-
-        Throttle.VCN.takeUninterruptibly();
-        List<Vcn> vcns = list(
-                vcnClient.forRegion(location)::listVcns,
-                ListVcnsRequest.builder()
-                        .compartmentId(compartment),
-                ListVcnsRequest.Builder::page,
-                ListVcnsResponse::getOpcNextPage,
-                ListVcnsResponse::getItems
-        );
-
-        // delete route tables
-        for (RouteTable routeTable : routeTables) {
-            if (vcns.stream().noneMatch(vcn -> vcn.getDefaultRouteTableId().equals(routeTable.getId()))) {
-                LOG.info("Deleting route table {}", routeTable.getDisplayName());
-                try {
-                    Throttle.VCN.takeUninterruptibly();
-                    vcnClient.forRegion(location).deleteRouteTable(DeleteRouteTableRequest.builder()
-                            .rtId(routeTable.getId())
-                            .build());
-                } catch (BmcException e) {
-                    LOG.warn("Failed to delete route table: {}", e.getMessage());
-                }
-            }
-        }
-
-        // delete internet gateways
-        Throttle.VCN.takeUninterruptibly();
-        for (InternetGateway ig : list(
-                vcnClient.forRegion(location)::listInternetGateways,
-                ListInternetGatewaysRequest.builder()
-                        .compartmentId(compartment),
-                ListInternetGatewaysRequest.Builder::page,
-                ListInternetGatewaysResponse::getOpcNextPage,
-                ListInternetGatewaysResponse::getItems
-        )) {
-            LOG.info("Deleting internet gateway {}", ig.getDisplayName());
-            Throttle.VCN.takeUninterruptibly();
-            vcnClient.forRegion(location).deleteInternetGateway(DeleteInternetGatewayRequest.builder()
-                    .igId(ig.getId())
-                    .build());
-        }
-
-        // delete NAT gateways
-        Throttle.VCN.takeUninterruptibly();
-        for (NatGateway nat : list(
-                vcnClient.forRegion(location)::listNatGateways,
-                ListNatGatewaysRequest.builder()
-                        .compartmentId(compartment),
-                ListNatGatewaysRequest.Builder::page,
-                ListNatGatewaysResponse::getOpcNextPage,
-                ListNatGatewaysResponse::getItems
-        )) {
-            LOG.info("Deleting NAT gateway {}", nat.getDisplayName());
-            Throttle.VCN.takeUninterruptibly();
-            vcnClient.forRegion(location).deleteNatGateway(DeleteNatGatewayRequest.builder()
-                    .natGatewayId(nat.getId())
-                    .build());
-        }
-
-        // delete VCNs
-        for (Vcn vcn : vcns) {
-            LOG.info("Deleting VCN {}", vcn.getDisplayName());
-            try {
-                Throttle.VCN.takeUninterruptibly();
-                vcnClient.forRegion(location).deleteVcn(DeleteVcnRequest.builder()
-                        .vcnId(vcn.getId())
-                        .build());
-            } catch (BmcException e) {
-                LOG.warn("Failed to delete VCN: {}", e.getMessage());
-            }
-        }
-
+        CompartmentResource r = adaptCompartment(location, delete);
         if (delete) {
-            // delete compartment if requested
-            LOG.info("Deleting compartment {}", compartment);
-            Throttle.IDENTITY.takeUninterruptibly();
-            identityClient.forRegion(location).deleteCompartment(DeleteCompartmentRequest.builder()
-                    .compartmentId(compartment)
-                    .build());
+            r.manageExisting(location, location.compartmentId());
+        } else {
+            ((NotDeletingCompartmentResource) r).clear();
         }
     }
 
-    private <R, LS> void waitForTermination(
-            Supplier<List<R>> list,
-            Function<R, LS> getLifecycleState,
-            LS deleting, LS deleted
-    ) {
-        while (true) {
-            Throttle.COMPUTE.takeUninterruptibly();
-            List<R> instances = list.get();
-            int terminating = 0;
-            for (R instance : instances) {
-                LS ls = getLifecycleState.apply(instance);
-                if (ls.equals(deleting)) {
-                    terminating++;
-                } else if (!ls.equals(deleted)) {
-                    throw new IllegalStateException("Unexpected state for instance " + ls + ". All instances should be terminating.");
+    private CompartmentResource adaptCompartment(OciLocation location, boolean delete) {
+        CompartmentResource compartmentResource = delete ? new CompartmentResource(context) : new NotDeletingCompartmentResource(context);
+
+        Map<String, AbstractSimpleResource<?>> resources = new HashMap<>();
+        boolean anyVcns = false;
+
+        // scan the subnets because bastions and instances depend on them
+        for (Vcn vcn : VcnResource.list(context, location)) {
+            VcnResource resource = new VcnResource(context);
+            resource.dependOn(compartmentResource.require());
+            resource.setPhase(vcn.getLifecycleState());
+            resources.put(vcn.getId(), resource);
+            anyVcns = true;
+
+            RouteTableResource rtr = new RouteTableResource(context);
+            rtr.setDefaultForVcn(true);
+            resources.put(vcn.getDefaultRouteTableId(), rtr);
+            resource.setDefaultRouteTable(rtr);
+        }
+        List<SubnetResource> subnetResources = new ArrayList<>();
+        List<Subnet> subnets = SubnetResource.list(context, location);
+        if (anyVcns) {
+            for (Subnet subnet : subnets) {
+                SubnetResource resource = new SubnetResource(context);
+                resource.setPhase(subnet.getLifecycleState());
+                resource.dependOn(resources.get(subnet.getVcnId()).require());
+                subnetResources.add(resource);
+                resources.put(subnet.getId(), resource);
+            }
+        }
+        // bastions and instances take the longest to delete, so delete them first
+        for (BastionSummary bastion : BastionResource.list(context, location)) {
+            BastionResource resource = new BastionResource(context);
+            resource.setPhase(bastion.getLifecycleState());
+            if (bastion.getTargetVcnId() != null) {
+                resource.dependOn(resources.get(bastion.getTargetVcnId()).require());
+            }
+            if (bastion.getTargetSubnetId() != null) {
+                resource.dependOn(resources.get(bastion.getTargetSubnetId()).require());
+            }
+            delete(location, bastion.getId(), resource);
+        }
+        for (Instance instance : ComputeResource.list(context, location)) {
+            ComputeResource resource = new ComputeResource(context);
+            resource.setPhase(instance.getLifecycleState());
+            // don't know which subnets this instance uses, so just depend on all of them
+            for (SubnetResource subnet : subnetResources) {
+                resource.dependOn(subnet.require());
+            }
+            delete(location, instance.getId(), resource);
+        }
+        // scan sub-compartments next
+        for (Compartment subCompartment : CompartmentResource.list(context, location)) {
+            CompartmentResource resource = adaptCompartment(new OciLocation(subCompartment.getId(), location.region(), location.availabilityDomain()), true);
+            resource.setPhase(subCompartment.getLifecycleState());
+            compartmentResource.dependOn(resource.require());
+            delete(location, subCompartment.getId(), resource);
+        }
+        // other network resources take little time to delete
+        if (anyVcns) {
+            for (NatGateway natGateway : NatGatewayResource.list(context, location)) {
+                NatGatewayResource resource = new NatGatewayResource(context);
+                resource.setPhase(natGateway.getLifecycleState());
+                resource.dependOn(resources.get(natGateway.getVcnId()).require());
+                resources.put(natGateway.getId(), resource);
+            }
+            for (InternetGateway internetGateway : InternetGatewayResource.list(context, location)) {
+                InternetGatewayResource resource = new InternetGatewayResource(context);
+                resource.setPhase(internetGateway.getLifecycleState());
+                resource.dependOn(resources.get(internetGateway.getVcnId()).require());
+                resources.put(internetGateway.getId(), resource);
+            }
+            for (RouteTable routeTable : RouteTableResource.list(context, location)) {
+                RouteTableResource resource = (RouteTableResource) resources.get(routeTable.getId());
+                if (resource == null) {
+                    resource = new RouteTableResource(context);
                 }
+                resource.setPhase(routeTable.getLifecycleState());
+                resource.dependOn(((VcnResource) resources.get(routeTable.getVcnId())).requireVcnOnly());
+                for (RouteRule rule : routeTable.getRouteRules()) {
+                    resource.dependOn(resources.get(rule.getNetworkEntityId()).require());
+                }
+                resources.put(routeTable.getId(), resource);
             }
-            if (terminating == 0) {
-                break;
-            }
-            LOG.info("Waiting for {} instances to terminate", terminating);
-            try {
-                TimeUnit.SECONDS.sleep(1);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+            for (Subnet subnet : subnets) {
+                resources.get(subnet.getId()).dependOn(resources.get(subnet.getRouteTableId()).require());
             }
         }
+        resources.forEach((ocid, r) -> delete(location, ocid, r));
+
+        return compartmentResource;
     }
 
-    private <T, BUILDER extends BmcRequest.Builder<REQ, ?>, REQ extends BmcRequest<?>, RESP> List<T> list(
+    private void delete(OciLocation location, String ocid, AbstractSimpleResource<?> resource) {
+        Thread.ofVirtual()
+                .name("delete-" + ocid)
+                .start(() -> {
+                    try {
+                        resource.manageExisting(location, ocid);
+                    } catch (Exception e) {
+                        LOG.error("Failed to delete resource {}", ocid, e);
+                    }
+                });
+    }
+
+    public static <T, BUILDER extends BmcRequest.Builder<REQ, ?>, REQ extends BmcRequest<?>, RESP> List<T> list(
             Function<REQ, RESP> call,
             BUILDER builder,
             BiConsumer<BUILDER, String> setPage,
@@ -323,7 +184,7 @@ public final class CompartmentCleaner {
         List<T> result = new ArrayList<>();
         while (true) {
             REQ req = builder.build();
-            RESP resp = call.apply(req);
+            RESP resp = Infrastructure.retry(() -> call.apply(req));
             result.addAll(getItems.apply(resp));
             String nextPage = getNextPage.apply(resp);
             if (nextPage == null) {
@@ -333,5 +194,15 @@ public final class CompartmentCleaner {
             }
         }
         return result;
+    }
+
+    private static class NotDeletingCompartmentResource extends CompartmentResource {
+        public NotDeletingCompartmentResource(ResourceContext context) {
+            super(context);
+        }
+
+        void clear() throws InterruptedException {
+            awaitUnlocked(Compartment.LifecycleState.Active);
+        }
     }
 }

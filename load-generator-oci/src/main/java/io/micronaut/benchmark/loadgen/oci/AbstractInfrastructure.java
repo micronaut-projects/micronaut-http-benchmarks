@@ -1,13 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.oracle.bmc.bastion.BastionClient;
-import com.oracle.bmc.bastion.model.Bastion;
-import com.oracle.bmc.bastion.model.BastionLifecycleState;
 import com.oracle.bmc.bastion.model.CreateBastionDetails;
-import com.oracle.bmc.bastion.requests.CreateBastionRequest;
-import com.oracle.bmc.bastion.requests.DeleteBastionRequest;
-import com.oracle.bmc.bastion.requests.GetBastionRequest;
-import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.core.model.CreateInternetGatewayDetails;
 import com.oracle.bmc.core.model.CreateNatGatewayDetails;
 import com.oracle.bmc.core.model.CreateRouteTableDetails;
@@ -16,24 +9,19 @@ import com.oracle.bmc.core.model.CreateVcnDetails;
 import com.oracle.bmc.core.model.IngressSecurityRule;
 import com.oracle.bmc.core.model.RouteRule;
 import com.oracle.bmc.core.model.SecurityList;
-import com.oracle.bmc.core.model.Subnet;
 import com.oracle.bmc.core.model.UpdateSecurityListDetails;
-import com.oracle.bmc.core.model.Vcn;
-import com.oracle.bmc.core.requests.CreateInternetGatewayRequest;
-import com.oracle.bmc.core.requests.CreateNatGatewayRequest;
-import com.oracle.bmc.core.requests.CreateRouteTableRequest;
-import com.oracle.bmc.core.requests.CreateSubnetRequest;
-import com.oracle.bmc.core.requests.CreateVcnRequest;
-import com.oracle.bmc.core.requests.DeleteInternetGatewayRequest;
-import com.oracle.bmc.core.requests.DeleteNatGatewayRequest;
-import com.oracle.bmc.core.requests.DeleteRouteTableRequest;
-import com.oracle.bmc.core.requests.DeleteSubnetRequest;
-import com.oracle.bmc.core.requests.DeleteVcnRequest;
 import com.oracle.bmc.core.requests.GetSecurityListRequest;
-import com.oracle.bmc.core.requests.GetSubnetRequest;
 import com.oracle.bmc.core.requests.UpdateSecurityListRequest;
-import com.oracle.bmc.model.BmcException;
-import io.netty.channel.ConnectTimeoutException;
+import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
+import io.micronaut.benchmark.loadgen.oci.resource.InternetGatewayResource;
+import io.micronaut.benchmark.loadgen.oci.resource.NatGatewayResource;
+import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
+import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
+import io.micronaut.benchmark.loadgen.oci.resource.RouteTableResource;
+import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
+import io.micronaut.benchmark.loadgen.oci.resource.VcnResource;
+import io.micronaut.core.util.functional.ThrowingSupplier;
+import io.netty.util.internal.PlatformDependent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +31,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -65,13 +52,13 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     /**
      * Private subnet CIDR, for all servers except the SSH relay.
      *
-     * @see #privateSubnetId
+     * @see #privateSubnet
      */
     private static final String PRIVATE_SUBNET = "10.0.0.0/18";
     /**
      * Public subnet CIDR, only the SSH relay lives here.
      *
-     * @see #publicSubnetId
+     * @see #publicSubnet
      */
     private static final String RELAY_SUBNET = "10.0.254.0/24";
 
@@ -85,31 +72,69 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
      * Infrastructure log directory.
      */
     protected final Path logDirectory;
-    private final RegionalClient<VirtualNetworkClient> vcnClient;
-    private final RegionalClient<BastionClient> bastionClient;
-    final Compute compute;
+    final ResourceContext context;
+    private final Compute compute;
 
-    private String publicSubnetId;
+    private final SubnetResource publicSubnet;
     /**
      * Subnet for all benchmark-related servers. Not internet-accessible, all transfers must happen through the SSH
      * relay.
      */
-    private String privateSubnetId;
-    private String privateRouteTable;
-    private String publicRouteTable;
-    private String vcnId;
-    private String natId;
-    private String internetId;
+    private final SubnetResource privateSubnet;
+    private final RouteTableResource privateRouteTable;
+    private final RouteTableResource publicRouteTable;
+    private final VcnResource vcn;
+    private final NatGatewayResource nat;
+    private final InternetGatewayResource internet;
 
+    private final Compute.Launch relayServerBuilder;
     private Compute.Instance relayServerInstance;
-    private String bastionId;
+    private final BastionResource bastion;
 
-    protected AbstractInfrastructure(OciLocation location, Path logDirectory, RegionalClient<VirtualNetworkClient> vcnClient, RegionalClient<BastionClient> bastionClient, Compute compute) {
+    private final List<PhasedResource.PhaseLock> lifecycleLocks = new ArrayList<>();
+
+    protected AbstractInfrastructure(OciLocation location, Path logDirectory, ResourceContext context, Compute compute) {
         this.location = location;
         this.logDirectory = logDirectory;
-        this.vcnClient = vcnClient;
-        this.bastionClient = bastionClient;
+        this.context = context;
+
+        vcn = new VcnResource(context);
+        privateRouteTable = new RouteTableResource(context).vcn(vcn);
+        privateSubnet = new SubnetResource(context).vcn(vcn).routeTable(privateRouteTable);
+        lifecycleLocks.addAll(privateSubnet.require());
         this.compute = compute;
+        if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
+            internet = new InternetGatewayResource(context).vcn(vcn);
+            publicRouteTable = new RouteTableResource(context).vcn(vcn);
+            publicRouteTable.dependOn(internet.require());
+            publicSubnet = new SubnetResource(context).vcn(vcn).routeTable(publicRouteTable);
+            relayServerBuilder = compute.builder("relay-server", location, publicSubnet).publicIp(true);
+        } else {
+            internet = null;
+            publicRouteTable = null;
+            publicSubnet = null;
+            relayServerBuilder = null;
+        }
+        if (RELAY_MODE == SshRelayMode.BASTION) {
+            bastion = new BastionResource(context).subnet(privateSubnet);
+            lifecycleLocks.addAll(bastion.require());
+        } else {
+            bastion = null;
+        }
+        nat = new NatGatewayResource(context).vcn(vcn);
+        privateRouteTable.dependOn(nat.require());
+    }
+
+    static void launch(PhasedResource<?> resource, ThrowingRunnable manage) {
+        Thread.ofVirtual()
+                .name("manage-" + resource)
+                .start(() -> {
+                    try {
+                        manage.run();
+                    } catch (Exception e) {
+                        LOG.warn("Failed to run resource {}", resource, e);
+                    }
+                });
     }
 
     protected final void setupBase(PhaseTracker.PhaseUpdater progress) throws Exception {
@@ -119,81 +144,45 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         }
 
         progress.update(BenchmarkPhase.CREATING_VCN);
-        Vcn vcn = createVcn(location);
+        launch(vcn, () -> vcn.manageNew(location, CreateVcnDetails.builder().displayName("Benchmark network").cidrBlock(NETWORK)));
         progress.update(BenchmarkPhase.SETTING_UP_NETWORK);
-        vcnId = vcn.getId();
-        Throttle.VCN.take();
-        natId = vcnClient.forRegion(location).createNatGateway(CreateNatGatewayRequest.builder()
-                .createNatGatewayDetails(CreateNatGatewayDetails.builder()
-                        .compartmentId(location.compartmentId())
-                        .vcnId(vcnId)
-                        .displayName("NAT Gateway")
-                        .build())
-                .build()).getNatGateway().getId();
-        Throttle.VCN.take();
-        internetId = vcnClient.forRegion(location).createInternetGateway(CreateInternetGatewayRequest.builder()
-                .createInternetGatewayDetails(CreateInternetGatewayDetails.builder()
-                        .compartmentId(location.compartmentId())
-                        .vcnId(vcnId)
-                        .displayName("Internet Gateway")
-                        .isEnabled(true)
-                        .build())
-                .build()).getInternetGateway().getId();
-        Throttle.VCN.take();
-        privateRouteTable = vcnClient.forRegion(location).createRouteTable(CreateRouteTableRequest.builder()
-                .createRouteTableDetails(CreateRouteTableDetails.builder()
-                        .compartmentId(location.compartmentId())
-                        .vcnId(vcnId)
-                        .routeRules(List.of(RouteRule.builder()
-                                .destinationType(RouteRule.DestinationType.CidrBlock)
-                                .destination("0.0.0.0/0")
-                                .networkEntityId(natId)
-                                .routeType(RouteRule.RouteType.Static)
-                                .build()))
-                        .build())
-                .build()).getRouteTable().getId();
-        if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
-            Throttle.VCN.take();
-            publicRouteTable = vcnClient.forRegion(location).createRouteTable(CreateRouteTableRequest.builder()
-                    .createRouteTableDetails(CreateRouteTableDetails.builder()
-                            .compartmentId(location.compartmentId())
-                            .vcnId(vcnId)
-                            .routeRules(List.of(RouteRule.builder()
-                                    .destinationType(RouteRule.DestinationType.CidrBlock)
-                                    .destination("0.0.0.0/0")
-                                    .networkEntityId(internetId)
-                                    .routeType(RouteRule.RouteType.Static)
-                                    .build()))
-                            .build())
-                    .build()).getRouteTable().getId();
+
+        launch(nat, () -> nat.manageNew(location, CreateNatGatewayDetails.builder().displayName("NAT Gateway")));
+        if (internet != null) {
+            launch(internet, () -> internet.manageNew(location, CreateInternetGatewayDetails.builder().displayName("Internet Gateway").isEnabled(true)));
         }
-        Throttle.VCN.take();
-        privateSubnetId = vcnClient.forRegion(location).createSubnet(CreateSubnetRequest.builder()
-                .createSubnetDetails(CreateSubnetDetails.builder()
-                        .compartmentId(location.compartmentId())
-                        .vcnId(vcnId)
-                        .displayName("Private subnet")
-                        .cidrBlock(PRIVATE_SUBNET)
-                        .routeTableId(privateRouteTable)
-                        .availabilityDomain(location.availabilityDomain())
-                        .build())
-                .build()).getSubnet().getId();
-        if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
-            Throttle.VCN.take();
-            publicSubnetId = vcnClient.forRegion(location).createSubnet(CreateSubnetRequest.builder()
-                    .createSubnetDetails(CreateSubnetDetails.builder()
-                            .compartmentId(location.compartmentId())
-                            .vcnId(vcnId)
-                            .displayName("Relay subnet")
-                            .cidrBlock(RELAY_SUBNET)
-                            .routeTableId(publicRouteTable)
-                            .availabilityDomain(location.availabilityDomain())
-                            .build())
-                    .build()).getSubnet().getId();
+        launch(privateRouteTable, () -> privateRouteTable.manageNew(location, () -> CreateRouteTableDetails.builder().displayName("Private Route Table")
+                .routeRules(List.of(RouteRule.builder()
+                        .destinationType(RouteRule.DestinationType.CidrBlock)
+                        .destination("0.0.0.0/0")
+                        .networkEntityId(nat.ocid())
+                        .routeType(RouteRule.RouteType.Static)
+                        .build()))));
+        if (publicRouteTable != null) {
+            assert internet != null;
+            launch(publicRouteTable, () -> publicRouteTable.manageNew(location, () -> CreateRouteTableDetails.builder().displayName("Public Route Table")
+                    .routeRules(List.of(RouteRule.builder()
+                            .destinationType(RouteRule.DestinationType.CidrBlock)
+                            .destination("0.0.0.0/0")
+                            .networkEntityId(internet.ocid())
+                            .routeType(RouteRule.RouteType.Static)
+                            .build()))));
+        }
+        launch(privateSubnet, () -> privateSubnet.manageNew(location, CreateSubnetDetails.builder()
+                .displayName("Private subnet")
+                .cidrBlock(PRIVATE_SUBNET)));
+
+        if (relayServerBuilder != null) {
+            relayServerInstance = relayServerBuilder.launch();
         }
 
-        Throttle.VCN.take();
-        SecurityList securityList = retry(() -> vcnClient.forRegion(location).getSecurityList(GetSecurityListRequest.builder()
+        if (publicSubnet != null) {
+            launch(publicSubnet, () -> publicSubnet.manageNew(location, CreateSubnetDetails.builder()
+                    .displayName("Relay subnet")
+                    .cidrBlock(RELAY_SUBNET)));
+        }
+
+        SecurityList securityList = retry(() -> context.clients.vcn().forRegion(location).getSecurityList(GetSecurityListRequest.builder()
                 .securityListId(vcn.getDefaultSecurityListId())
                 .build()).getSecurityList());
         List<IngressSecurityRule> ingressRules = new ArrayList<>(securityList.getIngressSecurityRules());
@@ -206,7 +195,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                 .build());
         retry(() -> {
             Throttle.VCN.take();
-            vcnClient.forRegion(location).updateSecurityList(UpdateSecurityListRequest.builder()
+            context.clients.vcn().forRegion(location).updateSecurityList(UpdateSecurityListRequest.builder()
                     .securityListId(vcn.getDefaultSecurityListId())
                     .updateSecurityListDetails(UpdateSecurityListDetails.builder()
                             .ingressSecurityRules(ingressRules)
@@ -215,90 +204,25 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
             return null;
         });
 
-        if (RELAY_MODE == SshRelayMode.BASTION) {
-
-            while (true) {
-                Subnet subnet = vcnClient.forRegion(location).getSubnet(GetSubnetRequest.builder()
-                        .subnetId(privateSubnetId)
-                        .build()).getSubnet();
-                if (subnet.getLifecycleState() == Subnet.LifecycleState.Available) {
-                    break;
-                } else if (subnet.getLifecycleState() != Subnet.LifecycleState.Provisioning) {
-                    throw new IllegalStateException("Failed to get private subnet ready. Subnet state: " + subnet.getLifecycleState());
-                }
-            }
-
-            bastionId = bastionClient.forRegion(location).createBastion(CreateBastionRequest.builder()
-                    .createBastionDetails(CreateBastionDetails.builder()
-                            .name("ssh-gateway-bastion" + ThreadLocalRandom.current().nextLong())
-                            .bastionType("standard")
-                            .compartmentId(location.compartmentId())
-                            .maxSessionTtlInSeconds((int) Duration.ofHours(3).toSeconds())
-                            .targetSubnetId(privateSubnetId)
-                            .clientCidrBlockAllowList(List.of("0.0.0.0/0"))
-                            .build())
-                    .build()).getBastion().getId();
+        if (bastion != null) {
+            launch(bastion, () -> bastion.manageNew(location, CreateBastionDetails.builder()
+                    .name("ssh-gateway-bastion" + ThreadLocalRandom.current().nextLong())
+                    .bastionType("standard")
+                    .maxSessionTtlInSeconds((int) Duration.ofHours(3).toSeconds())
+                    .clientCidrBlockAllowList(List.of("0.0.0.0/0"))));
         }
 
         progress.update(BenchmarkPhase.SETTING_UP_INSTANCES);
-
-        if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
-            LOG.info("Creating relay server");
-            relayServerInstance = compute.builder("relay-server", location, publicSubnetId)
-                    .publicIp(true)
-                    .launch();
-        }
-    }
-
-    private Vcn createVcn(OciLocation location) throws InterruptedException {
-        Vcn vcn;
-        while (true) {
-            try {
-                Throttle.VCN.take();
-                vcn = vcnClient.forRegion(location).createVcn(CreateVcnRequest.builder()
-                        .createVcnDetails(CreateVcnDetails.builder()
-                                .compartmentId(location.compartmentId())
-                                .displayName("Benchmark network")
-                                .cidrBlock(NETWORK)
-                                .build())
-                        .build()).getVcn();
-                break;
-            } catch (BmcException be) {
-                if (be.getCause() instanceof ConnectTimeoutException) {
-                    TimeUnit.SECONDS.sleep(10);
-                    continue;
-                }
-                if (be.getStatusCode() == 400 && "LimitExceeded".equals(be.getServiceCode())) {
-                    LOG.warn("Hit limit in CreateVcn operation. Likely you need to up your vcn-count limit. Waiting for 2m.");
-                    TimeUnit.MINUTES.sleep(2);
-                    continue;
-                }
-                if (be.getStatusCode() == 429 && "TooManyRequests".equals(be.getServiceCode())) {
-                    TimeUnit.MINUTES.sleep(1);
-                    continue;
-                }
-                throw be;
-            }
-        }
-        return vcn;
     }
 
     public final Compute.Launch computeBuilder(String instanceType) {
-        return compute.builder(instanceType, location, privateSubnetId)
-                .bastionId(bastionId)
+        return compute.builder(instanceType, location, privateSubnet)
+                .bastion(bastion)
                 .relayInstance(relayServerInstance)
                 .publicIp(RELAY_MODE == SshRelayMode.PUBLIC_IP);
     }
 
     protected final void terminateRelayAsync() throws Exception {
-        if (relayServerInstance != null) {
-            relayServerInstance.terminateAsync();
-        }
-        if (bastionId != null) {
-            retry(() -> bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
-                    .bastionId(bastionId)
-                    .build()));
-        }
     }
 
     @Override
@@ -306,87 +230,42 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         if (relayServerInstance != null) {
             relayServerInstance.close();
         }
-
         LOG.info("Terminating network resources");
-        try {
-            if (bastionId != null) {
-                while (true) {
-                    Bastion bastion = retry(() -> bastionClient.forRegion(location).getBastion(GetBastionRequest.builder().bastionId(bastionId).build())).getBastion();
-                    if (bastion.getLifecycleState() == BastionLifecycleState.Active) {
-                        retry(() -> bastionClient.forRegion(location).deleteBastion(DeleteBastionRequest.builder()
-                                .bastionId(bastionId)
-                                .build()));
-                    } else if (bastion.getLifecycleState() == BastionLifecycleState.Deleted) {
-                        break;
-                    } else if (bastion.getLifecycleState() != BastionLifecycleState.Deleting) {
-                        throw new IllegalStateException("Unexpected bastion state: " + bastion.getLifecycleState());
-                    }
-                    TimeUnit.SECONDS.sleep(1);
-                }
-            }
-            for (String subnet : new String[]{privateSubnetId, publicSubnetId}) {
-                if (subnet != null) {
-                    retry(() -> {
-                        Throttle.VCN.takeUninterruptibly();
-                        return vcnClient.forRegion(location).deleteSubnet(DeleteSubnetRequest.builder().subnetId(subnet).build());
-                    });
-                }
-            }
-            for (String routeTable : new String[]{privateRouteTable, publicRouteTable}) {
-                if (routeTable != null) {
-                    retry(() -> {
-                        Throttle.VCN.takeUninterruptibly();
-                        return vcnClient.forRegion(location).deleteRouteTable(DeleteRouteTableRequest.builder().rtId(routeTable).build());
-                    });
-                }
-            }
-            if (internetId != null) {
-                retry(() -> {
-                    Throttle.VCN.takeUninterruptibly();
-                    return vcnClient.forRegion(location).deleteInternetGateway(DeleteInternetGatewayRequest.builder().igId(internetId).build());
-                });
-            }
-            if (natId != null) {
-                retry(() -> {
-                    Throttle.VCN.takeUninterruptibly();
-                    return vcnClient.forRegion(location).deleteNatGateway(DeleteNatGatewayRequest.builder().natGatewayId(natId).build());
-                });
-            }
-            if (vcnId != null) {
-                retry(() -> {
-                    Throttle.VCN.takeUninterruptibly();
-                    return vcnClient.forRegion(location).deleteVcn(DeleteVcnRequest.builder().vcnId(vcnId).build());
-                });
-            }
-        } catch (BmcException e) {
-            LOG.warn("Failed to terminate benchmark network. Cleanup will happen after all benchmarks complete.", e);
+        for (PhasedResource.PhaseLock lifecycleLock : lifecycleLocks) {
+            lifecycleLock.close();
         }
     }
 
-    static <T> T retry(Callable<T> callable) throws Exception {
+    public static <T, E extends Exception> T retry(ThrowingSupplier<T, E> callable) throws E {
         return retry(callable, () -> {});
     }
 
-    static <T> T retry(Callable<T> callable, Runnable onFailure) throws Exception {
+    public static <T, E extends Exception> T retry(ThrowingSupplier<T, E> callable, Runnable onFailure) throws E {
         return retry(callable, onFailure, 3);
     }
 
-    static <T> T retry(Callable<T> callable, Runnable onFailure, int n) throws Exception {
-        Exception err = null;
+    static <T, E extends Exception> T retry(ThrowingSupplier<T, E> callable, Runnable onFailure, int n) throws E {
+        E err = null;
         for (int i = 0; i < n; i++) {
             try {
-                return callable.call();
-            } catch (InvalidatesBenchmarkException ibe) {
-                throw ibe;
+                return callable.get();
             } catch (Exception e) {
+                if (e instanceof InvalidatesBenchmarkException) {
+                    throw e;
+                }
+
                 if (err == null) {
-                    err = e;
+                    err = (E) e;
                 } else {
                     err.addSuppressed(e);
                 }
             }
             onFailure.run();
-            TimeUnit.SECONDS.sleep(10);
+            try {
+                TimeUnit.SECONDS.sleep(10);
+            } catch (InterruptedException e) {
+                PlatformDependent.throwException(e);
+            }
         }
         throw err;
     }
@@ -395,5 +274,9 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         BASTION,
         RELAY_SERVER,
         PUBLIC_IP,
+    }
+
+    interface ThrowingRunnable {
+        void run() throws Exception;
     }
 }

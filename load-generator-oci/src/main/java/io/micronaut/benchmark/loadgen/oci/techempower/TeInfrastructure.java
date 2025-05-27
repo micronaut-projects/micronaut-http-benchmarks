@@ -1,14 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci.techempower;
 
-import com.oracle.bmc.bastion.BastionClient;
-import com.oracle.bmc.core.VirtualNetworkClient;
 import io.micronaut.benchmark.loadgen.oci.AbstractInfrastructure;
 import io.micronaut.benchmark.loadgen.oci.Compute;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 import io.micronaut.benchmark.loadgen.oci.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.PhaseTracker;
-import io.micronaut.benchmark.loadgen.oci.RegionalClient;
 import io.micronaut.benchmark.loadgen.oci.SshUtil;
+import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.client.HttpClient;
@@ -42,7 +40,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
     private final Map<DockerServer, DockerServerRuntime> dockerServers = new EnumMap<>(DockerServer.class);
 
     private TeInfrastructure(Factory factory, OciLocation location, Path logDirectory) {
-        super(location, logDirectory, factory.vcnClient, factory.bastionClient, factory.compute);
+        super(location, logDirectory, factory.context, factory.compute);
         this.factory = factory;
     }
 
@@ -205,8 +203,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
 
     @Singleton
     public record Factory(
-            RegionalClient<VirtualNetworkClient> vcnClient,
-            RegionalClient<BastionClient> bastionClient,
+            ResourceContext context,
             Compute compute,
             @Named(TaskExecutors.IO) ExecutorService executor,
             HttpClient httpClient

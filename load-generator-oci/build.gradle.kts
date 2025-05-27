@@ -33,7 +33,7 @@ dependencies {
 }
 
 micronaut {
-    version("4.2.3")
+    version("4.8.2")
     testRuntime("junit5")
     processing {
         incremental(true)

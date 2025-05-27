@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 
@@ -59,9 +60,23 @@ public final class SuiteRunner {
     /**
      * Clean the benchmark compartment in all configured regions/ADs.
      */
-    public void clean() {
-        for (OciLocation location : locations) {
-            compartmentCleaner.cleanCompartment(location, false);
+    public void clean() throws Exception {
+        try (ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (Future<Void> future : executorService.invokeAll(
+                    locations.stream()
+                            .map(l -> (Callable<Void>) () -> {
+                                try {
+                                    compartmentCleaner.cleanCompartment(l, false);
+                                    return null;
+                                } catch (Exception e) {
+                                    LOG.error("Failed to clean compartment", e);
+                                    throw e;
+                                }
+                            })
+                            .toList()
+            )) {
+                future.get();
+            }
         }
     }
 
