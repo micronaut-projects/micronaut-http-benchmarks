@@ -9,7 +9,6 @@ import io.micronaut.core.annotation.Nullable;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -18,11 +17,11 @@ import java.util.stream.Stream;
 import static io.micronaut.benchmark.http.plot.Main.DISCRIMINATORS;
 
 final class LoadGroup {
+    private final boolean top;
     private final List<Entry> index = new ArrayList<>();
 
-    private List<Main.DiscriminatorLabel> discriminated;
+    private List<Discriminated> discriminated;
     private final List<List<String>> optionsByDiscriminator = new ArrayList<>();
-    private Map<Main.DiscriminatorLabel, String> colors;
 
     private double minTime;
     private double maxTime;
@@ -35,16 +34,25 @@ final class LoadGroup {
     private DropdownSelector dropdownSelector;
     private List<LoadGroup> children;
 
+    private final DropdownSelector detailDialogSelector;
+    private final DropdownSelector.OptionAttribute detailDialogNone;
+
     public LoadGroup() {
+        top = true;
         dropdownSelectorAttributes = List.of();
+        detailDialogSelector = new DropdownSelector();
+        detailDialogNone = detailDialogSelector.addOption(null);
     }
 
     private LoadGroup(LoadGroup parent, DropdownSelector.OptionAttribute attribute) {
+        top = false;
         this.dropdownSelectorAttributes = Stream.concat(parent.dropdownSelectorAttributes.stream(), Stream.of(attribute)).toList();
         this.minTime = parent.minTime;
         this.maxTime = parent.maxTime;
         this.maxCpu = parent.maxCpu;
         this.metricAttributes = parent.metricAttributes;
+        this.detailDialogSelector = parent.detailDialogSelector;
+        this.detailDialogNone = parent.detailDialogNone;
     }
 
     LoadGroup time(double minTime, double maxTime) {
@@ -67,8 +75,8 @@ final class LoadGroup {
         index.add(new Entry(parameters, result, jfrSummary));
     }
 
-    private static Main.DiscriminatorLabel getDiscriminator(SuiteRunner.BenchmarkParameters p) {
-        return new Main.DiscriminatorLabel(
+    private static DiscriminatorLabel getDiscriminator(SuiteRunner.BenchmarkParameters p) {
+        return new DiscriminatorLabel(
                 DISCRIMINATORS.stream().map(f -> f.extractor().apply(p)).toList());
     }
 
@@ -80,7 +88,7 @@ final class LoadGroup {
         }
     }
 
-    private Map<Main.DiscriminatorLabel, String> selectColors(List<Main.DiscriminatorLabel> discriminated) {
+    private void selectColors() {
         Integer h = null, s = null, v = null;
         boolean fallback = false;
         for (int i = 0; i < optionsByDiscriminator.size(); i++) {
@@ -100,18 +108,18 @@ final class LoadGroup {
         if (h == null) {
             fallback = true;
         }
-        Map<Main.DiscriminatorLabel, String> map = new HashMap<>();
-        for (Main.DiscriminatorLabel discriminator : discriminated) {
+        for (int i = 0; i < discriminated.size(); i++) {
+            Discriminated d = discriminated.get(i);
             if (fallback) {
-                map.put(discriminator, "C" + map.size());
+                d.color = "C" + i;
             } else {
                 double hv, sv = 1, vv = 1;
-                hv = List.of(278. / 255, 230. / 255, 157. / 255).get(optionsByDiscriminator.get(h).indexOf(discriminator.values().get(h)));
+                hv = List.of(278. / 255, 230. / 255, 157. / 255).get(optionsByDiscriminator.get(h).indexOf(d.label.values().get(h)));
                 if (s != null) {
-                    sv = 1 - (double) optionsByDiscriminator.get(s).indexOf(discriminator.values().get(s)) / optionsByDiscriminator.get(s).size();
+                    sv = 1 - (double) optionsByDiscriminator.get(s).indexOf(d.label.values().get(s)) / optionsByDiscriminator.get(s).size();
                 }
                 if (v != null) {
-                    vv = 1 - (double) optionsByDiscriminator.get(v).indexOf(discriminator.values().get(v)) / optionsByDiscriminator.get(v).size();
+                    vv = 1 - (double) optionsByDiscriminator.get(v).indexOf(d.label.values().get(v)) / optionsByDiscriminator.get(v).size();
                 }
                 Color color = Color.getHSBColor((float) hv, (float) sv, (float) vv);
                 String hex = Integer.toHexString(color.getRGB() & 0xffffff);
@@ -119,10 +127,9 @@ final class LoadGroup {
                     //noinspection StringConcatenationInLoop
                     hex = "0" + hex;
                 }
-                map.put(discriminator, "#" + hex);
+                d.color = "#" + hex;
             }
         }
-        return map;
     }
 
     void complete() {
@@ -131,12 +138,13 @@ final class LoadGroup {
                 .map(LoadGroup::getDiscriminator)
                 .distinct()
                 .sorted()
+                .map(Discriminated::new)
                 .toList();
 
         for (int i = 0; i < DISCRIMINATORS.size(); i++) {
             int finalI = i;
             Main.Discriminator discriminator = DISCRIMINATORS.get(i);
-            List<String> opts = discriminated.stream().map(d -> d.values().get(finalI)).distinct()
+            List<String> opts = discriminated.stream().map(d -> d.label.values().get(finalI)).distinct()
                     .sorted(Comparator.comparingInt(discriminator.order()::indexOf))
                     .toList();
             optionsByDiscriminator.add(opts);
@@ -158,7 +166,7 @@ final class LoadGroup {
             }
         }
         if (children == null) {
-            colors = selectColors(discriminated);
+            selectColors();
         }
     }
 
@@ -184,6 +192,9 @@ final class LoadGroup {
             for (LoadGroup child : children) {
                 child.emitHead(html);
             }
+        }
+        if (top) {
+            detailDialogSelector.emitHead(html);
         }
     }
 
@@ -273,7 +284,10 @@ final class LoadGroup {
                             disc.add(optionsByDiscriminator.get(j).getFirst());
                         }
                     }
-                    html.append("<td style='background-color: ").append(colors.get(new Main.DiscriminatorLabel(disc))).append("'></td>");
+                    Discriminated wrap = discriminated.stream().filter(d -> d.label.values.equals(disc)).findAny().orElseThrow();
+                    html.append("<td style='background-color: ").append(wrap.color).append("' onclick='");
+                    detailDialogSelector.emitSelectSpecific(html, wrap.detailDialogAttribute);
+                    html.append("'></td>");
                 }
                 html.append("</tr>");
             }
@@ -298,10 +312,10 @@ final class LoadGroup {
                     .maxCpu(maxCpu)
                     .metricAttributes(metricAttributes);
 
-            for (Main.DiscriminatorLabel discriminator : discriminated) {
-                PhaseGraph.Group group = phaseGraph.addGroup().color(colors.get(discriminator));
+            for (Discriminated d : discriminated) {
+                PhaseGraph.Group group = phaseGraph.addGroup().color(d.color);
                 for (Entry entry : index) {
-                    if (!getDiscriminator(entry.parameters).equals(discriminator)) {
+                    if (!getDiscriminator(entry.parameters).equals(d.label)) {
                         continue;
                     }
                     HyperfoilRunner.StatsAll benchmark = entry.result;
@@ -316,12 +330,73 @@ final class LoadGroup {
                 phaseGraph.emit(html, htmlClass());
             }
         }
+
+        for (Discriminated d : discriminated) {
+            html.append("<div class='dialog ").append(d.detailDialogAttribute.htmlClass()).append("'>");
+            html.append("<div onclick='if (this === event.target) ");
+            detailDialogSelector.emitSelectSpecific(html, detailDialogNone);
+            html.append("'><div>");
+            for (Entry entry : index) {
+                if (getDiscriminator(entry.parameters).equals(d.label)) {
+                    html.append("<h3>").append(entry.parameters.name()).append("</h3><ul>");
+                    if (entry.jfrSummary != null) {
+                        html.append("<li><a href='").append(entry.parameters.name()).append("/flamegraph.html'>Flamegraph</a></li>");
+                        html.append("<li><a href='").append(entry.parameters.name()).append("/heatmap.html'>Heatmap</a></li>");
+                    }
+                    html.append("</ul>");
+                }
+            }
+            html.append("</dl></div></div></div>");
+        }
     }
 
+    /**
+     * A single benchmark run, with a specific set of benchmark parameters.
+     *
+     * @param parameters The parameters
+     * @param result     The hyperfoil result
+     * @param jfrSummary The summary of the collected JFR file, if any
+     */
     private record Entry(
             SuiteRunner.BenchmarkParameters parameters,
             HyperfoilRunner.StatsAll result,
             @Nullable JfrSummary jfrSummary
     ) {
+    }
+
+    /**
+     * A set of {@link Entry entries} with the same {@link DiscriminatorLabel}, e.g. the same benchmark parameters on
+     * different infrastructures.
+     */
+    private class Discriminated {
+        private final DiscriminatorLabel label;
+        private String color;
+        private final DropdownSelector.OptionAttribute detailDialogAttribute = detailDialogSelector.addOption(null);
+
+        Discriminated(DiscriminatorLabel label) {
+            this.label = label;
+        }
+    }
+
+    private record DiscriminatorLabel(
+            List<String> values
+    ) implements Comparable<DiscriminatorLabel> {
+        @Override
+        public int compareTo(DiscriminatorLabel o) {
+            for (int i = 0; i < values.size(); i++) {
+                String l = values.get(i);
+                String r = o.values.get(i);
+                List<String> order = DISCRIMINATORS.get(i).order();
+                int cmp = Integer.compare(order.indexOf(l), order.indexOf(r));
+                if (cmp != 0) {
+                    return cmp;
+                }
+                cmp = l.compareTo(r);
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            return 0;
+        }
     }
 }

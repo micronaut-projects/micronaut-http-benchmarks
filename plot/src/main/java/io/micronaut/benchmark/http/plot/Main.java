@@ -26,6 +26,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public class Main {
     private static final Path OUTPUT = Path.of("output");
@@ -237,10 +239,26 @@ public class Main {
     }
 
     public static void main(String[] args) throws IOException {
-        String html = new Main().plot();
+        Main main = new Main();
+        String html = main.plot();
         Path tmp = Paths.get("output/plot.html");
         Files.writeString(tmp, html);
         Runtime.getRuntime().exec(new String[]{"firefox", tmp.toString()});
+
+        Path zipped = Paths.get("output/plot.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(zipped))) {
+            zip.putNextEntry(new ZipEntry("plot.html"));
+            Files.copy(tmp, zip);
+            for (SuiteRunner.BenchmarkParameters parameters : main.index) {
+                for (String s : List.of("flamegraph.html", "heatmap.html")) {
+                    Path f = Paths.get("output", parameters.name(), s);
+                    if (Files.exists(f)) {
+                        zip.putNextEntry(new ZipEntry(parameters.name() + "/" + s));
+                        Files.copy(f, zip);
+                    }
+                }
+            }
+        }
     }
 
     record Discriminator(
@@ -259,28 +277,6 @@ public class Main {
 
         Discriminator selectWithDropdown(boolean selectWithDropdown) {
             return new Discriminator(name, extractor, order, selectWithDropdown);
-        }
-    }
-
-    record DiscriminatorLabel(
-            List<String> values
-    ) implements Comparable<DiscriminatorLabel> {
-        @Override
-        public int compareTo(DiscriminatorLabel o) {
-            for (int i = 0; i < values.size(); i++) {
-                String l = values.get(i);
-                String r = o.values.get(i);
-                List<String> order = DISCRIMINATORS.get(i).order;
-                int cmp = Integer.compare(order.indexOf(l), order.indexOf(r));
-                if (cmp != 0) {
-                    return cmp;
-                }
-                cmp = l.compareTo(r);
-                if (cmp != 0) {
-                    return cmp;
-                }
-            }
-            return 0;
         }
     }
 }

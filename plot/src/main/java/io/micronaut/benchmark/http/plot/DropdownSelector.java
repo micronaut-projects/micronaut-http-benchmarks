@@ -44,6 +44,10 @@ final class DropdownSelector {
         html.append("</select>");
     }
 
+    public void emitSelectSpecific(StringBuilder js, OptionAttribute attr) {
+        js.append("document.body.setAttribute(\"").append(bodyAttribute).append("\", \"").append(attr.htmlClass).append("\")");
+    }
+
     private record Option(
             String name,
             String htmlClass
