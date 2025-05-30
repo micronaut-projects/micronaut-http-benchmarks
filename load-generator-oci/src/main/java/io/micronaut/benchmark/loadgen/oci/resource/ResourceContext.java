@@ -1,5 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci.resource;
 
+import com.fasterxml.jackson.core.StreamWriteFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.oracle.bmc.bastion.BastionClient;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
@@ -12,6 +14,11 @@ import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
@@ -23,8 +30,17 @@ public final class ResourceContext {
 
     private final ConcurrentMap<Object, Poller> phasePollers = new ConcurrentHashMap<>();
 
-    public ResourceContext(Clients clients) {
+    private final OutputStream eventLog;
+    private final JsonMapper eventLogMapper;
+
+    ResourceContext(Clients clients) throws IOException {
         this.clients = clients;
+
+        eventLog = Files.newOutputStream(Path.of("output/events.log"));
+        eventLogMapper = JsonMapper.builder()
+                .registerSubtypes(LogEvent.class.getPermittedSubclasses())
+                .disable(StreamWriteFeature.AUTO_CLOSE_TARGET)
+                .build();
     }
 
     @Scheduled(fixedDelay = "5s")
@@ -45,6 +61,16 @@ public final class ResourceContext {
 
     public <P extends Poller> P getPoller(OciLocation location, Class<?> discriminator, Supplier<P> pollerSupplier) {
         return getPoller(new PollerKey(location, discriminator), pollerSupplier);
+    }
+
+    public synchronized void log(LogEvent event) {
+        try {
+            eventLogMapper.writeValue(eventLog, new LogEntry(Instant.now(), event));
+            eventLog.write('\n');
+            eventLog.flush();
+        } catch (IOException e) {
+            LOG.error("Error logging event", e);
+        }
     }
 
     private record PollerKey(OciLocation location, Class<?> discriminator) {
@@ -68,5 +94,14 @@ public final class ResourceContext {
         int size();
 
         void poll();
+    }
+
+    public record LogEntry(
+            Instant time,
+            LogEvent event
+    ) {
+    }
+
+    public sealed interface LogEvent permits AbstractSimpleResource.DependencyEvent, PhasedResource.CloseLockEvent, PhasedResource.CreateLockEvent, PhasedResource.CreateResourceEvent, PhasedResource.NameEvent, PhasedResource.PhaseEvent {
     }
 }

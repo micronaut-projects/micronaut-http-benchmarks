@@ -62,6 +62,7 @@ public abstract class AbstractDecoratedResource extends PhasedResource<AbstractD
             throw new IllegalStateException("Can only add dependencies before it's managed");
         }
         this.locks.addAll(locks);
+        locks.stream().flatMap(PhaseLock::uuids).forEach(l -> context.log(new AbstractSimpleResource.DependencyEvent(uuid, l)));
     }
 
     public List<PhaseLock> require() {

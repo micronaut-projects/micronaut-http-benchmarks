@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
     private static final Logger LOG = LoggerFactory.getLogger(AbstractSimpleResource.class);
@@ -36,6 +37,7 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
             throw new IllegalStateException("Can only add dependencies before it's managed");
         }
         this.locks.addAll(locks);
+        locks.stream().flatMap(PhaseLock::uuids).forEach(l -> context.log(new DependencyEvent(uuid, l)));
     }
 
     public List<PhaseLock> require() {
@@ -112,4 +114,10 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
     protected abstract void delete(OciLocation location, String ocid);
 
     protected abstract PhasePoller<String, P> getPoller(OciLocation location);
+
+    public record DependencyEvent(
+            UUID resource,
+            UUID lock
+    ) implements ResourceContext.LogEvent {
+    }
 }

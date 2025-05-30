@@ -1,5 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci.resource;
 
+import io.micronaut.core.annotation.Nullable;
 import io.netty.util.internal.PlatformDependent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -7,19 +8,33 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.stream.Stream;
 
 public abstract class PhasedResource<P> {
     private static final Logger LOG = LoggerFactory.getLogger(PhasedResource.class);
+
+    protected final UUID uuid = UUID.randomUUID();
+
     protected final ResourceContext context;
 
-    protected final Map<P, Integer> locks = new HashMap<>();
+    final Map<P, Integer> locks = new HashMap<>();
     private P currentPhase;
+
+    @Nullable
+    private String name;
 
     protected PhasedResource(ResourceContext context) {
         this.context = context;
+        context.log(new CreateResourceEvent(uuid, getClass().getSimpleName()));
+    }
+
+    public final void name(String name) {
+        this.name = name;
+        context.log(new NameEvent(uuid, name));
     }
 
     public synchronized P getCurrentPhase() {
@@ -62,6 +77,7 @@ public abstract class PhasedResource<P> {
             throw new IllegalStateException("Already in phase " + this.currentPhase + ", past phase " + phase);
         }
         this.currentPhase = phase;
+        context.log(new PhaseEvent(uuid, phases(), phase));
         notifyAll();
     }
 
@@ -93,7 +109,14 @@ public abstract class PhasedResource<P> {
         return new PhaseLockImpl(phase);
     }
 
+    @Override
+    public String toString() {
+        return getClass().getSimpleName() + "[" + name + "]";
+    }
+
     public sealed interface PhaseLock extends AutoCloseable {
+        Stream<UUID> uuids();
+
         void await() throws InterruptedException;
 
         @Override
@@ -109,11 +132,18 @@ public abstract class PhasedResource<P> {
     }
 
     private final class PhaseLockImpl implements PhaseLock {
+        private final UUID uuid = UUID.randomUUID();
         private final P phase;
         private boolean closed = false;
 
         private PhaseLockImpl(P phase) {
             this.phase = phase;
+            context.log(new CreateLockEvent(PhasedResource.this.uuid, uuid, phase));
+        }
+
+        @Override
+        public Stream<UUID> uuids() {
+            return Stream.of(uuid);
         }
 
         @Override
@@ -133,10 +163,49 @@ public abstract class PhasedResource<P> {
                     PhasedResource.this.notifyAll();
                 }
             }
+            context.log(new CloseLockEvent(PhasedResource.this.uuid, uuid, phase));
         }
     }
 
+    public record CreateLockEvent(
+            UUID resource,
+            UUID lock,
+            Object phase
+    ) implements ResourceContext.LogEvent {
+    }
+
+    public record CloseLockEvent(
+            UUID resource,
+            UUID lock,
+            Object phase
+    ) implements ResourceContext.LogEvent {
+    }
+
+    public record PhaseEvent(
+            UUID resource,
+            List<?> phases,
+            Object phase
+    ) implements ResourceContext.LogEvent {
+    }
+
+    public record CreateResourceEvent(
+            UUID resource,
+            String simpleClassName
+    ) implements ResourceContext.LogEvent {
+    }
+
+    public record NameEvent(
+            UUID resource,
+            String name
+    ) implements ResourceContext.LogEvent {
+    }
+
     private record CompositePhaseLock(List<PhaseLock> members) implements PhaseLock {
+        @Override
+        public Stream<UUID> uuids() {
+            return members.stream().flatMap(PhaseLock::uuids);
+        }
+
         @Override
         public void await() throws InterruptedException {
             try {
