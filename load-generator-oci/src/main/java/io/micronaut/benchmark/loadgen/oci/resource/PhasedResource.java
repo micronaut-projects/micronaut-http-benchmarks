@@ -1,11 +1,15 @@
 package io.micronaut.benchmark.loadgen.oci.resource;
 
+import io.netty.util.internal.PlatformDependent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 
 public abstract class PhasedResource<P> {
     private static final Logger LOG = LoggerFactory.getLogger(PhasedResource.class);
@@ -89,11 +93,19 @@ public abstract class PhasedResource<P> {
         return new PhaseLockImpl(phase);
     }
 
-    public interface PhaseLock extends AutoCloseable {
+    public sealed interface PhaseLock extends AutoCloseable {
         void await() throws InterruptedException;
 
         @Override
         void close();
+
+        static PhaseLock combine(List<PhaseLock> locks) {
+            return new CompositePhaseLock(locks);
+        }
+
+        static void awaitAll(List<PhaseLock> locks) throws InterruptedException {
+            combine(locks).await();
+        }
     }
 
     private final class PhaseLockImpl implements PhaseLock {
@@ -120,6 +132,34 @@ public abstract class PhasedResource<P> {
                 if (locks.compute(phase, (_, v) -> v - 1) == 0) {
                     PhasedResource.this.notifyAll();
                 }
+            }
+        }
+    }
+
+    private record CompositePhaseLock(List<PhaseLock> members) implements PhaseLock {
+        @Override
+        public void await() throws InterruptedException {
+            try {
+                CompletableFuture.allOf(
+                        members.stream()
+                                .map(pl -> CompletableFuture.runAsync(() -> {
+                                    try {
+                                        pl.await();
+                                    } catch (InterruptedException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }, Executors.newVirtualThreadPerTaskExecutor()))
+                                .toArray(CompletableFuture[]::new)
+                ).get();
+            } catch (ExecutionException e) {
+                PlatformDependent.throwException(e.getCause());
+            }
+        }
+
+        @Override
+        public void close() {
+            for (PhaseLock member : members) {
+                member.close();
             }
         }
     }

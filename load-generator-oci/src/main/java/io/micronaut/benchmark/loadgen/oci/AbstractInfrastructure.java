@@ -91,7 +91,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     private Compute.Instance relayServerInstance;
     private final BastionResource bastion;
 
-    private final List<PhasedResource.PhaseLock> lifecycleLocks = new ArrayList<>();
+    final List<PhasedResource.PhaseLock> lifecycleLocks = new ArrayList<>();
 
     protected AbstractInfrastructure(OciLocation location, Path logDirectory, ResourceContext context, Compute compute) {
         this.location = location;
@@ -170,6 +170,8 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         }
         launch(privateSubnet, () -> privateSubnet.manageNew(location, CreateSubnetDetails.builder()
                 .displayName("Private subnet")
+                .prohibitPublicIpOnVnic(RELAY_MODE != SshRelayMode.PUBLIC_IP)
+                .prohibitInternetIngress(RELAY_MODE != SshRelayMode.PUBLIC_IP)
                 .cidrBlock(PRIVATE_SUBNET)));
 
         if (relayServerBuilder != null) {
@@ -215,11 +217,19 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         progress.update(BenchmarkPhase.SETTING_UP_INSTANCES);
     }
 
+    public final SubnetResource getPrivateSubnet() {
+        return privateSubnet;
+    }
+
     public final Compute.Launch computeBuilder(String instanceType) {
         return compute.builder(instanceType, location, privateSubnet)
                 .bastion(bastion)
                 .relayInstance(relayServerInstance)
                 .publicIp(RELAY_MODE == SshRelayMode.PUBLIC_IP);
+    }
+
+    public void addLifecycleDependency(List<PhasedResource.PhaseLock> locks) {
+        lifecycleLocks.addAll(locks);
     }
 
     protected final void terminateRelayAsync() throws Exception {
@@ -274,9 +284,5 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         BASTION,
         RELAY_SERVER,
         PUBLIC_IP,
-    }
-
-    interface ThrowingRunnable {
-        void run() throws Exception;
     }
 }

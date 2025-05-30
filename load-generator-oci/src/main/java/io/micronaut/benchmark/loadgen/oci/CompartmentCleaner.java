@@ -14,6 +14,7 @@ import com.oracle.bmc.core.model.Vcn;
 import com.oracle.bmc.identity.IdentityClient;
 import com.oracle.bmc.identity.model.Compartment;
 import com.oracle.bmc.psql.PostgresqlClient;
+import com.oracle.bmc.psql.model.DbSystemSummary;
 import com.oracle.bmc.requests.BmcRequest;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractSimpleResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
@@ -21,6 +22,7 @@ import io.micronaut.benchmark.loadgen.oci.resource.CompartmentResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
 import io.micronaut.benchmark.loadgen.oci.resource.InternetGatewayResource;
 import io.micronaut.benchmark.loadgen.oci.resource.NatGatewayResource;
+import io.micronaut.benchmark.loadgen.oci.resource.PostgresqlResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.loadgen.oci.resource.RouteTableResource;
 import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
@@ -119,6 +121,17 @@ public record CompartmentCleaner(
                 resource.dependOn(subnet.require());
             }
             delete(location, instance.getId(), resource);
+        }
+        if (anyVcns) {
+            for (DbSystemSummary dbSystemSummary : PostgresqlResource.list(context, location)) {
+                PostgresqlResource resource = new PostgresqlResource(context);
+                resource.setPhase(dbSystemSummary.getLifecycleState());
+                // don't know which subnets this instance uses, so just depend on all of them
+                for (SubnetResource subnet : subnetResources) {
+                    resource.dependOn(subnet.require());
+                }
+                delete(location, dbSystemSummary.getId(), resource);
+            }
         }
         // scan sub-compartments next
         for (Compartment subCompartment : CompartmentResource.list(context, location)) {

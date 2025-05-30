@@ -44,11 +44,11 @@ public final class BastionSessionResource extends AbstractSimpleResource<Session
     }
 
     public void manageNew(OciLocation location, CreateSessionDetails.Builder details) throws Exception {
-        awaitLocks();
-
-        details.bastionId(bastion.ocid());
-        session = context.clients.bastion().forRegion(location).createSession(CreateSessionRequest.builder().createSessionDetails(details.build()).build()).getSession();
-        manageExisting(location, session.getId());
+        manageNew(location, () -> {
+            details.bastionId(bastion.ocid());
+            session = context.clients.bastion().forRegion(location).createSession(CreateSessionRequest.builder().createSessionDetails(details.build()).build()).getSession();
+            return session.getId();
+        });
     }
 
     @Override

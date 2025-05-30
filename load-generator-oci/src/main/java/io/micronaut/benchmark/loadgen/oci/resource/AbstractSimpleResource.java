@@ -2,6 +2,7 @@ package io.micronaut.benchmark.loadgen.oci.resource;
 
 import io.micronaut.benchmark.loadgen.oci.AbstractInfrastructure;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
+import io.micronaut.core.util.functional.ThrowingSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,9 +55,24 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
     }
 
     protected final void awaitLocks() throws InterruptedException {
-        for (PhaseLock lock : locks) {
-            lock.await();
+        PhaseLock.awaitAll(locks);
+    }
+
+    protected final void manageNew(OciLocation location, ThrowingSupplier<String, Exception> create) throws Exception {
+        String ocid = null;
+        try {
+            awaitLocks();
+
+            ocid = create.get();
+        } finally {
+            if (ocid == null) {
+                for (PhaseLock lock : locks) {
+                    lock.close();
+                }
+                setPhase(terminated);
+            }
         }
+        manageExisting(location, ocid);
     }
 
     public final void manageExisting(OciLocation location, String ocid) throws Exception {

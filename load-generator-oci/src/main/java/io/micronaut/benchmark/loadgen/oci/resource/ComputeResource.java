@@ -14,9 +14,6 @@ import java.util.List;
 import java.util.function.Supplier;
 
 public final class ComputeResource extends AbstractSimpleResource<Instance.LifecycleState> {
-    private BastionResource bastion;
-    private List<PhaseLock> bastionLock;
-
     public ComputeResource(ResourceContext context) {
         super(
                 Instance.LifecycleState.Provisioning,
@@ -43,29 +40,15 @@ public final class ComputeResource extends AbstractSimpleResource<Instance.Lifec
         context.clients.compute().forRegion(location).terminateInstance(TerminateInstanceRequest.builder().instanceId(ocid).build());
     }
 
-    public ComputeResource bastion(BastionResource bastion) {
-        this.bastion = bastion;
-        this.bastionLock = bastion.require();
-        return this;
-    }
-
     public void manageNew(OciLocation location, Supplier<LaunchInstanceDetails.Builder> details) throws Exception {
-        awaitLocks();
-
-        LaunchInstanceDetails.Builder d = details.get();
-        d.compartmentId(location.compartmentId());
-        d.availabilityDomain(location.availabilityDomain());
-        Instance i = context.clients.compute().forRegion(location).launchInstance(LaunchInstanceRequest.builder().launchInstanceDetails(d.build()).build()).getInstance();
-        setPhase(i.getLifecycleState());
-
-        if (bastion != null) {
-            for (PhaseLock l : bastionLock) {
-                l.await();
-            }
-
-        }
-
-        manageExisting(location, i.getId());
+        manageNew(location, () -> {
+            LaunchInstanceDetails.Builder d = details.get();
+            d.compartmentId(location.compartmentId());
+            d.availabilityDomain(location.availabilityDomain());
+            Instance i = context.clients.compute().forRegion(location).launchInstance(LaunchInstanceRequest.builder().launchInstanceDetails(d.build()).build()).getInstance();
+            setPhase(i.getLifecycleState());
+            return i.getId();
+        });
     }
 
     public static List<Instance> list(ResourceContext context, OciLocation location) {

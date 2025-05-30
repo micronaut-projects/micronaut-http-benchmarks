@@ -1,5 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.core.annotation.Indexed;
 import io.micronaut.core.annotation.Nullable;
@@ -11,12 +12,8 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * Infrastructure for hyperfoil benchmarks, with a single server-under-test, and a hyperfoil cluster sending HTTP
@@ -31,13 +28,11 @@ public final class Infrastructure extends AbstractInfrastructure {
 
     private final Factory factory;
 
-    private Compute.Instance benchmarkServer;
+    Compute.Instance benchmarkServer;
     private HyperfoilRunner hyperfoilRunner;
 
     private boolean started;
     private boolean stopped;
-
-    private final List<AttachmentEntry<?>> attachments = Collections.synchronizedList(new ArrayList<>());
 
     private Infrastructure(Factory factory, OciLocation location, Path logDirectory) {
         super(location, logDirectory, factory.context, factory.compute);
@@ -51,12 +46,8 @@ public final class Infrastructure extends AbstractInfrastructure {
                 .privateIp(SERVER_IP)
                 .launch();
 
-        CompletableFuture<?> attachmentsStarted = CompletableFuture.completedFuture(null);
-        for (Attachment<?> attachment : factory.attachments) {
-            attachmentsStarted = CompletableFuture.allOf(
-                    attachmentsStarted,
-                    setUp(attachment)
-            );
+        for (Attachment attachment : factory.attachments) {
+            attachment.setUp(this);
         }
 
         hyperfoilRunner = factory.hyperfoilRunnerFactory.launch(logDirectory, this);
@@ -73,24 +64,9 @@ public final class Infrastructure extends AbstractInfrastructure {
             //SshUtil.run(benchmarkServerClient, "sudo yum update -y", log);
         }
 
-        attachmentsStarted.get(); // wait for attachments to start up
+        PhasedResource.PhaseLock.awaitAll(lifecycleLocks);
 
         started = true;
-    }
-
-    private <C> CompletableFuture<?> setUp(Attachment<C> attachment) {
-        Callable<?> task = MdcTracker.copyMdc(() -> {
-            C c = attachment.setUp(this);
-            attachments.add(new AttachmentEntry<>(attachment, c));
-            return null;
-        });
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                return task.call();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
     }
 
     @Override
@@ -104,37 +80,14 @@ public final class Infrastructure extends AbstractInfrastructure {
         if (benchmarkServer != null) {
             benchmarkServer.terminateAsync();
         }
-        CompletableFuture<?> attachmentsStopped = CompletableFuture.completedFuture(null);
-        for (AttachmentEntry<?> attachment : attachments) {
-            attachmentsStopped = CompletableFuture.allOf(
-                    attachmentsStopped,
-                    tearDown(attachment)
-            );
-        }
-
         if (hyperfoilRunner != null) {
             hyperfoilRunner.close();
         }
-        attachmentsStopped.get();
         if (benchmarkServer != null) {
             benchmarkServer.close();
         }
 
         super.close();
-    }
-
-    private <C> CompletableFuture<?> tearDown(AttachmentEntry<C> attachment) {
-        Callable<?> task = MdcTracker.copyMdc(() -> {
-            attachment.attachment.tearDown(this, attachment.context);
-            return null;
-        });
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                return task.call();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
     }
 
     /**
@@ -211,14 +164,8 @@ public final class Infrastructure extends AbstractInfrastructure {
     }
 
     @Indexed(Attachment.class)
-    public interface Attachment<C> {
-        C setUp(Infrastructure infrastructure) throws Exception;
-
-        void tearDown(Infrastructure infrastructure, C context) throws Exception;
-    }
-
-    private record AttachmentEntry<C>(Attachment<C> attachment, C context) {
-
+    public interface Attachment {
+        void setUp(Infrastructure infrastructure) throws Exception;
     }
 
     @Singleton
@@ -227,7 +174,7 @@ public final class Infrastructure extends AbstractInfrastructure {
             Compute compute,
             HyperfoilRunner.Factory hyperfoilRunnerFactory,
             SutMonitor sutMonitor,
-            List<Attachment<?>> attachments
+            List<Attachment> attachments
     ) {
         Infrastructure create(OciLocation location, Path logDirectory) {
             return new Infrastructure(this, location, logDirectory);

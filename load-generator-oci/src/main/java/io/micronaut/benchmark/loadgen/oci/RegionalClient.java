@@ -7,6 +7,7 @@ import com.oracle.bmc.computeinstanceagent.PluginClient;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.identity.IdentityClient;
+import com.oracle.bmc.psql.PostgresqlClient;
 import io.micronaut.context.annotation.Factory;
 import jakarta.inject.Singleton;
 
@@ -63,6 +64,11 @@ public interface RegionalClient<C> {
 
         @Singleton
         RegionalClient<BastionClient> bastion(BastionClient.Builder builder) {
+            return clientFor(builder);
+        }
+
+        @Singleton
+        RegionalClient<PostgresqlClient> postgres(PostgresqlClient.Builder builder) {
             return clientFor(builder);
         }
     }

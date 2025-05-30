@@ -85,9 +85,13 @@ public class Main {
         if (asyncProfiler) {
             jfrSummaries = new HashMap<>();
             for (SuiteRunner.BenchmarkParameters parameters : index) {
+                Path path = OUTPUT.resolve(parameters.name()).resolve("profile.jfr");
+                if (!Files.exists(path) || Files.size(path) == 0) {
+                    continue;
+                }
                 JfrSummary summary = new JfrSummary();
                 jfrSummaries.put(parameters, summary);
-                try (JfrReader jfr = new JfrReader(OUTPUT.resolve(parameters.name()).resolve("profile.jfr").toString())) {
+                try (JfrReader jfr = new JfrReader(path.toString())) {
                     while (true) {
                         Event event = jfr.readEvent();
                         if (event == null) {

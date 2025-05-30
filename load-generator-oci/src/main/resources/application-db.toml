@@ -1,0 +1,26 @@
+[[load.documents]]
+name="db"
+method="GET"
+uri="/db"
+response-body='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' # https://stackoverflow.com/questions/136505/searching-for-uuids-in-text-with-regex
+response-matching-mode='REGEX'
+
+[[hyperfoil.status]]
+name="status"
+uri="/status"
+
+[suite]
+enabled-run-types=[
+    "mn-hotspot",
+]
+
+[variants.hotspot]
+# todo: -Djdk.trackAllThreads=false
+common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,db --add-opens=java.base/java.lang=ALL-UNNAMED -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
+
+[load.protocols.http1]
+enabled=true
+ops=[2000, 8000, 16000, 32000, 48000, 64000, 96000, 128000, 160000, 192000, 256000]
+
+[variants.hotspot.async-profiler]
+enabled=true

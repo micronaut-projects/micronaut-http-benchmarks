@@ -42,14 +42,13 @@ public final class NatGatewayResource extends AbstractSimpleResource<NatGateway.
     }
 
     public void manageNew(OciLocation location, CreateNatGatewayDetails.Builder details) throws Exception {
-        awaitLocks();
-
-        details.compartmentId(location.compartmentId());
-        details.vcnId(vcn.ocid());
-        NatGateway gw = context.clients.vcn().forRegion(location).createNatGateway(CreateNatGatewayRequest.builder().createNatGatewayDetails(details.build()).build()).getNatGateway();
-        setPhase(gw.getLifecycleState());
-
-        manageExisting(location, gw.getId());
+        manageNew(location, () -> {
+            details.compartmentId(location.compartmentId());
+            details.vcnId(vcn.ocid());
+            NatGateway gw = context.clients.vcn().forRegion(location).createNatGateway(CreateNatGatewayRequest.builder().createNatGatewayDetails(details.build()).build()).getNatGateway();
+            setPhase(gw.getLifecycleState());
+            return gw.getId();
+        });
     }
 
     @Override

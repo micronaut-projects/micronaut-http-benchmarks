@@ -16,6 +16,7 @@ import com.oracle.bmc.core.model.LaunchOptions;
 import com.oracle.bmc.core.requests.GetVnicRequest;
 import com.oracle.bmc.core.requests.ListImagesRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
+import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
@@ -32,7 +33,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -162,6 +162,10 @@ public final class Compute {
             return this;
         }
 
+        public AbstractDecoratedResource resource() {
+            return resource;
+        }
+
         /**
          * Create this instance. Note that it is not started immediately, it takes some time.
          *
@@ -177,7 +181,7 @@ public final class Compute {
      */
     public final class Instance implements AutoCloseable {
         private final InstanceResource resource;
-        private final PhasedResource.PhaseLock lock;
+        private final List<PhasedResource.PhaseLock> lock;
         private final OciLocation location;
         private final ComputeResource compute;
         private final String privateIp;
@@ -204,14 +208,14 @@ public final class Compute {
 
             resource.instance = this;
             if (bastionSession != null) {
-                resource.dependencyLocks.addAll(bastionSession.require());
+                resource.dependOn(bastionSession.require());
             } else if (relayInstance != null) {
-                resource.dependencyLocks.add(relayInstance.resource.mainLock());
+                resource.dependOn(relayInstance.resource.require());
             }
-            resource.dependencyLocks.addAll(compute.require());
+            resource.dependOn(compute.require());
             compute.dependOn(launch.subnet.require());
 
-            this.lock = resource.mainLock();
+            this.lock = resource.require();
 
             AbstractInfrastructure.launch(compute, () -> compute.manageNew(location, () -> {
                 CreateVnicDetails.Builder vnicDetails = CreateVnicDetails.builder()
@@ -272,14 +276,19 @@ public final class Compute {
          * Block while this instance is starting.
          */
         public void awaitStartup() throws Exception {
-            lock.await();
+            PhasedResource.PhaseLock.awaitAll(lock);
         }
 
         /**
          * Trigger termination of this instance, asynchronously.
          */
-        public synchronized void terminateAsync() {
-            lock.close();
+        @Deprecated
+        public void terminateAsync() {
+            close();
+        }
+
+        public AbstractDecoratedResource resource() {
+            return resource;
         }
 
         /**
@@ -288,7 +297,9 @@ public final class Compute {
          */
         @Override
         public synchronized void close() {
-            lock.close();
+            for (PhasedResource.PhaseLock phaseLock : lock) {
+                phaseLock.close();
+            }
         }
 
         public ClientSession connectSsh() throws Exception {
@@ -300,54 +311,30 @@ public final class Compute {
         }
     }
 
-    private final class InstanceResource extends PhasedResource<InstanceState> {
-        final List<PhaseLock> dependencyLocks = new ArrayList<>();
+    private final class InstanceResource extends AbstractDecoratedResource {
         Instance instance;
 
         InstanceResource(ResourceContext context) {
             super(context);
         }
 
-        void manage() throws InterruptedException {
-            try {
-                setPhase(InstanceState.Starting);
-                for (PhasedResource.PhaseLock dependencyLock : dependencyLocks) {
-                    dependencyLock.await();
-                }
-                if (instance.hasPublicIp) {
-                    String vnic = computeClient.forRegion(instance.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
-                            .compartmentId(instance.location.compartmentId())
-                            .availabilityDomain(instance.location.availabilityDomain())
-                            .instanceId(instance.compute.ocid())
-                            .build()).getItems().getFirst().getVnicId();
-                    instance.publicIp = vcnClient.forRegion(instance.location).getVnic(GetVnicRequest.builder()
-                            .vnicId(vnic)
-                            .build()).getVnic().getPublicIp();
-                }
-                if (instance.bastionSession != null) {
-                    instance.relay = new SshFactory.Relay(instance.bastionSession.getBastionUserName(), "host.bastion." + instance.location.region() + ".oci.oraclecloud.com");
-                } else if (instance.relayInstance != null) {
-                    instance.relay = new SshFactory.Relay("opc", instance.relayInstance.publicIp);
-                }
-
-                setPhase(InstanceState.Available);
-                awaitUnlocked(InstanceState.Available);
-
-                setPhase(InstanceState.Terminating);
-            } finally {
-                for (PhasedResource.PhaseLock dependencyLock : dependencyLocks) {
-                    dependencyLock.close();
-                }
-            }
-        }
-
         @Override
-        protected List<InstanceState> phases() {
-            return List.of(InstanceState.values());
-        }
-
-        PhaseLock mainLock() {
-            return lock(InstanceState.Available);
+        protected void setUp() throws Exception {
+            if (instance.hasPublicIp) {
+                String vnic = computeClient.forRegion(instance.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
+                        .compartmentId(instance.location.compartmentId())
+                        .availabilityDomain(instance.location.availabilityDomain())
+                        .instanceId(instance.compute.ocid())
+                        .build()).getItems().getFirst().getVnicId();
+                instance.publicIp = vcnClient.forRegion(instance.location).getVnic(GetVnicRequest.builder()
+                        .vnicId(vnic)
+                        .build()).getVnic().getPublicIp();
+            }
+            if (instance.bastionSession != null) {
+                instance.relay = new SshFactory.Relay(instance.bastionSession.getBastionUserName(), "host.bastion." + instance.location.region() + ".oci.oraclecloud.com");
+            } else if (instance.relayInstance != null) {
+                instance.relay = new SshFactory.Relay("opc", instance.relayInstance.publicIp);
+            }
         }
     }
 

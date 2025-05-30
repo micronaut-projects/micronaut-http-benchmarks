@@ -16,6 +16,7 @@ dependencies {
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-core")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-bastion")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-computeinstanceagent")
+    implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-psql")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-httpclient-netty")
     implementation("io.micronaut.toml:micronaut-toml")
     api("io.micronaut:micronaut-jackson-databind")
@@ -29,7 +30,9 @@ dependencies {
     implementation("org.apache.sshd:sshd-core:2.15.0")
     implementation("org.apache.sshd:sshd-scp:2.15.0")
     implementation("org.apache.sshd:sshd-sftp:2.15.0")
-    implementation("ch.qos.logback:logback-classic:1.5.18")
+    runtimeOnly("ch.qos.logback:logback-classic:1.5.18")
+    runtimeOnly("org.bouncycastle:bcpkix-jdk18on:1.80")
+    runtimeOnly("org.postgresql:postgresql:42.7.5")
 }
 
 micronaut {

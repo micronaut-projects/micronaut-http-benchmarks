@@ -44,14 +44,13 @@ public final class VcnResource extends AbstractSimpleResource<Vcn.LifecycleState
     }
 
     public void manageNew(OciLocation location, CreateVcnDetails.Builder details) throws Exception {
-        awaitLocks();
-
-        details.compartmentId(location.compartmentId());
-        Vcn vcn = context.clients.vcn().forRegion(location).createVcn(CreateVcnRequest.builder().createVcnDetails(details.build()).build()).getVcn();
-        this.defaultSecurityListId = vcn.getDefaultSecurityListId();
-        setPhase(vcn.getLifecycleState());
-
-        manageExisting(location, vcn.getId());
+        manageNew(location, () -> {
+            details.compartmentId(location.compartmentId());
+            Vcn vcn = context.clients.vcn().forRegion(location).createVcn(CreateVcnRequest.builder().createVcnDetails(details.build()).build()).getVcn();
+            this.defaultSecurityListId = vcn.getDefaultSecurityListId();
+            setPhase(vcn.getLifecycleState());
+            return vcn.getId();
+        });
     }
 
     @Override

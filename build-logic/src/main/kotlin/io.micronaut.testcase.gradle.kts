@@ -36,6 +36,8 @@ dependencies {
     implementation("io.projectreactor:reactor-core")
     compileOnly("org.graalvm.nativeimage:svm:22.3.1")
     runtimeOnly("org.bouncycastle:bcpkix-jdk18on:1.77")
+    implementation("com.zaxxer:HikariCP:6.3.0")
+    runtimeOnly("org.postgresql:postgresql:42.7.5")
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.1")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.1")

@@ -49,16 +49,15 @@ public final class SubnetResource extends AbstractSimpleResource<Subnet.Lifecycl
     }
 
     public void manageNew(OciLocation location, CreateSubnetDetails.Builder details) throws Exception {
-        awaitLocks();
-
-        details.compartmentId(location.compartmentId());
-        details.availabilityDomain(location.availabilityDomain());
-        details.vcnId(vcn.ocid());
-        details.routeTableId(routeTable.ocid());
-        Subnet sn = context.clients.vcn().forRegion(location).createSubnet(CreateSubnetRequest.builder().createSubnetDetails(details.build()).build()).getSubnet();
-        setPhase(sn.getLifecycleState());
-
-        manageExisting(location, sn.getId());
+        manageNew(location, () -> {
+            details.compartmentId(location.compartmentId());
+            details.availabilityDomain(location.availabilityDomain());
+            details.vcnId(vcn.ocid());
+            details.routeTableId(routeTable.ocid());
+            Subnet sn = context.clients.vcn().forRegion(location).createSubnet(CreateSubnetRequest.builder().createSubnetDetails(details.build()).build()).getSubnet();
+            setPhase(sn.getLifecycleState());
+            return sn.getId();
+        });
     }
 
     @Override

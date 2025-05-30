@@ -118,8 +118,15 @@ ocpus=8
 memory-in-gb=16
 image="Oracle-Linux-9.5-2025.05.19-0"
 
+# postgres backend
+[compute.instance-types.postgresql]
+shape="PostgreSQL.VM.Standard.E5.Flex"
+ocpus=4
+memory-in-gb=32
+image=""
+
 [variants.hotspot]
-version=23
+version=24
 common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
 option-choices=[""]
 
@@ -173,7 +180,7 @@ affinity=[
     #"off",
     #"preferred",
     "enforced",
-    "jdkclient"
+    #"jdkclient"
 ]
 
 [techempower]

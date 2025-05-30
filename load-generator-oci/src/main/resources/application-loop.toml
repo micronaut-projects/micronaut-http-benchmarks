@@ -27,3 +27,11 @@ ops=[1000, 4000, 8000, 16000, 24000, 32000, 48000, 64000, 80000]
 
 [variants.hotspot.async-profiler]
 enabled=true
+
+[variants.micronaut.compile-variants]
+affinity=[
+    #"off",
+    #"preferred",
+    "enforced",
+    "jdkclient"
+]

@@ -44,14 +44,13 @@ public final class BastionResource extends AbstractSimpleResource<BastionLifecyc
     }
 
     public void manageNew(OciLocation location, CreateBastionDetails.Builder details) throws Exception {
-        awaitLocks();
-
-        details.compartmentId(location.compartmentId());
-        details.targetSubnetId(subnet.ocid());
-        Bastion gw = context.clients.bastion().forRegion(location).createBastion(CreateBastionRequest.builder().createBastionDetails(details.build()).build()).getBastion();
-        setPhase(gw.getLifecycleState());
-
-        manageExisting(location, gw.getId());
+        manageNew(location, () -> {
+            details.compartmentId(location.compartmentId());
+            details.targetSubnetId(subnet.ocid());
+            Bastion gw = context.clients.bastion().forRegion(location).createBastion(CreateBastionRequest.builder().createBastionDetails(details.build()).build()).getBastion();
+            setPhase(gw.getLifecycleState());
+            return gw.getId();
+        });
     }
 
     @Override

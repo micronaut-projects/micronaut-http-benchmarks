@@ -19,7 +19,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -63,23 +62,32 @@ public class LoopController {
         }
     }
 
+    private static String handleError(Throwable e) {
+        LOG.warn("Error: {}", e.toString());
+        return "X";
+    }
+
     @Controller("/loop")
     @Requires(property = "execute-on", value = "blocking")
-    @Requires(property = "use-jdk-client", value = "true")
+    @Requires(property = "http-client", value = "jdk")
     public static class BlockingJdk {
         @Value("${loop-remote}")
         String remote;
 
         @Get
         @ExecuteOn(TaskExecutors.BLOCKING)
-        public String get() throws IOException, InterruptedException {
-            return getJdkClient().send(HttpRequest.newBuilder(URI.create("http://" + remote + "/hello")).build(), HttpResponse.BodyHandlers.ofString()).body();
+        public String get() {
+            try {
+                return getJdkClient().send(HttpRequest.newBuilder(URI.create(remote + "/hello")).build(), HttpResponse.BodyHandlers.ofString()).body();
+            } catch (Exception e) {
+                return handleError(e);
+            }
         }
     }
 
     @Controller("/loop")
     @Requires(missingProperty = "execute-on")
-    @Requires(property = "use-jdk-client", value = "true")
+    @Requires(property = "http-client", value = "jdk")
     public static class NonBlockingJdk {
         @Value("${loop-remote}")
         String remote;
@@ -87,7 +95,8 @@ public class LoopController {
         @Get
         @SingleResult
         public Publisher<String> get() {
-            return Mono.fromFuture(getJdkClient().sendAsync(HttpRequest.newBuilder(URI.create("http://" + remote + "/hello")).build(), HttpResponse.BodyHandlers.ofString()).thenApply(HttpResponse::body));
+            return Mono.fromFuture(getJdkClient().sendAsync(HttpRequest.newBuilder(URI.create(remote + "/hello")).build(), HttpResponse.BodyHandlers.ofString()).thenApply(HttpResponse::body))
+                    .onErrorResume(t -> Mono.just(handleError(t)));
         }
     }
 
@@ -105,8 +114,7 @@ public class LoopController {
             try {
                 return client.toBlocking().retrieve("/hello");
             } catch (Exception e) {
-                LOG.warn("Error: {}", e.toString());
-                return "X";
+                return handleError(e);
             }
         }
     }
@@ -123,8 +131,7 @@ public class LoopController {
         @SingleResult
         public Publisher<String> get() {
             return Mono.from(client.retrieve("/hello"))
-                    .doOnError(t -> LOG.warn("Error: {}", t.toString()))
-                    .onErrorReturn("X");
+                    .onErrorResume(t -> Mono.just(handleError(t)));
         }
     }
 }

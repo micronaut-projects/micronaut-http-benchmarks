@@ -43,14 +43,13 @@ public final class InternetGatewayResource extends AbstractSimpleResource<Intern
     }
 
     public void manageNew(OciLocation location, CreateInternetGatewayDetails.Builder details) throws Exception {
-        awaitLocks();
-
-        details.compartmentId(location.compartmentId());
-        details.vcnId(vcn.ocid());
-        InternetGateway gw = context.clients.vcn().forRegion(location).createInternetGateway(CreateInternetGatewayRequest.builder().createInternetGatewayDetails(details.build()).build()).getInternetGateway();
-        setPhase(gw.getLifecycleState());
-
-        manageExisting(location, gw.getId());
+        manageNew(location, () -> {
+            details.compartmentId(location.compartmentId());
+            details.vcnId(vcn.ocid());
+            InternetGateway gw = context.clients.vcn().forRegion(location).createInternetGateway(CreateInternetGatewayRequest.builder().createInternetGatewayDetails(details.build()).build()).getInternetGateway();
+            setPhase(gw.getLifecycleState());
+            return gw.getId();
+        });
     }
 
     @Override

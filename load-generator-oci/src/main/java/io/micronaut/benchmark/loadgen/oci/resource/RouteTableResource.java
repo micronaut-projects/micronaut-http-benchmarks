@@ -50,15 +50,14 @@ public final class RouteTableResource extends AbstractSimpleResource<RouteTable.
     }
 
     public void manageNew(OciLocation location, Supplier<CreateRouteTableDetails.Builder> details) throws Exception {
-        awaitLocks();
-
-        CreateRouteTableDetails.Builder d = details.get();
-        d.compartmentId(location.compartmentId());
-        d.vcnId(vcn.ocid());
-        RouteTable rt = context.clients.vcn().forRegion(location).createRouteTable(CreateRouteTableRequest.builder().createRouteTableDetails(d.build()).build()).getRouteTable();
-        setPhase(rt.getLifecycleState());
-
-        manageExisting(location, rt.getId());
+        manageNew(location, () -> {
+            CreateRouteTableDetails.Builder d = details.get();
+            d.compartmentId(location.compartmentId());
+            d.vcnId(vcn.ocid());
+            RouteTable rt = context.clients.vcn().forRegion(location).createRouteTable(CreateRouteTableRequest.builder().createRouteTableDetails(d.build()).build()).getRouteTable();
+            setPhase(rt.getLifecycleState());
+            return rt.getId();
+        });
     }
 
     @Override

@@ -1,1 +1,7 @@
 loop-remote: http://127.0.0.1
+db-remote: 127.0.0.1
+micronaut:
+  netty:
+    event-loops:
+      default:
+        num-threads: 4

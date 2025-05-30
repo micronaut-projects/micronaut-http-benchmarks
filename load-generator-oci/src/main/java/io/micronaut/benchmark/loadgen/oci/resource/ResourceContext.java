@@ -4,6 +4,7 @@ import com.oracle.bmc.bastion.BastionClient;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.identity.IdentityClient;
+import com.oracle.bmc.psql.PostgresqlClient;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 import io.micronaut.benchmark.loadgen.oci.RegionalClient;
 import io.micronaut.scheduling.annotation.Scheduled;
@@ -47,6 +48,10 @@ public final class ResourceContext {
     }
 
     private record PollerKey(OciLocation location, Class<?> discriminator) {
+        @Override
+        public String toString() {
+            return location.availabilityDomain() + "/" + discriminator.getSimpleName();
+        }
     }
 
     @Singleton
@@ -54,7 +59,8 @@ public final class ResourceContext {
             RegionalClient<IdentityClient> identity,
             RegionalClient<ComputeClient> compute,
             RegionalClient<VirtualNetworkClient> vcn,
-            RegionalClient<BastionClient> bastion
+            RegionalClient<BastionClient> bastion,
+            RegionalClient<PostgresqlClient> postgres
     ) {
     }
 
