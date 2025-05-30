@@ -9,6 +9,7 @@ import org.apache.sshd.client.session.ClientSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,18 +30,24 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final Factory factory;
 
     Compute.Instance benchmarkServer;
-    private HyperfoilRunner hyperfoilRunner;
+    private final HyperfoilRunner hyperfoilRunner;
+    private final PhasedResource.PhaseLock hyperfoilLock;
 
     private boolean started;
     private boolean stopped;
 
-    private Infrastructure(Factory factory, OciLocation location, Path logDirectory) {
+    private Infrastructure(Factory factory, OciLocation location, Path logDirectory) throws IOException {
         super(location, logDirectory, factory.context, factory.compute);
         this.factory = factory;
+
+        hyperfoilRunner = factory.hyperfoilRunnerFactory.create(logDirectory, this);
+        hyperfoilLock = hyperfoilRunner.require();
     }
 
     private void start(PhaseTracker.PhaseUpdater progress) throws Exception {
         setupBase(progress);
+
+        launch(hyperfoilRunner, hyperfoilRunner::manage);
 
         benchmarkServer = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE)
                 .privateIp(SERVER_IP)
@@ -49,8 +56,6 @@ public final class Infrastructure extends AbstractInfrastructure {
         for (Attachment attachment : factory.attachments) {
             attachment.setUp(this);
         }
-
-        hyperfoilRunner = factory.hyperfoilRunnerFactory.launch(logDirectory, this);
 
         benchmarkServer.awaitStartup();
 
@@ -73,16 +78,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     public void close() throws Exception {
         stopped = true;
 
-        // terminate asynchronously. we will wait for termination in close()
-        if (hyperfoilRunner != null) {
-            hyperfoilRunner.terminateAsync();
-        }
-        if (benchmarkServer != null) {
-            benchmarkServer.terminateAsync();
-        }
-        if (hyperfoilRunner != null) {
-            hyperfoilRunner.close();
-        }
+        hyperfoilLock.close();
         if (benchmarkServer != null) {
             benchmarkServer.close();
         }
@@ -176,7 +172,7 @@ public final class Infrastructure extends AbstractInfrastructure {
             SutMonitor sutMonitor,
             List<Attachment> attachments
     ) {
-        Infrastructure create(OciLocation location, Path logDirectory) {
+        Infrastructure create(OciLocation location, Path logDirectory) throws IOException {
             return new Infrastructure(this, location, logDirectory);
         }
     }

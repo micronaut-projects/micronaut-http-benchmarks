@@ -88,7 +88,6 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     private final InternetGatewayResource internet;
 
     private final Compute.Launch relayServerBuilder;
-    private Compute.Instance relayServerInstance;
     private final BastionResource bastion;
 
     final List<PhasedResource.PhaseLock> lifecycleLocks = new ArrayList<>();
@@ -109,6 +108,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
             publicRouteTable.dependOn(internet.require());
             publicSubnet = new SubnetResource(context).vcn(vcn).routeTable(publicRouteTable);
             relayServerBuilder = compute.builder("relay-server", location, publicSubnet).publicIp(true);
+            lifecycleLocks.addAll(relayServerBuilder.resource().require());
         } else {
             internet = null;
             publicRouteTable = null;
@@ -126,6 +126,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     }
 
     static void launch(PhasedResource<?> resource, ThrowingRunnable manage) {
+        LOG.info("Launching {}", resource);
         Thread.ofVirtual()
                 .name("manage-" + resource)
                 .start(() -> {
@@ -175,7 +176,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                 .cidrBlock(PRIVATE_SUBNET)));
 
         if (relayServerBuilder != null) {
-            relayServerInstance = relayServerBuilder.launch();
+            relayServerBuilder.launchAsResource();
         }
 
         if (publicSubnet != null) {
@@ -224,7 +225,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     public final Compute.Launch computeBuilder(String instanceType) {
         return compute.builder(instanceType, location, privateSubnet)
                 .bastion(bastion)
-                .relayInstance(relayServerInstance)
+                .relayInstance(relayServerBuilder.resource())
                 .publicIp(RELAY_MODE == SshRelayMode.PUBLIC_IP);
     }
 
@@ -237,9 +238,6 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        if (relayServerInstance != null) {
-            relayServerInstance.close();
-        }
         LOG.info("Terminating network resources");
         for (PhasedResource.PhaseLock lifecycleLock : lifecycleLocks) {
             lifecycleLock.close();

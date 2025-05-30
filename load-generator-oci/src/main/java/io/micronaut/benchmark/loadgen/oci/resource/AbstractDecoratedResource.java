@@ -37,11 +37,15 @@ public abstract class AbstractDecoratedResource extends PhasedResource<AbstractD
             tearDown();
 
         } finally {
+            unlock();
             for (PhaseLock lock : locks) {
                 lock.close();
             }
             setPhase(Phase.Terminated);
         }
+    }
+
+    protected void unlock() {
     }
 
     protected void launchDependencies() throws Exception {

@@ -109,7 +109,7 @@ public final class Compute {
     }
 
     public final class Launch {
-        private final InstanceResource resource = new InstanceResource(context);
+        private final InstanceResource resource = new InstanceResource(context, this);
         private final ComputeResource computeResource = new ComputeResource(context);
         private final String displayName;
         private final ComputeConfiguration.InstanceType instanceType;
@@ -118,13 +118,16 @@ public final class Compute {
         private String privateIp = null;
         private boolean publicIp = false;
         private BastionSessionResource bastionSession = null;
-        private Instance relayInstance = null;
+        private InstanceResource relayInstance = null;
 
         private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
             this.displayName = displayName;
             this.instanceType = Objects.requireNonNull(instanceType, "instanceType");
             this.location = location;
             this.subnet = subnet;
+            this.computeResource.name(displayName);
+            computeResource.dependOn(subnet.require());
+            resource.dependOn(computeResource.require());
         }
 
         /**
@@ -153,16 +156,20 @@ public final class Compute {
             if (bastion != null) {
                 this.bastionSession = new BastionSessionResource(context).bastion(bastion);
                 bastionSession.dependOn(computeResource.require());
+                resource.dependOn(bastionSession.require());
             }
             return this;
         }
 
-        public Launch relayInstance(Instance relayInstance) {
-            this.relayInstance = relayInstance;
+        public Launch relayInstance(InstanceResource relayInstance) {
+            if (relayInstance != null) {
+                this.relayInstance = relayInstance;
+                resource.dependOn(relayInstance.require());
+            }
             return this;
         }
 
-        public AbstractDecoratedResource resource() {
+        public InstanceResource resource() {
             return resource;
         }
 
@@ -171,8 +178,15 @@ public final class Compute {
          *
          * @return The instance
          */
-        public Instance launch() throws Exception {
-            return new Instance(this);
+        @Deprecated
+        public Instance launch() {
+            List<PhasedResource.PhaseLock> locks = resource.require();
+            return new Instance(launchAsResource(), locks);
+        }
+
+        public InstanceResource launchAsResource() {
+            AbstractInfrastructure.launch(resource, resource::manage);
+            return resource;
         }
     }
 
@@ -182,47 +196,71 @@ public final class Compute {
     public final class Instance implements AutoCloseable {
         private final InstanceResource resource;
         private final List<PhasedResource.PhaseLock> lock;
-        private final OciLocation location;
-        private final ComputeResource compute;
-        private final String privateIp;
-        private final boolean hasPublicIp;
-        private final BastionSessionResource bastionSession;
-        private final Instance relayInstance;
+
+        private Instance(InstanceResource resource, List<PhasedResource.PhaseLock> lock) {
+            this.resource = resource;
+            this.lock = lock;
+        }
+
+        /**
+         * Block while this instance is starting.
+         */
+        public void awaitStartup() throws Exception {
+            PhasedResource.PhaseLock.awaitAll(lock);
+        }
+
+        /**
+         * Trigger termination of this instance, asynchronously.
+         */
+        @Deprecated
+        public void terminateAsync() {
+            close();
+        }
+
+        /**
+         * Terminate this instance and wait for it to shut down. The caller <i>should</i> call
+         * {@link #terminateAsync()} before this.
+         */
+        @Override
+        public synchronized void close() {
+            for (PhasedResource.PhaseLock phaseLock : lock) {
+                phaseLock.close();
+            }
+        }
+
+        public AbstractDecoratedResource resource() {
+            return resource;
+        }
+
+        public ClientSession connectSsh() throws Exception {
+            return resource.connectSsh();
+        }
+    }
+
+    public final class InstanceResource extends AbstractDecoratedResource {
+        private final Launch launch;
         private String publicIp;
         private SshFactory.Relay relay;
 
-        private Instance(Launch launch) {
-            this.location = launch.location;
-            this.resource = launch.resource;
-            this.compute = launch.computeResource;
-            this.privateIp = launch.privateIp;
-            this.hasPublicIp = launch.publicIp;
-            this.bastionSession = launch.bastionSession;
-            this.relayInstance = launch.relayInstance;
+        InstanceResource(ResourceContext context, Launch launch) {
+            super(context);
+            this.launch = launch;
+        }
 
-            List<Image> images = images(location);
+        @Override
+        protected void launchDependencies() throws Exception {
+            List<Image> images = images(launch.location);
             Image image = images.stream()
                     .filter(i -> i.getId().equals(launch.instanceType.image) || i.getDisplayName().equals(launch.instanceType.image))
                     .findAny()
                     .orElseThrow(() -> new NoSuchElementException("Image " + launch.instanceType.image + " not found. Available images are: \n" + images.stream().map(Image::getDisplayName).collect(Collectors.joining("\n"))));
 
-            resource.instance = this;
-            if (bastionSession != null) {
-                resource.dependOn(bastionSession.require());
-            } else if (relayInstance != null) {
-                resource.dependOn(relayInstance.resource.require());
-            }
-            resource.dependOn(compute.require());
-            compute.dependOn(launch.subnet.require());
-
-            this.lock = resource.require();
-
-            AbstractInfrastructure.launch(compute, () -> compute.manageNew(location, () -> {
+            AbstractInfrastructure.launch(launch.computeResource, () -> launch.computeResource.manageNew(launch.location, () -> {
                 CreateVnicDetails.Builder vnicDetails = CreateVnicDetails.builder()
                         .subnetId(launch.subnet.ocid())
                         .assignPublicIp(launch.publicIp);
-                if (privateIp != null) {
-                    vnicDetails.privateIp(privateIp);
+                if (launch.privateIp != null) {
+                    vnicDetails.privateIp(launch.privateIp);
                 }
                 return LaunchInstanceDetails.builder()
                         .displayName(launch.displayName)
@@ -251,9 +289,9 @@ public final class Compute {
                                 .build());
             }));
 
-            if (bastionSession != null) {
-                AbstractInfrastructure.launch(bastionSession, () -> {
-                    bastionSession.manageNew(location, CreateSessionDetails.builder()
+            if (launch.bastionSession != null) {
+                AbstractInfrastructure.launch(launch.bastionSession, () -> {
+                    launch.bastionSession.manageNew(launch.location, CreateSessionDetails.builder()
                             .keyDetails(PublicKeyDetails.builder()
                                     .publicKeyContent(sshFactory.publicKey())
                                     .build())
@@ -262,43 +300,30 @@ public final class Compute {
                             .targetResourceDetails(
                                     // managed ssh sessions are unstable, so just use port forwarding
                                     CreatePortForwardingSessionTargetResourceDetails.builder()
-                                            .targetResourceId(compute.ocid())
+                                            .targetResourceId(launch.computeResource.ocid())
                                             .targetResourcePort(22)
-                                            .targetResourcePrivateIpAddress(privateIp)
+                                            .targetResourcePrivateIpAddress(launch.privateIp)
                                             .build()));
                 });
             }
-
-            AbstractInfrastructure.launch(resource, resource::manage);
         }
 
-        /**
-         * Block while this instance is starting.
-         */
-        public void awaitStartup() throws Exception {
-            PhasedResource.PhaseLock.awaitAll(lock);
-        }
-
-        /**
-         * Trigger termination of this instance, asynchronously.
-         */
-        @Deprecated
-        public void terminateAsync() {
-            close();
-        }
-
-        public AbstractDecoratedResource resource() {
-            return resource;
-        }
-
-        /**
-         * Terminate this instance and wait for it to shut down. The caller <i>should</i> call
-         * {@link #terminateAsync()} before this.
-         */
         @Override
-        public synchronized void close() {
-            for (PhasedResource.PhaseLock phaseLock : lock) {
-                phaseLock.close();
+        protected void setUp() {
+            if (launch.publicIp) {
+                String vnic = computeClient.forRegion(launch.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
+                        .compartmentId(launch.location.compartmentId())
+                        .availabilityDomain(launch.location.availabilityDomain())
+                        .instanceId(launch.computeResource.ocid())
+                        .build()).getItems().getFirst().getVnicId();
+                this.publicIp = vcnClient.forRegion(launch.location).getVnic(GetVnicRequest.builder()
+                        .vnicId(vnic)
+                        .build()).getVnic().getPublicIp();
+            }
+            if (launch.bastionSession != null) {
+                this.relay = new SshFactory.Relay(launch.bastionSession.getBastionUserName(), "host.bastion." + launch.location.region() + ".oci.oraclecloud.com");
+            } else if (launch.relayInstance != null) {
+                this.relay = new SshFactory.Relay("opc", launch.relayInstance.publicIp);
             }
         }
 
@@ -306,42 +331,14 @@ public final class Compute {
             if (publicIp != null) {
                 return sshFactory.connect(this, publicIp, null);
             } else {
-                return Infrastructure.retry(() -> sshFactory.connect(this, privateIp, relay));
+                return Infrastructure.retry(() -> sshFactory.connect(this, launch.privateIp, relay));
             }
-        }
-    }
-
-    private final class InstanceResource extends AbstractDecoratedResource {
-        Instance instance;
-
-        InstanceResource(ResourceContext context) {
-            super(context);
         }
 
         @Override
-        protected void setUp() throws Exception {
-            if (instance.hasPublicIp) {
-                String vnic = computeClient.forRegion(instance.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
-                        .compartmentId(instance.location.compartmentId())
-                        .availabilityDomain(instance.location.availabilityDomain())
-                        .instanceId(instance.compute.ocid())
-                        .build()).getItems().getFirst().getVnicId();
-                instance.publicIp = vcnClient.forRegion(instance.location).getVnic(GetVnicRequest.builder()
-                        .vnicId(vnic)
-                        .build()).getVnic().getPublicIp();
-            }
-            if (instance.bastionSession != null) {
-                instance.relay = new SshFactory.Relay(instance.bastionSession.getBastionUserName(), "host.bastion." + instance.location.region() + ".oci.oraclecloud.com");
-            } else if (instance.relayInstance != null) {
-                instance.relay = new SshFactory.Relay("opc", instance.relayInstance.publicIp);
-            }
+        public String toString() {
+            return "InstanceResource[" + launch.computeResource + "]";
         }
-    }
-
-    private enum InstanceState {
-        Starting,
-        Available,
-        Terminating,
     }
 
     /**

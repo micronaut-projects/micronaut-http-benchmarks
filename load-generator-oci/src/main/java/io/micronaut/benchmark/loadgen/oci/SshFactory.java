@@ -97,7 +97,7 @@ public final class SshFactory {
      * @return The SSH connection
      */
     public ClientSession connect(
-            @Nullable Compute.Instance instance,
+            @Nullable Object instance,
             String instanceIp,
             @Nullable Relay relay
     ) throws Exception {

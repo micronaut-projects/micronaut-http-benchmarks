@@ -94,7 +94,7 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
             }
             if (awaitUnlocked(available) == available) {
                 AbstractInfrastructure.retry(() -> {
-                    LOG.info("Deleting {} {}", getClass().getSimpleName(), ocid);
+                    LOG.info("Deleting {} {}", this, ocid);
                     delete(location, ocid);
                     return null;
                 });

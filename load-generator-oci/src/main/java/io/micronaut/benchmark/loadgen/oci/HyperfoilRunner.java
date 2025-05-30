@@ -19,6 +19,9 @@ import io.hyperfoil.http.config.HttpPluginBuilder;
 import io.hyperfoil.http.statistics.HttpStats;
 import io.hyperfoil.http.steps.HttpRequestStepBuilder;
 import io.hyperfoil.http.steps.HttpStepCatalog;
+import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
+import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
+import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.scheduling.TaskExecutors;
@@ -46,6 +49,7 @@ import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
@@ -56,11 +60,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
@@ -68,7 +68,7 @@ import java.util.regex.Pattern;
 /**
  * This class manages the provisioning of a hyperfoil cluster and allows using it for benchmarks.
  */
-public final class HyperfoilRunner implements AutoCloseable {
+public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.HyperfoilPhase> {
     private static final Logger LOG = LoggerFactory.getLogger(HyperfoilRunner.class);
 
     /**
@@ -89,27 +89,27 @@ public final class HyperfoilRunner implements AutoCloseable {
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
 
     private final Factory factory;
-    private final CompletableFuture<Client> client = new CompletableFuture<>();
-    private final CompletableFuture<Void> terminate = new CompletableFuture<>();
     private final Path logDirectory;
-    private final HyperfoilInstances instances;
-    /**
-     * Worker thread that handles the actual provisioning and benchmarking.
-     */
-    private final Future<?> worker;
-    private final List<Compute.Instance> computeInstances = new CopyOnWriteArrayList<>();
-    private ClientSession controllerSession;
-    private final CompletableFuture<ResilientSshPortForwarder> controllerPortForward = new CompletableFuture<>();
 
     private final X509Certificate mtlsCert;
     private final PrivateKey mtlsKey;
+
+    private ClientSession controllerSession;
+    private final Compute.Launch controllerLaunch;
+    private final List<PhaseLock> controllerLocks;
+    private final List<AgentResource> agents = new ArrayList<>();
+    private final List<PhaseLock> agentLocks = new ArrayList<>();
+
+    private ResilientSshPortForwarder controllerPortForward;
+    private RestClient client;
 
     static {
         // 30s is too short for agent log download
         System.setProperty("io.hyperfoil.cli.request.timeout", "60000");
     }
 
-    private HyperfoilRunner(Factory factory, Path logDirectory, AbstractInfrastructure infrastructure) throws Exception {
+    private HyperfoilRunner(Factory factory, Path logDirectory, AbstractInfrastructure infrastructure) throws IOException {
+        super(factory.context);
         this.factory = factory;
         this.logDirectory = logDirectory;
 
@@ -117,20 +117,25 @@ public final class HyperfoilRunner implements AutoCloseable {
             Files.createDirectories(logDirectory);
         } catch (FileAlreadyExistsException ignored) {}
 
-        // fail fast if we can't create the instances
-        instances = createInstances(infrastructure);
-        worker = factory.executor.submit(MdcTracker.copyMdc(() -> {
-            try (AutoCloseable ignored = this::terminateAndWait) {
-                deploy();
-            } catch (InterruptedException | InterruptedIOException ignored) {
-            } catch (Exception e) {
-                LOG.error("Failed to deploy hyperfoil server", e);
-            }
-            terminate.complete(null);
-            return null;
-        }));
+        controllerLaunch = infrastructure.computeBuilder("hyperfoil-controller")
+                .privateIp(HYPERFOIL_CONTROLLER_IP);
+        controllerLocks = controllerLaunch.resource().require();
+        for (int i = 0; i < factory.config.agentCount; i++) {
+            Compute.Launch launch = infrastructure.computeBuilder(AGENT_INSTANCE_TYPE)
+                    .privateIp(agentIp(i));
+            AgentResource r = new AgentResource(context, launch, new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("agent-instance-" + i + ".log"))));
+            r.name("agent" + i);
+            agents.add(r);
+            agentLocks.addAll(r.require());
+        }
+
         if (factory.config.mtls) {
-            SelfSignedCertificate ssc = new SelfSignedCertificate();
+            SelfSignedCertificate ssc;
+            try {
+                ssc = new SelfSignedCertificate();
+            } catch (CertificateException e) {
+                throw new RuntimeException(e);
+            }
             mtlsCert = ssc.cert();
             mtlsKey = ssc.key();
             ssc.delete();
@@ -140,140 +145,88 @@ public final class HyperfoilRunner implements AutoCloseable {
         }
     }
 
-    private HyperfoilInstances createInstances(AbstractInfrastructure infrastructure) throws Exception {
-        Compute.Instance hyperfoilController = infrastructure.computeBuilder("hyperfoil-controller")
-                .privateIp(HYPERFOIL_CONTROLLER_IP)
-                .launch();
+    @Override
+    protected List<HyperfoilPhase> phases() {
+        return List.of(HyperfoilPhase.values());
+    }
+
+    public void manage() throws Exception {
         try {
-            computeInstances.add(hyperfoilController);
-            List<Compute.Instance> agents = new ArrayList<>();
-            for (int i = 0; i < factory.config.agentCount; i++) {
-                Compute.Instance instance = infrastructure.computeBuilder(AGENT_INSTANCE_TYPE)
-                        .privateIp(agentIp(i))
-                        .launch();
-                agents.add(instance);
-                computeInstances.add(instance);
+            setPhase(HyperfoilPhase.AWAITING_CONTROLLER);
+            Compute.InstanceResource controller = controllerLaunch.launchAsResource();
+            for (AgentResource agent : agents) {
+                AbstractInfrastructure.launch(agent, agent::manage);
             }
-            return new HyperfoilInstances(hyperfoilController, agents);
-        } catch (Exception e) {
-            try {
-                terminateAndWait();
-            } catch (Exception f) {
-                e.addSuppressed(f);
-            }
-            throw e;
-        }
-    }
 
-    private void terminateAndWait() {
-        for (Compute.Instance computeInstance : computeInstances) {
-            computeInstance.terminateAsync();
-        }
-        for (Compute.Instance computeInstance : computeInstances) {
-            computeInstance.close();
-        }
-    }
+            PhaseLock.awaitAll(controllerLocks);
+            setPhase(HyperfoilPhase.SETTING_UP_CONTROLLER);
 
-    private void deploy() throws Exception {
-        instances.controller.awaitStartup();
-
-        try (
-                OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("hyperfoil.log")));
-                ClientSession controllerSession = instances.controller.connectSsh()) {
-            this.controllerSession = controllerSession;
-
-            List<Callable<Void>> setupTasks = new ArrayList<>();
-
-            setupTasks.add(() -> {
+            try (
+                    OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("hyperfoil.log")));
+                    ClientSession controllerSession = controller.connectSsh()) {
                 SshUtil.run(controllerSession, "sudo yum install jdk-17-headless -y", log, 0, 1);
                 ScpClientCreator.instance().createScpClient(controllerSession).upload(factory.config.location, REMOTE_HYPERFOIL_LOCATION, ScpClient.Option.Recursive, ScpClient.Option.PreserveAttributes);
                 factory.sshFactory.deployPrivateKey(controllerSession);
-
                 SshUtil.openFirewallPorts(controllerSession);
-                return null;
-            });
 
-            for (int i = 0; i < instances.agents.size(); i++) {
-                Compute.Instance agent = instances.agents.get(i);
+                try (ChannelExec controllerCommand = controllerSession.createExecChannel(REMOTE_HYPERFOIL_LOCATION + "/bin/controller.sh -Djgroups.join_timeout=20000");
+                     ResilientSshPortForwarder controllerPortForward = factory.resilientForwarderFactory.create(
+                             controller::connectSsh,
+                             new SshdSocketAddress("localhost", 8090)
+                     );
+                     RestClient client = new RestClient(
+                             factory.vertx,
+                             controllerPortForward.address().getHostName(),
+                             controllerPortForward.address().getPort(),
+                             false, true, null)) {
 
-                setupTasks.add(() -> {
-                    agent.awaitStartup();
-                    try (ClientSession agentSession = agent.connectSsh()) {
-                        SshUtil.openFirewallPorts(agentSession);
-                        SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
-                        if (factory.config.agentAsyncProfiler) {
-                            factory.asyncProfilerHelper.initialize(agentSession, log);
-                        }
-                    }
-                    return null;
-                });
-            }
+                    SshUtil.forwardOutput(controllerCommand, log);
+                    controllerCommand.open().verify();
 
-            for (Future<?> f : factory.executor.invokeAll(setupTasks)) {
-                f.get();
-            }
-
-            try (ChannelExec controllerCommand = controllerSession.createExecChannel(REMOTE_HYPERFOIL_LOCATION + "/bin/controller.sh -Djgroups.join_timeout=20000");
-                 ResilientSshPortForwarder controllerPortForward = factory.resilientForwarderFactory.create(
-                         instances.controller::connectSsh,
-                         new SshdSocketAddress("localhost", 8090)
-                 );
-                 RestClient client = new RestClient(
-                         factory.vertx,
-                         controllerPortForward.address().getHostName(),
-                         controllerPortForward.address().getPort(),
-                         false, true, null)) {
-                this.controllerPortForward.complete(controllerPortForward);
-
-                SshUtil.forwardOutput(controllerCommand, log);
-                controllerCommand.open().verify();
-
-                while (true) {
-                    try {
-                        client.ping();
-                        break;
-                    } catch (RestClientException e) {
-                        if (!(e.getCause() instanceof HttpClosedException hce) || !hce.getMessage().equals("Connection was closed")) {
-                            throw e;
-                        }
-                    }
-                    if (!controllerCommand.isOpen()) {
-                        throw new IllegalStateException("Controller exec channel closed, did the controller die?");
-                    }
-                    LOG.info("Connecting to hyperfoil controller forwarded at {}", controllerPortForward.address());
-                    TimeUnit.SECONDS.sleep(1);
-                }
-
-                this.client.complete(client);
-
-                //noinspection InfiniteLoopStatement
-                while (true) {
-                    synchronized (this) {
-                        wait(); // wait for interrupt
-                    }
-                }
-            } finally {
-                this.controllerSession = null;
-                LOG.info("Closing benchmark client");
-
-                if (factory.config.agentAsyncProfiler) {
-                    for (int i = 0; i < instances.agents.size(); i++) {
-                        Path dir = logDirectory.resolve("agent" + i);
+                    while (true) {
                         try {
-                            Files.createDirectories(dir);
-                        } catch (FileAlreadyExistsException ignored) {}
-                        try (ClientSession agentSession = instances.agents.get(i).connectSsh()) {
-                            factory.asyncProfilerHelper.finish(agentSession, log, dir);
-                        } catch (Exception e) {
-                            LOG.error("Failed to download agent profiler results", e);
+                            client.ping();
+                            break;
+                        } catch (RestClientException e) {
+                            if (!(e.getCause() instanceof HttpClosedException hce) || !hce.getMessage().equals("Connection was closed")) {
+                                throw e;
+                            }
                         }
+                        if (!controllerCommand.isOpen()) {
+                            throw new IllegalStateException("Controller exec channel closed, did the controller die?");
+                        }
+                        LOG.info("Connecting to hyperfoil controller forwarded at {}", controllerPortForward.address());
+                        TimeUnit.SECONDS.sleep(1);
                     }
+
+                    setPhase(HyperfoilPhase.AWAITING_AGENTS);
+                    PhaseLock.awaitAll(agentLocks);
+
+                    this.controllerSession = controllerSession;
+                    this.controllerPortForward = controllerPortForward;
+                    this.client = client;
+                    setPhase(HyperfoilPhase.READY);
+                    awaitUnlocked(HyperfoilPhase.READY);
+                    this.controllerSession = null;
+                    this.controllerPortForward = null;
+                    this.client = null;
+
+                    setPhase(HyperfoilPhase.TERMINATING);
                 }
             }
-        } catch (Throwable t) {
-            this.client.completeExceptionally(t);
-            throw t;
+        } finally {
+            for (PhaseLock lock : controllerLocks) {
+                lock.close();
+            }
+            for (PhaseLock lock : agentLocks) {
+                lock.close();
+            }
+            setPhase(HyperfoilPhase.TERMINATED);
         }
+    }
+
+    public PhaseLock require() {
+        return lock(HyperfoilPhase.READY);
     }
 
     /**
@@ -330,6 +283,8 @@ public final class HyperfoilRunner implements AutoCloseable {
     }
 
     private void benchmark(Path outputDirectory, ProtocolSettings protocol, RequestDefinition.SampleRequestDefinition body, PhaseTracker.PhaseUpdater progress, boolean forPgo) throws Exception {
+        awaitPhase(HyperfoilPhase.READY);
+
         BenchmarkPhase benchmarkPhase = forPgo ? BenchmarkPhase.PGO : BenchmarkPhase.BENCHMARKING;
 
         progress.update(benchmarkPhase);
@@ -344,7 +299,7 @@ public final class HyperfoilRunner implements AutoCloseable {
                     SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), status, socketUri, true), write);
                 }
                 return null;
-            }, controllerPortForward.get()::disconnect);
+            }, controllerPortForward::disconnect);
         }
         Infrastructure.retry(() -> {
             ByteArrayOutputStream resp = new ByteArrayOutputStream();
@@ -442,13 +397,12 @@ public final class HyperfoilRunner implements AutoCloseable {
 
         Benchmark builtBenchmark = benchmark.build();
 
-        Client client = this.client.get();
         Client.BenchmarkRef benchmarkRef = client.register(builtBenchmark, null);
         Client.RunRef runRef = benchmarkRef.start("run", Map.of());
         long startTime = System.nanoTime();
         String lastPhase = null;
         while (true) {
-            RequestStatisticsResponse recentStats = Infrastructure.retry(runRef::statsRecent, controllerPortForward.get()::disconnect);
+            RequestStatisticsResponse recentStats = Infrastructure.retry(runRef::statsRecent, controllerPortForward::disconnect);
             if (recentStats.status.equals("TERMINATED")) {
                 break;
             }
@@ -475,7 +429,7 @@ public final class HyperfoilRunner implements AutoCloseable {
         StatsAllWrapper wrapper = Infrastructure.retry(() -> {
             byte[] bytes = runRef.statsAll("json");
             return new StatsAllWrapper(bytes, factory.objectMapper.readValue(bytes, StatsAll.class));
-        }, controllerPortForward.get()::disconnect);
+        }, controllerPortForward::disconnect);
         List<String> benchmarkFailures = new ArrayList<>();
         boolean invalidatesBenchmark = false;
         for (StatsAll.Info.Error error : wrapper.statsAll.info.errors) {
@@ -532,23 +486,67 @@ public final class HyperfoilRunner implements AutoCloseable {
                 .body(sampleRequest.getRequestBody() == null ? null : new ConstantBytesGenerator(sampleRequest.getRequestBody().getBytes(StandardCharsets.UTF_8)));
     }
 
-    public CompletableFuture<?> terminateAsync() {
-        worker.cancel(true);
-        return terminate;
-    }
-
-    @Override
-    public void close() throws Exception {
-        terminateAsync();
-        terminate.get();
-    }
-
     private static String agentIp(int i) {
         return HYPERFOIL_AGENT_PREFIX + (i + 1);
     }
 
+    private final class AgentResource extends AbstractDecoratedResource {
+        private final Compute.Launch launch;
+        private Compute.InstanceResource instance;
+        private final OutputListener.Write log;
+
+        public AgentResource(ResourceContext context, Compute.Launch launch, OutputListener.Write log) {
+            super(context);
+            this.launch = launch;
+            this.log = log;
+            dependOn(launch.resource().require());
+        }
+
+        @Override
+        protected void launchDependencies() throws Exception {
+            instance = launch.launchAsResource();
+        }
+
+        @Override
+        protected void setUp() throws Exception {
+            try (ClientSession agentSession = instance.connectSsh()) {
+                SshUtil.openFirewallPorts(agentSession);
+                SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
+                if (factory.config.agentAsyncProfiler) {
+                    factory.asyncProfilerHelper.initialize(agentSession, log);
+                }
+            } catch (Exception e) {
+                throw e;
+            }
+        }
+
+        @Override
+        protected void tearDown() {
+            try {
+                if (factory.config.agentAsyncProfiler) {
+                    for (int i = 0; i < agents.size(); i++) {
+                        Path dir = logDirectory.resolve("agent" + i);
+                        try {
+                            Files.createDirectories(dir);
+                        } catch (FileAlreadyExistsException ignored) {}
+                        try (ClientSession agentSession = agents.get(i).instance.connectSsh()) {
+                            factory.asyncProfilerHelper.finish(agentSession, log, dir);
+                        } catch (Exception e) {
+                            LOG.error("Failed to download agent profiler results", e);
+                        }
+                    }
+                }
+
+                log.close();
+            } catch (IOException e) {
+                LOG.warn("Failed to close agnt", e);
+            }
+        }
+    }
+
     @Singleton
     static final class Factory {
+        private final ResourceContext context;
         private final Compute compute;
         private final SshFactory sshFactory;
         private final ExecutorService executor;
@@ -558,7 +556,8 @@ public final class HyperfoilRunner implements AutoCloseable {
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
 
-        Factory(Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
+        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
+            this.context = context;
             this.compute = compute;
             this.sshFactory = sshFactory;
             this.executor = executor;
@@ -571,7 +570,7 @@ public final class HyperfoilRunner implements AutoCloseable {
             objectMapper.registerSubtypes(HttpStats.class);
         }
 
-        public HyperfoilRunner launch(Path outputDirectory, AbstractInfrastructure infrastructure) throws Exception {
+        public HyperfoilRunner create(Path outputDirectory, AbstractInfrastructure infrastructure) throws IOException {
             return new HyperfoilRunner(this, outputDirectory, infrastructure);
         }
     }
@@ -604,11 +603,6 @@ public final class HyperfoilRunner implements AutoCloseable {
         interface StatusRequest extends RequestDefinition, io.micronaut.core.naming.Named {
         }
     }
-
-    private record HyperfoilInstances(
-            Compute.Instance controller,
-            List<Compute.Instance> agents
-    ) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record StatsAll(
@@ -684,4 +678,13 @@ public final class HyperfoilRunner implements AutoCloseable {
     }
 
     private record Metadata(HyperfoilConfiguration hyperfoilConfiguration) {}
+
+    protected enum HyperfoilPhase {
+        AWAITING_CONTROLLER,
+        SETTING_UP_CONTROLLER,
+        AWAITING_AGENTS,
+        READY,
+        TERMINATING,
+        TERMINATED
+    }
 }
