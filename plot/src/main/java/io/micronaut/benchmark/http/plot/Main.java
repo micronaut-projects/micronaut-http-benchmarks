@@ -133,6 +133,9 @@ public class Main {
     @SuppressWarnings("unchecked")
     private static String compileConfiguration(SuiteRunner.BenchmarkParameters parameters, String name) {
         Map<String, Object> compileConfiguration = ((Map<String, Object>) ((Map<String, Object>) parameters.parameters()).get("compileConfiguration"));
+        if (compileConfiguration == null) {
+            return "";
+        }
         Object v = compileConfiguration.get(name);
         return v == null ? "" : v.toString();
     }
