@@ -2,6 +2,7 @@ package io.micronaut.benchmark.loadgen.oci;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.oracle.bmc.http.client.pki.Pem;
 import io.hyperfoil.api.config.Benchmark;
 import io.hyperfoil.api.config.BenchmarkBuilder;
 import io.hyperfoil.api.config.SLABuilder;
@@ -40,7 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
-import java.io.InterruptedIOException;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -57,6 +58,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -87,6 +89,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
      * {@link Compute} instance type name for hyperfoil agents.
      */
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
+
+    private static final long MAX_AGENT_LOG_SIZE = 8 * 1024 * 1024;
 
     private final Factory factory;
     private final Path logDirectory;
@@ -129,16 +133,9 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             agentLocks.addAll(r.require());
         }
 
-        if (factory.config.mtls) {
-            SelfSignedCertificate ssc;
-            try {
-                ssc = new SelfSignedCertificate();
-            } catch (CertificateException e) {
-                throw new RuntimeException(e);
-            }
-            mtlsCert = ssc.cert();
-            mtlsKey = ssc.key();
-            ssc.delete();
+        if (factory.config.mtlsKey != null) {
+            mtlsKey = Pem.decoder().decodePrivateKey(Files.readAllBytes(factory.config.mtlsKey));
+            mtlsCert = (X509Certificate) Pem.decoder().decodeCertificate(Files.readString(factory.config.mtlsCert));
         } else {
             mtlsCert = null;
             mtlsKey = null;
@@ -278,6 +275,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             builder.append(" -H 'content-type: ").append(definition.getRequestType()).append("'");
             builder.append(" -d '").append(definition.getRequestBody()).append("'");
         }
+        definition.getRequestHeaders().forEach((key, value) -> builder.append(" -H '").append(key).append(": ").append(value).append("'"));
         builder.append(' ').append(socketUri);
         return builder.toString();
     }
@@ -305,6 +303,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             ByteArrayOutputStream resp = new ByteArrayOutputStream();
             try (OutputListener.Write write = new OutputListener.Write(resp)) {
                 SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), body, socketUri, false), write);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to query benchmark output. Body: '" + resp.toString(StandardCharsets.UTF_8) + "'", e);
             }
             boolean matches = switch (body.getResponseMatchingMode()) {
                 case EQUAL -> Arrays.equals(resp.toByteArray(), body.getResponseBody().getBytes(StandardCharsets.UTF_8));
@@ -344,6 +344,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                 .connectionStrategy(ConnectionStrategy.SHARED_POOL)
                 .pipeliningLimit(protocol.pipeliningLimit())
                 .maxHttp2Streams(protocol.maxHttp2Streams())
+                .sslHandshakeTimeout(TimeUnit.MINUTES.toMillis(1))
                 .useHttpCache(false); // caching is expensive, disable it
 
         if (mtlsCert != null) {
@@ -456,8 +457,19 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         if (!forPgo || !benchmarkFailures.isEmpty()) {
             LOG.info("Downloading agent logs…");
             try {
-                for (String agent : Infrastructure.retry(client::agents, controllerPortForward.get()::disconnect)) {
-                    Infrastructure.retry(() -> client.downloadLog(agent, null, 0, outputDirectory.resolve(agent.replaceAll("[^0-9a-zA-Z]", "") + ".log").toFile()), controllerPortForward.get()::disconnect);
+                for (String agent : Infrastructure.retry(client::agents, controllerPortForward::disconnect)) {
+                    Infrastructure.retry(() -> {
+                        Path dest = outputDirectory.resolve(agent.replaceAll("[^0-9a-zA-Z]", "") + ".log");
+                        client.downloadLog(agent, null, 0, MAX_AGENT_LOG_SIZE, dest.toFile());
+                        try {
+                            if (Files.size(dest) >= MAX_AGENT_LOG_SIZE) {
+                                LOG.warn("Agent log {} size exceeded limit of {} bytes", dest, MAX_AGENT_LOG_SIZE);
+                            }
+                        } catch (IOException e) {
+                            LOG.warn("Failed to get agent log size", e);
+                        }
+                        return null;
+                    }, controllerPortForward::disconnect);
                 }
             } catch (Exception e) {
                 LOG.warn("Failed to download agent logs", e);
@@ -476,14 +488,17 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     }
 
     private static HttpRequestStepBuilder prepareScenario(RequestDefinition sampleRequest, String ip, int port, ScenarioBuilder warmup) {
-        return warmup.initialSequence("test")
+        HttpRequestStepBuilder builder = warmup.initialSequence("test")
                 .step(HttpStepCatalog.class)
                 .httpRequest(sampleRequest.getMethod())
                 .authority(ip + ":" + port)
                 .path(sampleRequest.getUri())
-                // MUST be lowercase for HTTP/2
-                .headers().header("content-type", sampleRequest.getRequestType()).endHeaders()
                 .body(sampleRequest.getRequestBody() == null ? null : new ConstantBytesGenerator(sampleRequest.getRequestBody().getBytes(StandardCharsets.UTF_8)));
+        HttpRequestStepBuilder.HeadersBuilder headers = builder.headers();
+        // MUST be lowercase for HTTP/2
+        headers.header("content-type", sampleRequest.getRequestType());
+        sampleRequest.getRequestHeaders().forEach((header, value) -> headers.header(header.toLowerCase(Locale.ROOT), value));
+        return builder;
     }
 
     private static String agentIp(int i) {
@@ -539,7 +554,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
                 log.close();
             } catch (IOException e) {
-                LOG.warn("Failed to close agnt", e);
+                LOG.warn("Failed to close agent", e);
             }
         }
     }
@@ -596,7 +611,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             Duration pgoDuration,
             double sessionLimitFactor,
             List<StatusRequest> status,
-            boolean mtls,
+            Path mtlsKey,
+            Path mtlsCert,
             boolean agentAsyncProfiler
     ) {
         @EachProperty(value = "status", list = true)

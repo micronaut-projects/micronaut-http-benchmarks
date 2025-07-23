@@ -8,6 +8,7 @@ import com.oracle.bmc.core.requests.ListInstancesRequest;
 import com.oracle.bmc.core.requests.TerminateInstanceRequest;
 import com.oracle.bmc.core.responses.ListInstancesResponse;
 import io.micronaut.benchmark.loadgen.oci.CompartmentCleaner;
+import io.micronaut.benchmark.loadgen.oci.Infrastructure;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 
 import java.util.List;
@@ -45,7 +46,7 @@ public final class ComputeResource extends AbstractSimpleResource<Instance.Lifec
             LaunchInstanceDetails.Builder d = details.get();
             d.compartmentId(location.compartmentId());
             d.availabilityDomain(location.availabilityDomain());
-            Instance i = context.clients.compute().forRegion(location).launchInstance(LaunchInstanceRequest.builder().launchInstanceDetails(d.build()).build()).getInstance();
+            Instance i = Infrastructure.retry(() -> context.clients.compute().forRegion(location).launchInstance(LaunchInstanceRequest.builder().launchInstanceDetails(d.build()).build()).getInstance());
             setPhase(i.getLifecycleState());
             return i.getId();
         });

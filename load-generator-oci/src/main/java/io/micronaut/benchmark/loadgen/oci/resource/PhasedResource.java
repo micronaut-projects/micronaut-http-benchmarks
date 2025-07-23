@@ -1,7 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci.resource;
 
 import io.micronaut.core.annotation.Nullable;
-import io.netty.util.internal.PlatformDependent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,7 +52,7 @@ public abstract class PhasedResource<P> {
     protected final void awaitPhase(P phase) throws InterruptedException {
         P current = awaitPhaseOrPast(phase);
         if (current != phase) {
-            throw new IllegalStateException("Already in phase " + current + ", past phase " + phase);
+            throw new IllegalStateException(this + " already in phase " + current + ", past phase " + phase);
         }
     }
 
@@ -221,7 +220,7 @@ public abstract class PhasedResource<P> {
                                 .toArray(CompletableFuture[]::new)
                 ).get();
             } catch (ExecutionException e) {
-                PlatformDependent.throwException(e.getCause());
+                throw new RuntimeException(e.getCause());
             }
         }
 

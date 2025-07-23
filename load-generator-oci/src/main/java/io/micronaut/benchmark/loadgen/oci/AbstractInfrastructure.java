@@ -225,7 +225,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     public final Compute.Launch computeBuilder(String instanceType) {
         return compute.builder(instanceType, location, privateSubnet)
                 .bastion(bastion)
-                .relayInstance(relayServerBuilder.resource())
+                .relayInstance(relayServerBuilder == null ? null : relayServerBuilder.resource())
                 .publicIp(RELAY_MODE == SshRelayMode.PUBLIC_IP);
     }
 

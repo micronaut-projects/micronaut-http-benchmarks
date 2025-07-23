@@ -33,5 +33,5 @@ affinity=[
     #"off",
     #"preferred",
     "enforced",
-    "jdkclient"
+    #"jdkclient"
 ]

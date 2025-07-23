@@ -1,9 +1,13 @@
 package io.micronaut.benchmark.loadgen.oci.resource;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.List;
 
 public abstract class AbstractDecoratedResource extends PhasedResource<AbstractDecoratedResource.Phase> {
+    private static final Logger LOG = LoggerFactory.getLogger(AbstractDecoratedResource.class);
     private boolean managing = false;
     private final List<PhaseLock> locks = new ArrayList<>();
 
@@ -33,6 +37,7 @@ public abstract class AbstractDecoratedResource extends PhasedResource<AbstractD
             setPhase(Phase.Active);
             awaitUnlocked(Phase.Active);
 
+            LOG.info("Tearing down {}", this);
             setPhase(Phase.Terminating);
             tearDown();
 

@@ -62,7 +62,6 @@ pgo-duration="2m"
 session-limit-factor=2
 # duration per ops/s benchmark
 benchmark-duration="2m"
-mtls=true
 agent-async-profiler=false
 
 [perf-stat]
@@ -127,12 +126,11 @@ image=""
 
 [variants.hotspot]
 version=24
-common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
+common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192" # -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions
 option-choices=[""]
 
 [variants.hotspot.async-profiler]
 enabled=false
-path="/home/yawkat/bin/async-profiler-3.0-linux-x64/lib/libasyncProfiler.so"
 args="start,event=cpu,cstack=vm,file=profile.jfr"
 jfr-config="jdk.ObjectAllocationSample#enabled=false jdk.OldObjectSample#enabled=false"
 outputs=["profile.jfr"]

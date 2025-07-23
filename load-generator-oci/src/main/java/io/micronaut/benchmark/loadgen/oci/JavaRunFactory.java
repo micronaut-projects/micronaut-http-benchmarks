@@ -264,9 +264,10 @@ public final class JavaRunFactory {
                                         SshUtil.signal(cmd, "KILL");
                                     }
                                 }
-                            }
-                            if (asyncProfilerConfiguration.enabled()) {
-                                asyncProfilerHelper.finish(benchmarkServerClient, log, outputDirectory);
+                            } finally {
+                                if (asyncProfilerConfiguration.enabled()) {
+                                    asyncProfilerHelper.finish(benchmarkServerClient, log, outputDirectory);
+                                }
                             }
                         }
                     }),

@@ -3,7 +3,9 @@ package io.micronaut.benchmark.loadgen.oci;
 import com.fasterxml.jackson.core.JacksonException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.BeanProperty;
 import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import io.hyperfoil.http.api.HttpMethod;
@@ -51,6 +53,9 @@ public interface RequestDefinition {
     @Bindable(defaultValue = "application/json")
     @NonNull
     String getRequestType();
+
+    @NonNull
+    Map<String, String> getRequestHeaders();
 
     /**
      * Optional request body.
@@ -126,7 +131,8 @@ public interface RequestDefinition {
                 if (p.currentToken() == JsonToken.VALUE_NULL) {
                     value = null;
                 } else {
-                    value = ctxt.findNonContextualValueDeserializer(ctxt.getTypeFactory().constructType(method.getGenericReturnType())).deserialize(p, ctxt);
+                    JavaType type = ctxt.getTypeFactory().constructType(method.getGenericReturnType());
+                    value = ctxt.findContextualValueDeserializer(type, new BeanProperty.Bogus()).deserialize(p, ctxt);
                 }
                 values.put(method, value);
             }

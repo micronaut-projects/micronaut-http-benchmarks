@@ -105,11 +105,13 @@ public record CompartmentCleaner(
         for (BastionSummary bastion : BastionResource.list(context, location)) {
             BastionResource resource = new BastionResource(context);
             resource.setPhase(bastion.getLifecycleState());
-            if (bastion.getTargetVcnId() != null) {
-                resource.dependOn(resources.get(bastion.getTargetVcnId()).require());
+            AbstractSimpleResource<?> vcn = resources.get(bastion.getTargetVcnId());
+            if (vcn != null) {
+                resource.dependOn(vcn.require());
             }
-            if (bastion.getTargetSubnetId() != null) {
-                resource.dependOn(resources.get(bastion.getTargetSubnetId()).require());
+            AbstractSimpleResource<?> subnet = resources.get(bastion.getTargetSubnetId());
+            if (subnet != null) {
+                resource.dependOn(subnet.require());
             }
             delete(location, bastion.getId(), resource);
         }

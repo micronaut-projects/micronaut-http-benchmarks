@@ -4,14 +4,21 @@ import org.apache.sshd.client.channel.ChannelExec;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.common.SshConstants;
 import org.apache.sshd.common.util.buffer.Buffer;
+import org.apache.sshd.scp.common.helpers.ScpTimestampCommandDetails;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.IntStream;
 
 public final class SshUtil {
     private SshUtil() {}
+
+    public static final Set<PosixFilePermission> DEFAULT_PERMISSIONS = Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+    public static final ScpTimestampCommandDetails DEFAULT_TIME = new ScpTimestampCommandDetails(0, 0);
+
 
     /**
      * Forward stdout/err output to the given listeners.

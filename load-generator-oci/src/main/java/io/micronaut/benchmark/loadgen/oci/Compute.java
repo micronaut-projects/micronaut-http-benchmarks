@@ -300,7 +300,6 @@ public final class Compute {
                             .targetResourceDetails(
                                     // managed ssh sessions are unstable, so just use port forwarding
                                     CreatePortForwardingSessionTargetResourceDetails.builder()
-                                            .targetResourceId(launch.computeResource.ocid())
                                             .targetResourcePort(22)
                                             .targetResourcePrivateIpAddress(launch.privateIp)
                                             .build()));
@@ -311,14 +310,16 @@ public final class Compute {
         @Override
         protected void setUp() {
             if (launch.publicIp) {
-                String vnic = computeClient.forRegion(launch.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
-                        .compartmentId(launch.location.compartmentId())
-                        .availabilityDomain(launch.location.availabilityDomain())
-                        .instanceId(launch.computeResource.ocid())
-                        .build()).getItems().getFirst().getVnicId();
-                this.publicIp = vcnClient.forRegion(launch.location).getVnic(GetVnicRequest.builder()
-                        .vnicId(vnic)
-                        .build()).getVnic().getPublicIp();
+                this.publicIp = Infrastructure.retry(() -> {
+                    String vnic = computeClient.forRegion(launch.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
+                            .compartmentId(launch.location.compartmentId())
+                            .availabilityDomain(launch.location.availabilityDomain())
+                            .instanceId(launch.computeResource.ocid())
+                            .build()).getItems().getFirst().getVnicId();
+                    return vcnClient.forRegion(launch.location).getVnic(GetVnicRequest.builder()
+                            .vnicId(vnic)
+                            .build()).getVnic().getPublicIp();
+                });
             }
             if (launch.bastionSession != null) {
                 this.relay = new SshFactory.Relay(launch.bastionSession.getBastionUserName(), "host.bastion." + launch.location.region() + ".oci.oraclecloud.com");

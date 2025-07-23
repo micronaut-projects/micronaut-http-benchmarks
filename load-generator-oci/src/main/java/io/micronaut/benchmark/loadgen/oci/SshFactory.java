@@ -19,7 +19,6 @@ import org.apache.sshd.common.keyprovider.KeyIdentityProvider;
 import org.apache.sshd.core.CoreModuleProperties;
 import org.apache.sshd.scp.client.ScpClient;
 import org.apache.sshd.scp.client.ScpClientCreator;
-import org.apache.sshd.scp.common.helpers.ScpTimestampCommandDetails;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,10 +28,8 @@ import java.net.ConnectException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -138,10 +135,8 @@ public final class SshFactory {
 
     void deployPrivateKey(ClientSession session) throws IOException {
         ScpClient scpClient = ScpClientCreator.instance().createScpClient(session);
-        Set<PosixFilePermission> permissions = Set.of(PosixFilePermission.OWNER_READ);
-        ScpTimestampCommandDetails time = new ScpTimestampCommandDetails(0, 0);
-        scpClient.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", permissions, time);
-        scpClient.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", permissions, time);
+        scpClient.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", SshUtil.DEFAULT_PERMISSIONS, SshUtil.DEFAULT_TIME);
+        scpClient.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", SshUtil.DEFAULT_PERMISSIONS, SshUtil.DEFAULT_TIME);
     }
 
     /**

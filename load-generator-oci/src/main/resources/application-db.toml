@@ -15,8 +15,14 @@ enabled-run-types=[
 ]
 
 [variants.hotspot]
-# todo: -Djdk.trackAllThreads=false
-common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,db --add-opens=java.base/java.lang=ALL-UNNAMED -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
+common-options="-XX:+UseZGC -Djdk.trackAllThreads=false -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,db --add-opens=java.base/java.lang=ALL-UNNAMED "
+
+[variants.micronaut.compile-variants]
+loom=[
+    #"off", // no async impl available
+    "on",
+    "carried"
+]
 
 [load.protocols.http1]
 enabled=true

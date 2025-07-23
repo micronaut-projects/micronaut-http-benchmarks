@@ -1,5 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci.resource;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.StreamWriteFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.oracle.bmc.bastion.BastionClient;
@@ -40,6 +42,7 @@ public final class ResourceContext {
         eventLogMapper = JsonMapper.builder()
                 .registerSubtypes(LogEvent.class.getPermittedSubclasses())
                 .disable(StreamWriteFeature.AUTO_CLOSE_TARGET)
+                .findAndAddModules()
                 .build();
     }
 
@@ -97,11 +100,13 @@ public final class ResourceContext {
     }
 
     public record LogEntry(
+            @JsonFormat(shape = JsonFormat.Shape.STRING)
             Instant time,
             LogEvent event
     ) {
     }
 
+    @JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, include = JsonTypeInfo.As.PROPERTY)
     public sealed interface LogEvent permits AbstractSimpleResource.DependencyEvent, PhasedResource.CloseLockEvent, PhasedResource.CreateLockEvent, PhasedResource.CreateResourceEvent, PhasedResource.NameEvent, PhasedResource.PhaseEvent {
     }
 }
