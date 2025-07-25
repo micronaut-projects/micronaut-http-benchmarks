@@ -114,7 +114,7 @@ final class LoadGroup {
                 d.color = "C" + i;
             } else {
                 double hv, sv = 1, vv = 1;
-                hv = List.of(278. / 255, 230. / 255, 157. / 255).get(optionsByDiscriminator.get(h).indexOf(d.label.values().get(h)));
+                hv = List.of(278. / 255, 230. / 255, 157. / 255, 70. / 255).get(optionsByDiscriminator.get(h).indexOf(d.label.values().get(h)));
                 if (s != null) {
                     sv = 1 - (double) optionsByDiscriminator.get(s).indexOf(d.label.values().get(s)) / optionsByDiscriminator.get(s).size();
                 }
