@@ -30,6 +30,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -41,12 +46,15 @@ import java.util.concurrent.TimeUnit;
 public final class SshFactory {
     private static final Logger LOG = LoggerFactory.getLogger(SshFactory.class);
 
+    private final SshFactory.SshConfiguration config;
     private final String publicKey;
     private final String privateKey;
     private final SshClient sshClient;
     private final ScheduledExecutorService scheduler;
+    private final Set<String> openedRoutes = new HashSet<>();
 
     SshFactory(SshConfiguration config, @Named(TaskExecutors.SCHEDULED) ExecutorService scheduler) throws Exception {
+        this.config = config;
         this.scheduler = (ScheduledExecutorService) scheduler;
         KeyPair keyPair;
         if (config.privateKeyLocation() == null) {
@@ -69,6 +77,8 @@ public final class SshFactory {
                 .hostConfigEntryResolver(HostConfigEntryResolver.EMPTY)
                 .build();
         CoreModuleProperties.SOCKET_KEEPALIVE.set(sshClient, true);
+        CoreModuleProperties.HEARTBEAT_INTERVAL.set(sshClient, Duration.ofSeconds(30));
+        CoreModuleProperties.AUTH_TIMEOUT.set(sshClient, Duration.ofSeconds(30));
         sshClient.setKeyIdentityProvider(KeyIdentityProvider.wrapKeyPairs(keyPair));
         sshClient.start();
 
@@ -101,6 +111,18 @@ public final class SshFactory {
         int attempts = 0;
         while (true) {
             try {
+                String actualIp = relay == null ? instanceIp : relay.relayIp;
+                synchronized (this) {
+                    if (config.openRouteCommand != null && openedRoutes.add(actualIp)) {
+                        LOG.info("Opening route to {}", actualIp);
+                        List<String> cmd = new ArrayList<>(config.openRouteCommand);
+                        cmd.replaceAll(s -> s.equals("{}") ? actualIp : s);
+                        int ret = new ProcessBuilder(cmd).inheritIO().start().waitFor();
+                        if (ret != 0) {
+                            LOG.warn("Failed to open route to {}: {}", actualIp, ret);
+                        }
+                    }
+                }
                 ClientSession sess = sshClient.connect(new HostConfigEntry("", instanceIp, 22, "opc", relay == null ? null : relay.username + "@" + relay.relayIp + ":22")).verify().getClientSession();
                 sess.auth().verify();
                 scheduler.scheduleWithFixedDelay(() -> {
@@ -114,6 +136,7 @@ public final class SshFactory {
                         LOG.warn("Failed to send keepalive", e);
                     }
                 }, 1, 1, TimeUnit.MINUTES);
+                LOG.info("Connected to {} (via {})", instanceIp, relay);
                 return sess;
             } catch (SshException e) {
                 // happens before the server has started up
@@ -125,9 +148,10 @@ public final class SshFactory {
                         }
                     }
                 }
+                LOG.warn("Failed to connect to {} (via {}), will retry: {}", instanceIp, relay, e.getMessage());
             }
-            TimeUnit.SECONDS.sleep(1);
-            if (attempts++ > 500) {
+            TimeUnit.SECONDS.sleep(5);
+            if (attempts++ > 120 / 5) {
                 throw new IOException("Failed to connect to SSH server " + instance + " at " + instanceIp + " via " + relay);
             }
         }
@@ -144,7 +168,7 @@ public final class SshFactory {
      *                           as it will be copied to the SSH relay for hyperfoil controller remote control
      */
     @ConfigurationProperties("ssh")
-    public record SshConfiguration(@Nullable Path privateKeyLocation) {
+    public record SshConfiguration(@Nullable Path privateKeyLocation, @Nullable List<String> openRouteCommand) {
     }
 
     public record Relay(

@@ -5,6 +5,7 @@ foo="bar"
 # DO NOT use a valuable key here. It is uploaded to the hyperfoil controller for agent provisioning. If you don't need
 # this for debugging, simply leave this property unset, and a fresh generated key pair will be used.
 #private-key-location="/home/yawkat/.ssh/id_rsa"
+open-route-command=["sudo", "/opt/unroute.sh", "{}"]
 
 [suite]
 # independent repetitions of each benchmark
