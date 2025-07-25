@@ -23,7 +23,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.Collection;
-import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipOutputStream;
@@ -52,11 +52,8 @@ public final class JavaRunFactory {
         this.perfStatConfiguration = perfStatConfiguration;
     }
 
-    private static String optionsToString(String opts) {
-        return opts.replaceAll("[:+=-]", "")
-                .replace(" nofallback", "")
-                .replaceAll(" +", "-")
-                .toLowerCase(Locale.ROOT);
+    private static String optionsToString(Map.Entry<String, String> opts) {
+        return opts.getKey();
     }
 
     /**
@@ -210,7 +207,7 @@ public final class JavaRunFactory {
         public Stream<FrameworkRun> build() {
             return Stream.concat(
                     // one run for each JVM option choice to test
-                    hotspotConfiguration.optionChoices().stream().map(hotspotOptions -> new FrameworkRun() {
+                    hotspotConfiguration.optionChoices().entrySet().stream().map(hotspotOptions -> new FrameworkRun() {
                         @Override
                         public String type() {
                             return typePrefix + "-hotspot";
@@ -222,7 +219,7 @@ public final class JavaRunFactory {
                         }
 
                         private String combinedOptions() {
-                            return hotspotConfiguration.commonOptions() + " " + hotspotOptions;
+                            return hotspotConfiguration.commonOptions() + " " + hotspotOptions.getValue();
                         }
 
                         @Override
@@ -272,7 +269,7 @@ public final class JavaRunFactory {
                         }
                     }),
                     // one run for each native-image option choice to test
-                    nativeImageConfiguration.optionChoices().stream().map(nativeImageOptions -> new FrameworkRun() {
+                    nativeImageConfiguration.optionChoices().entrySet().stream().map(nativeImageOptions -> new FrameworkRun() {
                         @Override
                         public String type() {
                             return typePrefix + "-native";
@@ -285,7 +282,7 @@ public final class JavaRunFactory {
 
                         @Override
                         public Object parameters() {
-                            return new NativeImageParameters(compileConfiguration, nativeImageOptions);
+                            return new NativeImageParameters(compileConfiguration, nativeImageOptions.getValue());
                         }
 
                         record NativeImageParameters(@JsonUnwrapped Object compileConfiguration, String nativeImageOptions) {}
@@ -301,7 +298,7 @@ public final class JavaRunFactory {
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
                             uploadClasspath(benchmarkServerClient, log);
                             progress.update(BenchmarkPhase.BUILDING_PGO_IMAGE);
-                            String niCommandBase = "native-image --no-fallback " + nativeImageOptions + " " + additionalNativeImageOptions + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs);
+                            String niCommandBase = "native-image --no-fallback " + nativeImageOptions.getValue() + " " + additionalNativeImageOptions + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs);
                             SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo-instrument " + jarArgument() + " pgo-instrument", log);
                             LOG.info("Starting benchmark server for PGO (native, micronaut)");
                             try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./pgo-instrument" + (args == null ? "" : " " + args))) {

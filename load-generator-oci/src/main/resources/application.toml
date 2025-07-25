@@ -127,7 +127,7 @@ image=""
 [variants.hotspot]
 version=24
 common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192" # -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions
-option-choices=[""]
+option-choices={ ""="", "loom-on-netty"="--add-opens=java.base/java.lang=ALL-UNNAMED -Dmicronaut.netty.event-loops.default.loom-carrier=true -Dmicronaut.http.client.event-loop-group=default" }
 
 [variants.hotspot.async-profiler]
 enabled=false
@@ -147,7 +147,7 @@ args="--output heatmap"
 [variants.native-image]
 version=23
 # these are native-image options that are benchmarked against each other
-option-choices=["--gc=G1"]
+option-choices={ ""="--gc=G1" }
 # these are framework-specific options that are just required to get the build to work :)
 prefix-options.mn="-J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.configure=ALL-UNNAMED -J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk=ALL-UNNAMED -J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jni=ALL-UNNAMED -J--add-exports=org.graalvm.sdk/org.graalvm.nativeimage.impl=ALL-UNNAMED"
 
