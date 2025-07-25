@@ -1,7 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
 import io.micronaut.core.annotation.Nullable;
-import org.apache.sshd.client.session.ClientSession;
 
 import java.nio.file.Path;
 
@@ -45,7 +45,7 @@ public interface FrameworkRun {
      * @param progress              A callback for progress updates
      */
     void setupAndRun(
-            ClientSession benchmarkServerClient,
+            CommandRunner benchmarkServerClient,
             Path outputDirectory,
             OutputListener.Write log,
             BenchmarkClosure benchmarkClosure,

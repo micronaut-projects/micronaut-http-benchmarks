@@ -1,10 +1,10 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.context.annotation.Requires;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.session.ClientSession;
 
 import java.nio.file.Files;
 
@@ -46,7 +46,7 @@ final class NginxAttachment implements Infrastructure.Attachment {
 
         @Override
         protected void setUp() throws Exception {
-            try (ClientSession ssh = instance.connectSsh();
+            try (CommandRunner ssh = instance.connectSsh();
                  OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(infrastructure.logDirectory.resolve("nginx.log")))) {
                 SshUtil.openFirewallPorts(ssh, log);
                 SshUtil.run(ssh, "sudo yum install -y nginx", log);

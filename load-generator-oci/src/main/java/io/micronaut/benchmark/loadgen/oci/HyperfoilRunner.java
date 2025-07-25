@@ -20,23 +20,21 @@ import io.hyperfoil.http.config.HttpPluginBuilder;
 import io.hyperfoil.http.statistics.HttpStats;
 import io.hyperfoil.http.steps.HttpRequestStepBuilder;
 import io.hyperfoil.http.steps.HttpStepCatalog;
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.exec.ProcessBuilder;
+import io.micronaut.benchmark.loadgen.oci.exec.ProcessHandle;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.scheduling.TaskExecutors;
-import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClosedException;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.channel.ChannelExec;
-import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
-import org.apache.sshd.scp.client.ScpClient;
-import org.apache.sshd.scp.client.ScpClientCreator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,7 +48,6 @@ import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
-import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
@@ -98,7 +95,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     private final X509Certificate mtlsCert;
     private final PrivateKey mtlsKey;
 
-    private ClientSession controllerSession;
+    private CommandRunner controllerSession;
     private final Compute.Launch controllerLaunch;
     private final List<PhaseLock> controllerLocks;
     private final List<AgentResource> agents = new ArrayList<>();
@@ -160,13 +157,16 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
             try (
                     OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("hyperfoil.log")));
-                    ClientSession controllerSession = controller.connectSsh()) {
+                    CommandRunner controllerSession = controller.connectSsh()) {
                 SshUtil.run(controllerSession, "sudo yum install jdk-17-headless -y", log, 0, 1);
-                ScpClientCreator.instance().createScpClient(controllerSession).upload(factory.config.location, REMOTE_HYPERFOIL_LOCATION, ScpClient.Option.Recursive, ScpClient.Option.PreserveAttributes);
+                controllerSession.uploadRecursive(factory.config.location, REMOTE_HYPERFOIL_LOCATION);
                 factory.sshFactory.deployPrivateKey(controllerSession);
                 SshUtil.openFirewallPorts(controllerSession);
 
-                try (ChannelExec controllerCommand = controllerSession.createExecChannel(REMOTE_HYPERFOIL_LOCATION + "/bin/controller.sh -Djgroups.join_timeout=20000");
+                try (ProcessBuilder builder = controllerSession.builder(REMOTE_HYPERFOIL_LOCATION + "/bin/controller.sh -Djgroups.join_timeout=20000");
+                     ProcessHandle controllerCommand = builder
+                             .forwardOutput(log)
+                             .start();
                      ResilientSshPortForwarder controllerPortForward = factory.resilientForwarderFactory.create(
                              controller::connectSsh,
                              new SshdSocketAddress("localhost", 8090)
@@ -176,9 +176,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                              controllerPortForward.address().getHostName(),
                              controllerPortForward.address().getPort(),
                              false, true, null)) {
-
-                    SshUtil.forwardOutput(controllerCommand, log);
-                    controllerCommand.open().verify();
 
                     while (true) {
                         try {
@@ -524,7 +521,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
         @Override
         protected void setUp() throws Exception {
-            try (ClientSession agentSession = instance.connectSsh()) {
+            try (CommandRunner agentSession = instance.connectSsh()) {
                 SshUtil.openFirewallPorts(agentSession);
                 SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
                 if (factory.config.agentAsyncProfiler) {
@@ -544,7 +541,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                         try {
                             Files.createDirectories(dir);
                         } catch (FileAlreadyExistsException ignored) {}
-                        try (ClientSession agentSession = agents.get(i).instance.connectSsh()) {
+                        try (CommandRunner agentSession = agents.get(i).instance.connectSsh()) {
                             factory.asyncProfilerHelper.finish(agentSession, log, dir);
                         } catch (Exception e) {
                             LOG.error("Failed to download agent profiler results", e);

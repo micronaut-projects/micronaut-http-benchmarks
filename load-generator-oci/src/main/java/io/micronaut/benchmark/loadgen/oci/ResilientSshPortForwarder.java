@@ -1,5 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.exec.SshCommandRunner;
 import io.micronaut.scheduling.TaskExecutors;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
@@ -20,7 +22,6 @@ import io.netty.util.concurrent.GenericFutureListener;
 import io.netty.util.concurrent.Promise;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.client.session.forward.ExplicitPortForwardingTracker;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.slf4j.Logger;
@@ -225,7 +226,7 @@ public final class ResilientSshPortForwarder implements Closeable {
             this.loop = new NioEventLoopGroup(1).next();
         }
 
-        public ResilientSshPortForwarder create(Callable<ClientSession> sessionCallable, SshdSocketAddress remote) {
+        public ResilientSshPortForwarder create(Callable<CommandRunner> sessionCallable, SshdSocketAddress remote) {
             ResilientSshPortForwarder resilientForwarder = new ResilientSshPortForwarder(loop, () -> {
                 SshPortForwarder forwarder = new SshPortForwarder(loop.newPromise(), loop.newPromise());
                 blocking.execute(() -> forwarder.connectBlocking(sessionCallable, remote));
@@ -241,9 +242,10 @@ public final class ResilientSshPortForwarder implements Closeable {
             Promise<Void> closeFuture
     ) implements TransientPortForwarder {
 
-        void connectBlocking(Callable<ClientSession> sessionCallable, SshdSocketAddress remote) {
-            try (ClientSession clientSession = sessionCallable.call();
-                 ExplicitPortForwardingTracker forwardingTracker = clientSession.createLocalPortForwardingTracker(new SshdSocketAddress("localhost", 0), remote)) {
+        void connectBlocking(Callable<CommandRunner> sessionCallable, SshdSocketAddress remote) {
+            try (CommandRunner clientSession = sessionCallable.call();
+                 // TODO
+                 ExplicitPortForwardingTracker forwardingTracker = ((SshCommandRunner) clientSession).getSession().createLocalPortForwardingTracker(new SshdSocketAddress("localhost", 0), remote)) {
                 boundAddress.setSuccess(new InetSocketAddress(forwardingTracker.getBoundAddress().getHostName(), forwardingTracker.getBoundAddress().getPort()));
                 closeFuture.await();
             } catch (Exception e) {

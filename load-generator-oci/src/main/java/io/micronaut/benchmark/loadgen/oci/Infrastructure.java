@@ -1,11 +1,11 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.core.annotation.Indexed;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.session.ClientSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,7 +59,7 @@ public final class Infrastructure extends AbstractInfrastructure {
 
         benchmarkServer.awaitStartup();
 
-        try (ClientSession benchmarkServerClient = benchmarkServer.connectSsh();
+        try (CommandRunner benchmarkServerClient = benchmarkServer.connectSsh();
              OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("update.log")))) {
 
             progress.update(BenchmarkPhase.DEPLOYING_OS);
@@ -126,7 +126,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     }
 
     private void run0(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, PhaseTracker.PhaseUpdater progress) throws Exception {
-        try (ClientSession benchmarkServerClient = benchmarkServer.connectSsh();
+        try (CommandRunner benchmarkServerClient = benchmarkServer.connectSsh();
              OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve("server.log")))) {
             // special PhaseUpdater that logs the current benchmark phase for reference.
             progress = new PhaseTracker.DelegatePhaseUpdater(progress) {

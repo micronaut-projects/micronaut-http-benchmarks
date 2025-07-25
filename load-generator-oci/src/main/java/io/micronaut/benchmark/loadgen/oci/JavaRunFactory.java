@@ -1,13 +1,11 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.exec.ProcessBuilder;
+import io.micronaut.benchmark.loadgen.oci.exec.ProcessHandle;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.channel.ChannelExec;
-import org.apache.sshd.client.channel.ClientChannelEvent;
-import org.apache.sshd.client.session.ClientSession;
-import org.apache.sshd.scp.client.ScpClient;
-import org.apache.sshd.scp.client.ScpClientCreator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,9 +19,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.time.Duration;
 import java.util.Collection;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipOutputStream;
@@ -149,10 +148,9 @@ public final class JavaRunFactory {
             return this;
         }
 
-        private void uploadClasspath(ClientSession benchmarkServerClient, OutputListener.Write log) throws IOException {
-            ScpClient scpClient = ScpClientCreator.instance().createScpClient(benchmarkServerClient);
+        private void uploadClasspath(CommandRunner benchmarkServerClient, OutputListener.Write log) throws IOException {
             if (shadowJar != null) {
-                scpClient.upload(shadowJar, SHADOW_JAR_LOCATION);
+                benchmarkServerClient.upload(shadowJar, SHADOW_JAR_LOCATION);
             } else {
                 Path tmp = Files.createTempFile("micronaut-benchmark-JavaRunFactory-classpath", ".zip");
                 try {
@@ -179,7 +177,7 @@ public final class JavaRunFactory {
                         }
                     }
                     log.println("Uploading classpath");
-                    scpClient.upload(tmp, "classpath.zip");
+                    benchmarkServerClient.upload(tmp, "classpath.zip");
                     SshUtil.run(benchmarkServerClient, "rm -rf " + CLASSPATH_LOCATION, log);
                     SshUtil.run(benchmarkServerClient, "unzip classpath.zip", log);
                 } finally {
@@ -230,7 +228,7 @@ public final class JavaRunFactory {
                         record HotspotParameters(@JsonUnwrapped Object compileConfiguration, String hotspotOptions) {}
 
                         @Override
-                        public void setupAndRun(ClientSession benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
+                        public void setupAndRun(CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
                             progress.update(BenchmarkPhase.INSTALLING_SOFTWARE);
                             SshUtil.run(benchmarkServerClient, "sudo yum install jdk-" + hotspotConfiguration.version() + "-headful -y", log, 0, 1);
                             SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.yama.ptrace_scope=1", log);
@@ -244,21 +242,24 @@ public final class JavaRunFactory {
                             LOG.info("Starting benchmark server (hotspot, " + typePrefix + ")");
                             String c = start + combinedOptions() + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs) + " " + jarArgument() + (args == null ? "" : " " + args);
                             log.println("$ " + c);
-                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(c)) {
-                                OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
-                                SshUtil.forwardOutput(cmd, log, waiter);
-                                cmd.open().verify();
+                            OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
+                            try (ProcessBuilder builder = benchmarkServerClient.builder(c);
+                                 ProcessHandle cmd = builder
+                                         .forwardOutput(log, waiter)
+                                         .start()) {
                                 waiter.awaitWithNextPattern(null);
 
                                 try {
                                     benchmarkClosure.benchmark(progress);
                                 } finally {
-                                    SshUtil.signal(cmd, "INT");
-                                    if (cmd.waitFor(ClientSession.REMOTE_COMMAND_WAIT_EVENTS, Duration.ofMinutes(1)).contains(ClientChannelEvent.TIMEOUT)) {
-                                        LOG.warn("Timeout waiting for process to terminate status={} {}", cmd.getChannelState(), benchmarkServerClient.getSessionState());
+                                    cmd.interrupt();
+                                    try {
+                                        cmd.waitFor(1, TimeUnit.MINUTES);
+                                    } catch (TimeoutException e) {
+                                        LOG.warn("Timeout waiting for process to terminate");
                                         SshUtil.run(benchmarkServerClient, "ps -aux", log);
                                         SshUtil.run(benchmarkServerClient, "sudo jhsdb jstack --pid $(pgrep java)", log);
-                                        SshUtil.signal(cmd, "KILL");
+                                        cmd.kill();
                                     }
                                 }
                             } finally {
@@ -288,7 +289,7 @@ public final class JavaRunFactory {
                         record NativeImageParameters(@JsonUnwrapped Object compileConfiguration, String nativeImageOptions) {}
 
                         @Override
-                        public void setupAndRun(ClientSession benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
+                        public void setupAndRun(CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
 
                             progress.update(BenchmarkPhase.INSTALLING_SOFTWARE);
                             SshUtil.run(benchmarkServerClient, "sudo yum install graalvm-" + nativeImageConfiguration.version() + "-jdk -y", log, 0, 1);
@@ -301,33 +302,35 @@ public final class JavaRunFactory {
                             String niCommandBase = "native-image --no-fallback " + nativeImageOptions.getValue() + " " + additionalNativeImageOptions + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs);
                             SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo-instrument " + jarArgument() + " pgo-instrument", log);
                             LOG.info("Starting benchmark server for PGO (native, micronaut)");
-                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./pgo-instrument" + (args == null ? "" : " " + args))) {
-                                OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
-                                SshUtil.forwardOutput(cmd, log, waiter);
-                                cmd.open().verify();
+                            OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
+                            try (ProcessBuilder builder = benchmarkServerClient.builder(perfStatConfiguration.asCommandPrefix() + "./pgo-instrument" + (args == null ? "" : " " + args));
+                                 ProcessHandle cmd = builder
+                                         .forwardOutput(log, waiter)
+                                         .start()) {
                                 waiter.awaitWithNextPattern(null);
 
                                 try {
                                     benchmarkClosure.pgoLoad(progress);
                                 } finally {
-                                    SshUtil.interrupt(cmd);
-                                    SshUtil.joinAndCheck(cmd, 130);
+                                    cmd.interrupt();
+                                    cmd.waitFor().checkStatus(130);
                                 }
                             }
                             progress.update(BenchmarkPhase.BUILDING_IMAGE);
                             SshUtil.run(benchmarkServerClient, niCommandBase + " --pgo " + jarArgument() + " optimized", log);
                             LOG.info("Starting benchmark server (native, " + typePrefix + ")");
-                            try (ChannelExec cmd = benchmarkServerClient.createExecChannel(perfStatConfiguration.asCommandPrefix() + "./optimized" + (args == null ? "" : " " + args))) {
-                                OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
-                                SshUtil.forwardOutput(cmd, log, waiter);
-                                cmd.open().verify();
+                            waiter = new OutputListener.Waiter(ByteBuffer.wrap(boundLine));
+                            try (ProcessBuilder builder = benchmarkServerClient.builder(perfStatConfiguration.asCommandPrefix() + "./optimized" + (args == null ? "" : " " + args));
+                                 ProcessHandle cmd = builder
+                                         .forwardOutput(log, waiter)
+                                         .start()) {
                                 waiter.awaitWithNextPattern(null);
 
                                 try {
-                                    benchmarkClosure.benchmark(progress);
+                                    benchmarkClosure.pgoLoad(progress);
                                 } finally {
-                                    SshUtil.interrupt(cmd);
-                                    SshUtil.joinAndCheck(cmd, 130);
+                                    cmd.interrupt();
+                                    cmd.waitFor().checkStatus(130);
                                 }
                             }
                         }

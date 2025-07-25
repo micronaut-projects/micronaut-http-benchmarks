@@ -1,5 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.core.annotation.Nullable;
@@ -9,8 +10,6 @@ import one.convert.FlameGraph;
 import one.convert.JfrToFlame;
 import one.convert.JfrToHeatmap;
 import one.convert.JfrToPprof;
-import org.apache.sshd.client.session.ClientSession;
-import org.apache.sshd.scp.client.ScpClientCreator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +42,7 @@ public class AsyncProfilerHelper {
         this.configuration = configuration;
     }
 
-    public void initialize(ClientSession ssh, OutputListener.Write log) throws Exception {
+    public void initialize(CommandRunner ssh, OutputListener.Write log) throws Exception {
         SshUtil.run(ssh, "sudo sysctl kernel.perf_event_paranoid=1", log);
         SshUtil.run(ssh, "sudo sysctl kernel.kptr_restrict=0", log);
         String arch;
@@ -59,12 +58,11 @@ public class AsyncProfilerHelper {
         try (InputStream input = localUrl.openStream()) {
             bytes = input.readAllBytes();
         }
-        ScpClientCreator.instance().createScpClient(ssh)
-                .upload(bytes, PROFILER_LOCATION, Set.of(
-                        PosixFilePermission.OWNER_READ,
-                        PosixFilePermission.OWNER_WRITE,
-                        PosixFilePermission.OWNER_EXECUTE
-                ), null);
+        ssh.upload(bytes, PROFILER_LOCATION, Set.of(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.OWNER_EXECUTE
+        ));
         if (configuration.jfrConfig != null) {
             SshUtil.run(ssh, "jfr configure --input default.jfc " + configuration.jfrConfig + " --output " + JFR_CONFIG_LOCATION, log);
         }
@@ -78,12 +76,11 @@ public class AsyncProfilerHelper {
         return s;
     }
 
-    public void finish(ClientSession ssh, OutputListener.Write log, Path outputDirectory) throws Exception {
+    public void finish(CommandRunner ssh, OutputListener.Write log, Path outputDirectory) throws Exception {
         LOG.info("Downloading async-profiler results");
         for (String output : configuration.outputs()) {
             Path local = outputDirectory.resolve(output);
-            ScpClientCreator.instance().createScpClient(ssh)
-                    .download(output, local);
+            ssh.download(output, local);
             if (Files.size(local) == 0) {
                 LOG.warn("Async-profiler result {} was empty, check log for directory listing", output);
                 SshUtil.run(ssh, "ls -lah", log);

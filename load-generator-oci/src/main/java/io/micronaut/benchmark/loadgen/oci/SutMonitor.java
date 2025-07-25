@@ -1,11 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.exec.ProcessBuilder;
+import io.micronaut.benchmark.loadgen.oci.exec.ProcessHandle;
 import io.micronaut.scheduling.TaskExecutors;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.session.ClientSession;
-import org.apache.sshd.sftp.client.SftpClient;
-import org.apache.sshd.sftp.client.impl.DefaultSftpClientFactory;
+import org.bouncycastle.util.test.UncloseableOutputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,19 +38,24 @@ public final class SutMonitor {
 
     @SuppressWarnings("UnusedReturnValue")
     public <R> R monitorAndRun(
-            ClientSession session,
+            CommandRunner session,
             Path outputDirectory,
             Callable<R> task
     ) throws Exception {
         if (meminfoConfiguration.enabled()) {
-            try (OutputStream meminfo = Files.newOutputStream(outputDirectory.resolve("meminfo.log"));
-                 SftpClient sftpClient = DefaultSftpClientFactory.INSTANCE.createSftpClient(session)) {
+            try (OutputStream meminfo = Files.newOutputStream(outputDirectory.resolve("meminfo.log"))) {
 
                 Future<Object> future = executor.submit(MdcTracker.copyMdc(() -> {
                     try {
                         while (!Thread.interrupted()) {
                             meminfo.write((Instant.now().toString() + "\n").getBytes(StandardCharsets.UTF_8));
-                            sftpClient.read("/proc/meminfo").transferTo(meminfo);
+                            try (ProcessBuilder builder = session.builder("cat /proc/meminfo")) {
+                                builder.setOut(new UncloseableOutputStream(meminfo));
+                                builder.setErr(new UncloseableOutputStream(meminfo));
+                                try (ProcessHandle handle = builder.start()) {
+                                    handle.waitFor().check();
+                                }
+                            }
                             TimeUnit.MILLISECONDS.sleep(meminfoConfiguration.interval().toMillis());
                         }
                     } catch (InterruptedException | InterruptedIOException ignored) {

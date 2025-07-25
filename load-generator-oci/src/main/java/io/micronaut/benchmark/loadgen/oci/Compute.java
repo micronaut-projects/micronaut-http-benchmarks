@@ -16,6 +16,7 @@ import com.oracle.bmc.core.model.LaunchOptions;
 import com.oracle.bmc.core.requests.GetVnicRequest;
 import com.oracle.bmc.core.requests.ListImagesRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
@@ -28,7 +29,6 @@ import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.scheduling.TaskExecutors;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.session.ClientSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -232,7 +232,7 @@ public final class Compute {
             return resource;
         }
 
-        public ClientSession connectSsh() throws Exception {
+        public CommandRunner connectSsh() throws Exception {
             return resource.connectSsh();
         }
     }
@@ -328,7 +328,7 @@ public final class Compute {
             }
         }
 
-        public ClientSession connectSsh() throws Exception {
+        public CommandRunner connectSsh() throws Exception {
             if (publicIp != null) {
                 return sshFactory.connect(this, publicIp, null);
             } else {

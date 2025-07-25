@@ -1,5 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.exec.SshCommandRunner;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.Factory;
 import io.micronaut.core.annotation.Nullable;
@@ -17,8 +19,6 @@ import org.apache.sshd.common.config.keys.loader.pem.RSAPEMResourceKeyPairParser
 import org.apache.sshd.common.config.keys.writer.openssh.OpenSSHKeyPairResourceWriter;
 import org.apache.sshd.common.keyprovider.KeyIdentityProvider;
 import org.apache.sshd.core.CoreModuleProperties;
-import org.apache.sshd.scp.client.ScpClient;
-import org.apache.sshd.scp.client.ScpClientCreator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -103,7 +103,7 @@ public final class SshFactory {
      * @param relay      Optional SSH relay to use for the connection
      * @return The SSH connection
      */
-    public ClientSession connect(
+    public CommandRunner connect(
             @Nullable Object instance,
             String instanceIp,
             @Nullable Relay relay
@@ -125,19 +125,20 @@ public final class SshFactory {
                 }
                 ClientSession sess = sshClient.connect(new HostConfigEntry("", instanceIp, 22, "opc", relay == null ? null : relay.username + "@" + relay.relayIp + ":22")).verify().getClientSession();
                 sess.auth().verify();
+                CommandRunner runner = new SshCommandRunner(sess);
                 scheduler.scheduleWithFixedDelay(() -> {
                     if (sess.isClosed()) {
                         // ends the task
                         throw new RuntimeException("End the task");
                     }
                     try {
-                        SshUtil.run(sess, "echo keepalive");
+                        SshUtil.run(runner, "echo keepalive");
                     } catch (Exception e) {
                         LOG.warn("Failed to send keepalive", e);
                     }
                 }, 1, 1, TimeUnit.MINUTES);
                 LOG.info("Connected to {} (via {})", instanceIp, relay);
-                return sess;
+                return runner;
             } catch (SshException e) {
                 // happens before the server has started up
                 if (!(e.getCause() instanceof ConnectException ce) || !ce.getMessage().equals("Connection refused")) {
@@ -157,10 +158,9 @@ public final class SshFactory {
         }
     }
 
-    void deployPrivateKey(ClientSession session) throws IOException {
-        ScpClient scpClient = ScpClientCreator.instance().createScpClient(session);
-        scpClient.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", SshUtil.DEFAULT_PERMISSIONS, SshUtil.DEFAULT_TIME);
-        scpClient.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", SshUtil.DEFAULT_PERMISSIONS, SshUtil.DEFAULT_TIME);
+    void deployPrivateKey(CommandRunner session) throws IOException {
+        session.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", SshUtil.DEFAULT_PERMISSIONS);
+        session.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", SshUtil.DEFAULT_PERMISSIONS);
     }
 
     /**

@@ -6,6 +6,7 @@ import io.micronaut.benchmark.loadgen.oci.OciLocation;
 import io.micronaut.benchmark.loadgen.oci.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.PhaseTracker;
 import io.micronaut.benchmark.loadgen.oci.SshUtil;
+import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
@@ -13,9 +14,6 @@ import io.micronaut.http.client.HttpClient;
 import io.micronaut.scheduling.TaskExecutors;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.session.ClientSession;
-import org.apache.sshd.scp.client.ScpClient;
-import org.apache.sshd.scp.client.ScpClientCreator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,7 +57,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
                 DockerServerRuntime instance = dockerServers.get(dockerServer);
                 instance.instance.awaitStartup();
 
-                try (ClientSession session = instance.instance.connectSsh()) {
+                try (CommandRunner session = instance.instance.connectSsh()) {
                     // set up docker on the main runtime servers
                     SshUtil.openFirewallPorts(session, instance.log);
 
@@ -108,7 +106,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
         toolsetCommand.append("'");
 
         DockerServerRuntime toolset = dockerServers.get(DockerServer.TOOLSET);
-        try (ClientSession session = toolset.instance.connectSsh()) {
+        try (CommandRunner session = toolset.instance.connectSsh()) {
             for (Revision revision : revisions) {
                 LOG.info("Downloading {}", revision.githubRepoName());
                 String dest = revision.equals(tefbRepoRevision) ? revision.folderName() : tefbRepoRevision.folderName() + "/frameworks/Java/micronaut/" + revision.folderName();
@@ -124,9 +122,8 @@ final class TeInfrastructure extends AbstractInfrastructure {
             }
 
             LOG.info("Patching settings.gradle");
-            ScpClient scpClient = ScpClientCreator.instance().createScpClient(session);
             String settingsGradlePath = tefbRepoRevision.folderName() + "/frameworks/Java/micronaut/settings.gradle";
-            StringBuilder settingsGradle = new StringBuilder(new String(scpClient.downloadBytes(settingsGradlePath), StandardCharsets.UTF_8));
+            StringBuilder settingsGradle = new StringBuilder(new String(session.downloadBytes(settingsGradlePath), StandardCharsets.UTF_8));
             for (Revision revision : revisions) {
                 if (revision.modulePrefix() != null) {
                     settingsGradle.append("""
@@ -146,7 +143,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
             }
             Path settingsGradleLocal = resultDirectory.resolve("settings.gradle");
             Files.writeString(settingsGradleLocal, settingsGradle.toString());
-            scpClient.upload(settingsGradleLocal, settingsGradlePath);
+            session.upload(settingsGradleLocal, settingsGradlePath);
 
             LOG.info("Patching dockerfiles");
             for (Map.Entry<String, String> java17Install : Map.of(
@@ -154,19 +151,19 @@ final class TeInfrastructure extends AbstractInfrastructure {
                     "micronaut-graalvm.dockerfile", "microdnf install java-17-openjdk-headless"
             ).entrySet()) {
                 String path = tefbRepoRevision.folderName() + "/frameworks/Java/micronaut/" + java17Install.getKey();
-                StringBuilder dockerfile = new StringBuilder(new String(scpClient.downloadBytes(path), StandardCharsets.UTF_8));
+                StringBuilder dockerfile = new StringBuilder(new String(session.downloadBytes(path), StandardCharsets.UTF_8));
                 dockerfile.insert(dockerfile.indexOf("\n") + 1, "RUN " + java17Install.getValue() + "\n");
 
                 Path localPath = resultDirectory.resolve(java17Install.getKey());
                 Files.writeString(localPath, dockerfile.toString());
-                scpClient.upload(localPath, path);
+                session.upload(localPath, path);
             }
 
             LOG.info("Running benchmark");
             SshUtil.run(session, toolsetCommand.toString(), toolset.log);
 
             LOG.info("Downloading results");
-            scpClient.download(tefbRepoRevision.folderName() + "/results", resultDirectory, ScpClient.Option.Recursive);
+            session.downloadRecursive(tefbRepoRevision.folderName() + "/results", resultDirectory);
         }
 
         LOG.info("Uploading results for sharing");
