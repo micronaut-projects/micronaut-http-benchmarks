@@ -1,4 +1,4 @@
-package io.micronaut.benchmark.loadgen.oci.exec;
+package io.micronaut.benchmark.relay;
 
 import java.io.IOException;
 

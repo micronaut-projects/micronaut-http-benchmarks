@@ -14,6 +14,8 @@ rootProject.name = "micronaut-benchmark"
 
 include("load-generator-oci")
 include("plot")
+include("relay-agent")
+include("relay-api")
 include("test-case-pure-netty")
 include("test-case-helidon-nima")
 include("test-case-spring-boot")

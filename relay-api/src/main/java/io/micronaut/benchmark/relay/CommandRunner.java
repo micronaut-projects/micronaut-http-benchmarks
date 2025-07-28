@@ -1,6 +1,4 @@
-package io.micronaut.benchmark.loadgen.oci.exec;
-
-import io.micronaut.benchmark.loadgen.oci.OutputListener;
+package io.micronaut.benchmark.relay;
 
 import java.io.Closeable;
 import java.io.IOException;

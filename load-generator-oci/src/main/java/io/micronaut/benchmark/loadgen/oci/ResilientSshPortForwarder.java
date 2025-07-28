@@ -1,7 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
-import io.micronaut.benchmark.loadgen.oci.exec.SshCommandRunner;
+import io.micronaut.benchmark.relay.CommandRunner;
+import io.micronaut.benchmark.relay.SshCommandRunner;
 import io.micronaut.scheduling.TaskExecutors;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;

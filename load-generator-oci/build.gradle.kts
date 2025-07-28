@@ -35,6 +35,7 @@ dependencies {
     runtimeOnly(libs.logback.classic)
     implementation(libs.bcpkix)
     runtimeOnly(libs.postgresql)
+    implementation(project(":relay-api"))
 }
 
 micronaut {

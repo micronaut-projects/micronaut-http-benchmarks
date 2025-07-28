@@ -1,8 +1,9 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
+import io.micronaut.benchmark.relay.CommandRunner;
+import io.micronaut.benchmark.relay.OutputListener;
 import io.micronaut.core.annotation.Indexed;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;

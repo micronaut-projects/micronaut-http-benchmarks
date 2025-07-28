@@ -1,6 +1,5 @@
-package io.micronaut.benchmark.loadgen.oci.exec;
+package io.micronaut.benchmark.relay;
 
-import io.micronaut.benchmark.loadgen.oci.SshUtil;
 import org.apache.sshd.client.channel.ChannelExec;
 import org.apache.sshd.client.channel.ClientChannelEvent;
 import org.apache.sshd.client.session.ClientSession;
@@ -8,6 +7,7 @@ import org.apache.sshd.common.SshConstants;
 import org.apache.sshd.common.util.buffer.Buffer;
 import org.apache.sshd.scp.client.ScpClient;
 import org.apache.sshd.scp.client.ScpClientCreator;
+import org.apache.sshd.scp.common.helpers.ScpTimestampCommandDetails;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -20,6 +20,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.stream.IntStream;
 
 public final class SshCommandRunner implements CommandRunner {
+    private static final ScpTimestampCommandDetails DEFAULT_TIME = new ScpTimestampCommandDetails(0, 0);
+
     private final ClientSession session;
 
     public SshCommandRunner(ClientSession session) {
@@ -47,7 +49,7 @@ public final class SshCommandRunner implements CommandRunner {
 
     @Override
     public void upload(byte[] local, String remote, Set<PosixFilePermission> permissions) throws IOException {
-        ScpClientCreator.instance().createScpClient(session).upload(local, remote, permissions, SshUtil.DEFAULT_TIME);
+        ScpClientCreator.instance().createScpClient(session).upload(local, remote, permissions, DEFAULT_TIME);
     }
 
     @Override

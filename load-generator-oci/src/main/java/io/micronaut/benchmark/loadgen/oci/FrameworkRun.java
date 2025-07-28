@@ -1,6 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
+import io.micronaut.benchmark.relay.CommandRunner;
+import io.micronaut.benchmark.relay.OutputListener;
 import io.micronaut.core.annotation.Nullable;
 
 import java.nio.file.Path;

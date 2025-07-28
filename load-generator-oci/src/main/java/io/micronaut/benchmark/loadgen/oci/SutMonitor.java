@@ -1,8 +1,8 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
-import io.micronaut.benchmark.loadgen.oci.exec.ProcessBuilder;
-import io.micronaut.benchmark.loadgen.oci.exec.ProcessHandle;
+import io.micronaut.benchmark.relay.CommandRunner;
+import io.micronaut.benchmark.relay.ProcessBuilder;
+import io.micronaut.benchmark.relay.ProcessHandle;
 import io.micronaut.scheduling.TaskExecutors;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;

@@ -1,9 +1,9 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.loadgen.oci.exec.CommandRunner;
-import io.micronaut.benchmark.loadgen.oci.exec.ProcessHandle;
+import io.micronaut.benchmark.relay.CommandRunner;
+import io.micronaut.benchmark.relay.OutputListener;
+import io.micronaut.benchmark.relay.ProcessHandle;
 import org.apache.sshd.client.channel.ChannelExec;
-import org.apache.sshd.scp.common.helpers.ScpTimestampCommandDetails;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,7 +16,6 @@ public final class SshUtil {
     private SshUtil() {}
 
     public static final Set<PosixFilePermission> DEFAULT_PERMISSIONS = Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-    public static final ScpTimestampCommandDetails DEFAULT_TIME = new ScpTimestampCommandDetails(0, 0);
 
 
     /**

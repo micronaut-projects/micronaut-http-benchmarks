@@ -1,4 +1,4 @@
-package io.micronaut.benchmark.loadgen.oci;
+package io.micronaut.benchmark.relay;
 
 import io.micronaut.core.annotation.NonNull;
 import org.slf4j.Logger;
