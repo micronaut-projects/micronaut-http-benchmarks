@@ -10,6 +10,6 @@ repositories {
 }
 
 dependencies {
-    implementation("software.xdev:chartjs-java-model:2.8.0")
+    implementation(libs.chartjs)
     implementation(project(":load-generator-oci"))
 }

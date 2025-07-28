@@ -11,6 +11,6 @@ repositories {
 }
 
 dependencies {
-    implementation("io.micronaut.gradle:micronaut-gradle-plugin:4.0.0-SNAPSHOT")
+    implementation("io.micronaut.gradle:micronaut-gradle-plugin:4.5.4")
     implementation("gradle.plugin.com.github.johnrengelman:shadow:7.1.2")
 }
