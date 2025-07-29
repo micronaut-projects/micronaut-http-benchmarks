@@ -4,16 +4,16 @@ plugins {
 
 repositories {
     mavenCentral()
-    maven {
-        url = uri("https://s01.oss.sonatype.org/content/repositories/snapshots")
-    }
 }
+
+val libs = extensions.getByType(VersionCatalogsExtension::class.java).named("libs")
 
 dependencies {
     runtimeOnly("org.yaml:snakeyaml")
-    implementation("io.micronaut:micronaut-http-server-netty:4.7.2")
+    implementation("io.micronaut:micronaut-http-server-netty")
+    implementation("io.micronaut:micronaut-http-client")
 }
 
 micronaut {
-    version("4.6.3")
+    version(libs.findVersion("micronaut").get().toString())
 }

@@ -6,7 +6,7 @@
 
 plugins {
     id("io.micronaut.application")
-    id("com.github.johnrengelman.shadow")
+    id("com.gradleup.shadow")
 }
 
 repositories {
@@ -26,6 +26,8 @@ application {
     mainClass.set("org.example.Main")
 }
 
+val libs = extensions.getByType(VersionCatalogsExtension::class.java).named("libs")
+
 dependencies {
     annotationProcessor("io.micronaut:micronaut-http-validation")
     annotationProcessor("io.micronaut.serde:micronaut-serde-processor")
@@ -34,13 +36,13 @@ dependencies {
     implementation("io.micronaut:micronaut-http-server-netty")
     implementation("ch.qos.logback:logback-classic")
     implementation("io.projectreactor:reactor-core")
-    compileOnly("org.graalvm.nativeimage:svm:22.3.1")
-    runtimeOnly("org.bouncycastle:bcpkix-jdk18on:1.77")
-    implementation("com.zaxxer:HikariCP:6.3.0")
-    runtimeOnly("org.postgresql:postgresql:42.7.5")
+    compileOnly(libs.findLibrary("svm").get())
+    runtimeOnly(libs.findLibrary("bcpkix").get())
+    implementation(libs.findLibrary("hikari").get())
+    runtimeOnly(libs.findLibrary("postgresql").get())
 
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.1")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.1")
+    testImplementation("org.junit.jupiter:junit-jupiter-api")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
 }
 
 tasks.withType<Test>().configureEach {

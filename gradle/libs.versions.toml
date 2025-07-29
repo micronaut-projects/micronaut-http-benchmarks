@@ -10,12 +10,17 @@ mina-sshd-scp = { group = "org.apache.sshd", name = "sshd-scp", version.ref = "m
 mina-sshd-sftp = { group = "org.apache.sshd", name = "sshd-sftp", version.ref = "mina-sshd" }
 logback-classic = { group = "ch.qos.logback", name = "logback-classic", version = "1.5.18" }
 bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version = "1.80" }
+hikari = { group = "com.zaxxer", name = "HikariCP", version = "6.3.0" }
 postgresql = { group = "org.postgresql", name = "postgresql", version = "42.7.5" }
 chartjs = { group = "software.xdev", name = "chartjs-java-model", version = "2.8.0" }
+svm = { group = "org.graalvm.nativeimage", name = "svm", version = "22.3.1" }
 
 [plugins]
+shadow = { id = "com.gradleup.shadow", version = "8.3.8" }
 
 [versions]
 hyperfoil = "0.28-SNAPSHOT"
 async-profiler = "4.1"
 mina-sshd = "2.15.0"
+micronaut = "4.9.1"
+micronaut-gradle = "4.5.4"

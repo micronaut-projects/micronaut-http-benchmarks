@@ -11,6 +11,9 @@ repositories {
 }
 
 dependencies {
-    implementation("io.micronaut.gradle:micronaut-gradle-plugin:4.5.4")
-    implementation("gradle.plugin.com.github.johnrengelman:shadow:7.1.2")
+    implementation(libs.versions.micronaut.gradle.map { "io.micronaut.gradle:micronaut-gradle-plugin:$it" })
+    implementation(plugin(libs.plugins.shadow))
 }
+
+fun DependencyHandlerScope.plugin(plugin: Provider<PluginDependency>) =
+    plugin.map { "${it.pluginId}:${it.pluginId}.gradle.plugin:${it.version}" }

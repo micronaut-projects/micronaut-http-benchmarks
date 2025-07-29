@@ -39,5 +39,16 @@ configure<io.micronaut.bench.AppVariants> {
         dimension("micronaut") {
             variant("latest")
         }
+        dimension("loom") {
+            variant("off")
+            variant("on")
+            variant("carried")
+        }
+        dimension("affinity") {
+            variant("off")
+            variant("preferred")
+            variant("enforced")
+            variant("jdkclient")
+        }
     }
 }
