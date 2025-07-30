@@ -263,6 +263,10 @@ public final class Compute {
                     vnicDetails.privateIp(launch.privateIp);
                 }
                 return LaunchInstanceDetails.builder()
+                        .sourceDetails(InstanceSourceViaImageDetails.builder()
+                                .imageId(image.getId())
+                                .bootVolumeVpusPerGB((long) launch.instanceType.diskPerformanceUnits)
+                                .build())
                         .displayName(launch.displayName)
                         .shape(launch.instanceType.shape)
                         .shapeConfig(LaunchInstanceShapeConfigDetails.builder()
@@ -365,7 +369,8 @@ public final class Compute {
                 String shape,
                 float ocpus,
                 float memoryInGb,
-                String image
+                String image,
+                int diskPerformanceUnits
         ) {
         }
     }

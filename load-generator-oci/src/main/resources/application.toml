@@ -88,35 +88,40 @@ debug-authorized-keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIObBGYqEuujvGhBwr1S/
 shape="VM.Standard.E4.Flex"
 ocpus=3
 memory-in-gb=24
-image="Oracle-Linux-9.5-2025.05.19-0"
+image="Oracle-Linux-9.6-2025.07.21-0"
+disk-performance-units=80
 
 # relay server used as an SSH gateway to other servers
 [compute.instance-types.relay-server]
 shape="VM.Standard.A1.Flex"
-ocpus=1
+ocpus=2
 memory-in-gb=2
-image="Oracle-Linux-9.5-aarch64-2025.05.19-0"
+image="Oracle-Linux-9.6-aarch64-2025.07.21-0"
+disk-performance-units=80
 
 # hyperfoil controller
 [compute.instance-types.hyperfoil-controller]
 shape="VM.Standard.A1.Flex"
 ocpus=2
 memory-in-gb=4
-image="Oracle-Linux-9.5-aarch64-2025.05.19-0"
+image="Oracle-Linux-9.6-aarch64-2025.07.21-0"
+disk-performance-units=80
 
 # hyperfoil agent
 [compute.instance-types.hyperfoil-agent]
 shape="VM.Standard.E5.Flex"
 ocpus=8
 memory-in-gb=16
-image="Oracle-Linux-9.5-2025.05.19-0"
+image="Oracle-Linux-9.6-2025.07.21-0"
+disk-performance-units=80
 
 # nginx backend
 [compute.instance-types.nginx]
 shape="VM.Standard.E5.Flex"
 ocpus=8
 memory-in-gb=16
-image="Oracle-Linux-9.5-2025.05.19-0"
+image="Oracle-Linux-9.6-2025.07.21-0"
+disk-performance-units=80
 
 # postgres backend
 [compute.instance-types.postgresql]
@@ -191,19 +196,23 @@ availability-domain="hkYI:AP-TOKYO-1-AD-1"
 shape="BM.Standard3.64"
 ocpus=64
 memory-in-gb=1024
-image="Oracle-Linux-9.5-2025.05.19-0"
+image="Oracle-Linux-9.6-2025.07.21-0"
+disk-performance-units=80
 [compute.instance-types.te-client]
 shape="VM.Standard.E4.Flex"
 ocpus=64
 memory-in-gb=64
-image="Oracle-Linux-9.5-2025.05.19-0"
+image="Oracle-Linux-9.6-2025.07.21-0"
+disk-performance-units=80
 [compute.instance-types.te-database]
 shape="VM.Standard.E4.Flex"
 ocpus=64
 memory-in-gb=256
-image="Oracle-Linux-9.5-2025.05.19-0"
+image="Oracle-Linux-9.6-2025.07.21-0"
+disk-performance-units=80
 [compute.instance-types.te-toolset]
 shape="VM.Standard.E4.Flex"
 ocpus=2
 memory-in-gb=4
-image="Oracle-Linux-9.5-2025.05.19-0"
+image="Oracle-Linux-9.6-2025.07.21-0"
+disk-performance-units=80
