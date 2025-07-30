@@ -1,31 +1,16 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.relay.CommandRunner;
-import io.micronaut.benchmark.relay.OutputListener;
-import io.micronaut.benchmark.relay.ProcessHandle;
-import org.apache.sshd.client.channel.ChannelExec;
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
+import io.micronaut.benchmark.loadgen.oci.cmd.ProcessHandle;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.attribute.PosixFilePermission;
-import java.util.List;
+import java.io.InterruptedIOException;
 import java.util.Objects;
-import java.util.Set;
 
 public final class SshUtil {
     private SshUtil() {}
-
-    public static final Set<PosixFilePermission> DEFAULT_PERMISSIONS = Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-
-
-    /**
-     * Forward stdout/err output to the given listeners.
-     */
-    public static void forwardOutput(ChannelExec command, OutputListener... listeners) throws IOException {
-        OutputListener.Stream stream = new OutputListener.Stream(List.of(listeners));
-        command.setOut(stream);
-        command.setErr(stream);
-    }
 
     /**
      * Open the firewall ports on the given machine using {@code main.nft}.
@@ -35,7 +20,7 @@ public final class SshUtil {
         try (InputStream s = Infrastructure.class.getResourceAsStream("/main.nft")) {
             bytes = Objects.requireNonNull(s).readAllBytes();
         }
-        benchmarkServerClient.upload(bytes, "/tmp/main.nft", SshUtil.DEFAULT_PERMISSIONS);
+        benchmarkServerClient.upload(bytes, "/tmp/main.nft", CommandRunner.DEFAULT_PERMISSIONS);
         run(benchmarkServerClient, "sudo ln -fs /tmp/main.nft /etc/nftables/main.nft");
         run(benchmarkServerClient, "sudo systemctl stop firewalld", log);
         run(benchmarkServerClient, "sudo systemctl restart nftables", log);
@@ -60,9 +45,7 @@ public final class SshUtil {
      * @param log     Loggers for the output
      */
     public static void run(CommandRunner client, String command, OutputListener... log) throws IOException {
-        try (ProcessHandle handle = client.run(command, log)) {
-            handle.waitFor().check();
-        }
+        client.runAndCheck(command, log);
     }
 
     /**
@@ -76,6 +59,8 @@ public final class SshUtil {
     public static void run(CommandRunner client, String command, OutputListener log, int... allowedStatus) throws IOException {
         try (ProcessHandle handle = client.run(command, log)) {
             handle.waitFor().checkStatus(allowedStatus);
+        } catch (InterruptedException e) {
+            throw new InterruptedIOException();
         }
     }
 }

@@ -1,7 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.relay.CommandRunner;
-import io.micronaut.benchmark.relay.SshCommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.PortForwardHandle;
 import io.micronaut.scheduling.TaskExecutors;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
@@ -22,7 +22,6 @@ import io.netty.util.concurrent.GenericFutureListener;
 import io.netty.util.concurrent.Promise;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
-import org.apache.sshd.client.session.forward.ExplicitPortForwardingTracker;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -194,7 +193,7 @@ public final class ResilientSshPortForwarder implements Closeable {
         }
     }
 
-    InetSocketAddress bind() {
+    public InetSocketAddress bind() {
         downstreamServerChannel = (ServerSocketChannel) new ServerBootstrap()
                 .group(loop)
                 .channel(NioServerSocketChannel.class)
@@ -204,7 +203,7 @@ public final class ResilientSshPortForwarder implements Closeable {
         return address();
     }
 
-    InetSocketAddress address() {
+    public InetSocketAddress address() {
         return downstreamServerChannel.localAddress();
     }
 
@@ -244,9 +243,8 @@ public final class ResilientSshPortForwarder implements Closeable {
 
         void connectBlocking(Callable<CommandRunner> sessionCallable, SshdSocketAddress remote) {
             try (CommandRunner clientSession = sessionCallable.call();
-                 // TODO
-                 ExplicitPortForwardingTracker forwardingTracker = ((SshCommandRunner) clientSession).getSession().createLocalPortForwardingTracker(new SshdSocketAddress("localhost", 0), remote)) {
-                boundAddress.setSuccess(new InetSocketAddress(forwardingTracker.getBoundAddress().getHostName(), forwardingTracker.getBoundAddress().getPort()));
+                 PortForwardHandle forwardHandle = clientSession.portForward(remote.toInetSocketAddress())) {
+                boundAddress.setSuccess(forwardHandle.localAddress());
                 closeFuture.await();
             } catch (Exception e) {
                 boundAddress.tryFailure(e);

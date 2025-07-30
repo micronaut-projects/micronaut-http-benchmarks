@@ -9,6 +9,7 @@ import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.core.model.CreateVnicDetails;
 import com.oracle.bmc.core.model.Image;
 import com.oracle.bmc.core.model.InstanceAgentPluginConfigDetails;
+import com.oracle.bmc.core.model.InstanceSourceViaImageDetails;
 import com.oracle.bmc.core.model.LaunchInstanceAgentConfigDetails;
 import com.oracle.bmc.core.model.LaunchInstanceDetails;
 import com.oracle.bmc.core.model.LaunchInstanceShapeConfigDetails;
@@ -16,14 +17,13 @@ import com.oracle.bmc.core.model.LaunchOptions;
 import com.oracle.bmc.core.requests.GetVnicRequest;
 import com.oracle.bmc.core.requests.ListImagesRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
-import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
-import io.micronaut.benchmark.relay.CommandRunner;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.scheduling.TaskExecutors;
@@ -110,15 +110,13 @@ public final class Compute {
 
     public final class Launch {
         private final InstanceResource resource = new InstanceResource(context, this);
-        private final ComputeResource computeResource = new ComputeResource(context);
+        final ComputeResource computeResource = new ComputeResource(context);
         private final String displayName;
         private final ComputeConfiguration.InstanceType instanceType;
         private final OciLocation location;
         private final SubnetResource subnet;
         private String privateIp = null;
-        private boolean publicIp = false;
-        private BastionSessionResource bastionSession = null;
-        private InstanceResource relayInstance = null;
+        private InstanceAccess access;
 
         private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
             this.displayName = displayName;
@@ -141,31 +139,9 @@ public final class Compute {
             return this;
         }
 
-        /**
-         * Assign a public IP to this server.
-         *
-         * @param publicIp Whether to assign a public IP
-         * @return This builder
-         */
-        public Launch publicIp(boolean publicIp) {
-            this.publicIp = publicIp;
-            return this;
-        }
-
-        public Launch bastion(BastionResource bastion) {
-            if (bastion != null) {
-                this.bastionSession = new BastionSessionResource(context).bastion(bastion);
-                bastionSession.dependOn(computeResource.require());
-                resource.dependOn(bastionSession.require());
-            }
-            return this;
-        }
-
-        public Launch relayInstance(InstanceResource relayInstance) {
-            if (relayInstance != null) {
-                this.relayInstance = relayInstance;
-                resource.dependOn(relayInstance.require());
-            }
+        public Launch access(InstanceAccess access) {
+            resource.dependOn(access.require());
+            this.access = access;
             return this;
         }
 
@@ -187,6 +163,21 @@ public final class Compute {
         public InstanceResource launchAsResource() {
             AbstractInfrastructure.launch(resource, resource::manage);
             return resource;
+        }
+
+        private void manageBastion(BastionSessionResource sessionResource) throws Exception {
+            sessionResource.manageNew(location, CreateSessionDetails.builder()
+                    .keyDetails(PublicKeyDetails.builder()
+                            .publicKeyContent(sshFactory.publicKey())
+                            .build())
+                    .keyType(CreateSessionDetails.KeyType.Pub)
+                    .sessionTtlInSeconds(Math.toIntExact(Duration.ofHours(3).toSeconds()))
+                    .targetResourceDetails(
+                            // managed ssh sessions are unstable, so just use port forwarding
+                            CreatePortForwardingSessionTargetResourceDetails.builder()
+                                    .targetResourcePort(22)
+                                    .targetResourcePrivateIpAddress(privateIp)
+                                    .build()));
         }
     }
 
@@ -240,7 +231,6 @@ public final class Compute {
     public final class InstanceResource extends AbstractDecoratedResource {
         private final Launch launch;
         private String publicIp;
-        private SshFactory.Relay relay;
 
         InstanceResource(ResourceContext context, Launch launch) {
             super(context);
@@ -258,7 +248,7 @@ public final class Compute {
             AbstractInfrastructure.launch(launch.computeResource, () -> launch.computeResource.manageNew(launch.location, () -> {
                 CreateVnicDetails.Builder vnicDetails = CreateVnicDetails.builder()
                         .subnetId(launch.subnet.ocid())
-                        .assignPublicIp(launch.publicIp);
+                        .assignPublicIp(launch.access instanceof PublicIpAccess);
                 if (launch.privateIp != null) {
                     vnicDetails.privateIp(launch.privateIp);
                 }
@@ -293,27 +283,12 @@ public final class Compute {
                                 .build());
             }));
 
-            if (launch.bastionSession != null) {
-                AbstractInfrastructure.launch(launch.bastionSession, () -> {
-                    launch.bastionSession.manageNew(launch.location, CreateSessionDetails.builder()
-                            .keyDetails(PublicKeyDetails.builder()
-                                    .publicKeyContent(sshFactory.publicKey())
-                                    .build())
-                            .keyType(CreateSessionDetails.KeyType.Pub)
-                            .sessionTtlInSeconds(Math.toIntExact(Duration.ofHours(3).toSeconds()))
-                            .targetResourceDetails(
-                                    // managed ssh sessions are unstable, so just use port forwarding
-                                    CreatePortForwardingSessionTargetResourceDetails.builder()
-                                            .targetResourcePort(22)
-                                            .targetResourcePrivateIpAddress(launch.privateIp)
-                                            .build()));
-                });
-            }
+            launch.access.launch(launch);
         }
 
         @Override
         protected void setUp() {
-            if (launch.publicIp) {
+            if (launch.access instanceof PublicIpAccess) {
                 this.publicIp = Infrastructure.retry(() -> {
                     String vnic = computeClient.forRegion(launch.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
                             .compartmentId(launch.location.compartmentId())
@@ -325,19 +300,29 @@ public final class Compute {
                             .build()).getVnic().getPublicIp();
                 });
             }
-            if (launch.bastionSession != null) {
-                this.relay = new SshFactory.Relay(launch.bastionSession.getBastionUserName(), "host.bastion." + launch.location.region() + ".oci.oraclecloud.com");
-            } else if (launch.relayInstance != null) {
-                this.relay = new SshFactory.Relay("opc", launch.relayInstance.publicIp);
-            }
         }
 
         public CommandRunner connectSsh() throws Exception {
-            if (publicIp != null) {
-                return sshFactory.connect(this, publicIp, null);
-            } else {
-                return Infrastructure.retry(() -> sshFactory.connect(this, launch.privateIp, relay));
+            switch (launch.access) {
+                case BastionAccess bastionAccess -> {
+                    SshFactory.Relay relay = new SshFactory.Relay(bastionAccess.sessionResource.getBastionUserName(), "host.bastion." + launch.location.region() + ".oci.oraclecloud.com");
+                    return Infrastructure.retry(() -> sshFactory.connect(this, launch.privateIp, relay));
+                }
+                case HttpRelayAccess httpRelayAccess -> {
+                    return httpRelayAccess.relay.getRelay().openSession("opc@" + launch.privateIp + ":22");
+                }
+                case PublicIpAccess _ -> {
+                    return sshFactory.connect(this, publicIp, null);
+                }
+                case SshRelayAccess sshRelayAccess -> {
+                    SshFactory.Relay relay = new SshFactory.Relay("opc", sshRelayAccess.relayInstance.publicIp);
+                    return Infrastructure.retry(() -> sshFactory.connect(this, launch.privateIp, relay));
+                }
             }
+        }
+
+        public String publicIp() {
+            return publicIp;
         }
 
         @Override
@@ -372,6 +357,46 @@ public final class Compute {
                 String image,
                 int diskPerformanceUnits
         ) {
+        }
+    }
+
+    public sealed interface InstanceAccess {
+        default void launch(Launch launch) {
+        }
+
+        List<PhasedResource.PhaseLock> require();
+    }
+
+    public record BastionAccess(BastionSessionResource sessionResource) implements InstanceAccess {
+        @Override
+        public void launch(Launch launch) {
+            AbstractInfrastructure.launch(sessionResource, () -> launch.manageBastion(sessionResource));
+        }
+
+        @Override
+        public List<PhasedResource.PhaseLock> require() {
+            return sessionResource.require();
+        }
+    }
+
+    public record SshRelayAccess(InstanceResource relayInstance) implements InstanceAccess {
+        @Override
+        public List<PhasedResource.PhaseLock> require() {
+            return relayInstance.require();
+        }
+    }
+
+    public record HttpRelayAccess(TcpAgentRelay.TcpRelayResource relay) implements InstanceAccess {
+        @Override
+        public List<PhasedResource.PhaseLock> require() {
+            return relay.require();
+        }
+    }
+
+    public record PublicIpAccess() implements InstanceAccess {
+        @Override
+        public List<PhasedResource.PhaseLock> require() {
+            return List.of();
         }
     }
 }

@@ -1,4 +1,4 @@
-package io.micronaut.benchmark.relay;
+package io.micronaut.benchmark.loadgen.oci.cmd;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -10,9 +10,9 @@ public interface ProcessHandle extends Closeable {
 
     void kill() throws IOException;
 
-    CommandResult waitFor();
+    CommandResult waitFor() throws InterruptedException;
 
-    CommandResult waitFor(long timeout, TimeUnit unit) throws TimeoutException;
+    CommandResult waitFor(long timeout, TimeUnit unit) throws InterruptedException, TimeoutException;
 
     boolean isOpen();
 }

@@ -1,9 +1,9 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
-import io.micronaut.benchmark.relay.CommandRunner;
-import io.micronaut.benchmark.relay.OutputListener;
 import io.micronaut.core.annotation.Indexed;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -38,7 +38,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private boolean stopped;
 
     private Infrastructure(Factory factory, OciLocation location, Path logDirectory) throws IOException {
-        super(location, logDirectory, factory.context, factory.compute);
+        super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
 
         hyperfoilRunner = factory.hyperfoilRunnerFactory.create(logDirectory, this);
@@ -167,6 +167,7 @@ public final class Infrastructure extends AbstractInfrastructure {
 
     @Singleton
     public record Factory(
+            AbstractInfrastructure.Factory baseFactory,
             ResourceContext context,
             Compute compute,
             HyperfoilRunner.Factory hyperfoilRunnerFactory,

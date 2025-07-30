@@ -1,5 +1,5 @@
 plugins {
-    id("io.micronaut.library")
+    java
 }
 
 group = "org.example"
@@ -10,11 +10,19 @@ repositories {
 }
 
 dependencies {
-    api(libs.mina.sshd.core)
-    implementation(libs.mina.sshd.scp)
-    implementation(libs.mina.sshd.sftp)
+    implementation(libs.netty.handler)
+    implementation(libs.slf4j)
+    implementation(libs.netty.codec.http2)
+    testRuntimeOnly(libs.logback.classic)
+    testImplementation(libs.netty.pkitesting)
+    testImplementation(libs.jupiter)
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-micronaut {
-    version("4.8.2")
+tasks.named<Test>("test") {
+    useJUnitPlatform()
+}
+
+tasks.named<JavaCompile>("compileJava") {
+    options.release.set(21)
 }

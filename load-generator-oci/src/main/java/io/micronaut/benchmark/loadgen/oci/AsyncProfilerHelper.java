@@ -1,7 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.relay.CommandRunner;
-import io.micronaut.benchmark.relay.OutputListener;
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.core.annotation.Nullable;

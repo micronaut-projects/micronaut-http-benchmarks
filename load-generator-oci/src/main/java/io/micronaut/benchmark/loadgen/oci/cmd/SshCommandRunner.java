@@ -1,31 +1,52 @@
-package io.micronaut.benchmark.relay;
+package io.micronaut.benchmark.loadgen.oci.cmd;
 
+import org.apache.sshd.client.SshClient;
 import org.apache.sshd.client.channel.ChannelExec;
 import org.apache.sshd.client.channel.ClientChannelEvent;
+import org.apache.sshd.client.config.hosts.HostConfigEntry;
+import org.apache.sshd.client.future.ConnectFuture;
 import org.apache.sshd.client.session.ClientSession;
+import org.apache.sshd.client.session.forward.ExplicitPortForwardingTracker;
 import org.apache.sshd.common.SshConstants;
 import org.apache.sshd.common.util.buffer.Buffer;
+import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.apache.sshd.scp.client.ScpClient;
 import org.apache.sshd.scp.client.ScpClientCreator;
 import org.apache.sshd.scp.common.helpers.ScpTimestampCommandDetails;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.IntStream;
 
 public final class SshCommandRunner implements CommandRunner {
     private static final ScpTimestampCommandDetails DEFAULT_TIME = new ScpTimestampCommandDetails(0, 0);
 
     private final ClientSession session;
 
-    public SshCommandRunner(ClientSession session) {
+    private SshCommandRunner(ClientSession session) {
         this.session = session;
+    }
+
+    public static SshCommandRunner connect(SshClient client, HostConfigEntry hostConfigEntry) throws IOException {
+        return connect(client.connect(hostConfigEntry));
+    }
+
+    public static SshCommandRunner connect(SshClient client, String uri) throws IOException {
+        return connect(client.connect(uri));
+    }
+
+    private static SshCommandRunner connect(ConnectFuture future) throws IOException {
+        ClientSession session = future.verify().getClientSession();
+        session.auth().verify();
+        return new SshCommandRunner(session);
     }
 
     public ClientSession getSession() {
@@ -35,6 +56,13 @@ public final class SshCommandRunner implements CommandRunner {
     @Override
     public ProcessBuilder builder(String command) throws IOException {
         return new SshProcessBuilder(command);
+    }
+
+    @Override
+    public void upload(Path local, String remote, Set<PosixFilePermission> permissions) throws IOException {
+        try (InputStream stream = Files.newInputStream(local)) {
+            ScpClientCreator.instance().createScpClient(session).upload(stream, remote, Files.size(local), permissions, DEFAULT_TIME);
+        }
     }
 
     @Override
@@ -68,6 +96,24 @@ public final class SshCommandRunner implements CommandRunner {
     }
 
     @Override
+    public PortForwardHandle portForward(InetSocketAddress remoteAddress) throws IOException {
+        ExplicitPortForwardingTracker forwardingTracker = session.createLocalPortForwardingTracker(
+                new SshdSocketAddress("localhost", 0),
+                new SshdSocketAddress(remoteAddress.getHostString(), remoteAddress.getPort()));
+        return new PortForwardHandle() {
+            @Override
+            public InetSocketAddress localAddress() {
+                return forwardingTracker.getBoundAddress().toInetSocketAddress();
+            }
+
+            @Override
+            public void close() throws IOException {
+                forwardingTracker.close();
+            }
+        };
+    }
+
+    @Override
     public void close() throws IOException {
         session.close();
     }
@@ -95,6 +141,11 @@ public final class SshCommandRunner implements CommandRunner {
         @Override
         public void setErr(OutputStream stream) {
             channel.setErr(stream);
+        }
+
+        @Override
+        public void setIn(InputStream in) {
+            channel.setIn(in);
         }
 
         @Override
@@ -164,13 +215,11 @@ public final class SshCommandRunner implements CommandRunner {
     ) implements CommandResult {
 
         @Override
-        public void checkStatus(int... expectedStatus) throws IOException {
-            if (exitSignal != null) {
+        public int status() throws IOException {
+            if (exitSignal != null || exitStatus == null) {
                 throw new IOException(exitSignal);
             }
-            if (exitStatus == null || IntStream.of(expectedStatus).noneMatch(i -> i == exitStatus)) {
-                throw new IOException("Exit status: " + exitStatus);
-            }
+            return exitStatus;
         }
     }
 }

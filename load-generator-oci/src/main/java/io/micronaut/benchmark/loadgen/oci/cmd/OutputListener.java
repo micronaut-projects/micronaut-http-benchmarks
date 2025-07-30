@@ -1,8 +1,9 @@
-package io.micronaut.benchmark.relay;
+package io.micronaut.benchmark.loadgen.oci.cmd;
 
 import io.micronaut.core.annotation.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -10,7 +11,9 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -129,6 +132,51 @@ public interface OutputListener {
         @Override
         public synchronized void close() throws IOException {
             outputStream.close();
+        }
+    }
+
+    class Log implements OutputListener {
+        private final Logger logger;
+        private final Level level;
+
+        private final Queue<ByteBuffer> queue = new ArrayDeque<>();
+
+        public Log(Logger logger, Level level) {
+            this.logger = logger;
+            this.level = level;
+        }
+
+        @Override
+        public void onData(ByteBuffer data) {
+            for (int i = data.position(); i < data.limit(); i++) {
+                if (data.get(i) == '\n') {
+                    StringBuilder builder = new StringBuilder();
+                    drain(builder);
+                    builder.append(StandardCharsets.UTF_8.decode(data.slice(data.position(), i - data.position())));
+                    logger.makeLoggingEventBuilder(level).log(builder.toString());
+                    data.position(i + 1);
+                }
+            }
+            if (data.hasRemaining()) {
+                queue.add(data);
+            }
+        }
+
+        @Override
+        public void onComplete() {
+            StringBuilder builder = new StringBuilder();
+            drain(builder);
+            logger.makeLoggingEventBuilder(level).log(builder.toString());
+        }
+
+        private void drain(StringBuilder builder) {
+            while (true) {
+                ByteBuffer buffer = queue.poll();
+                if (buffer == null) {
+                    break;
+                }
+                builder.append(StandardCharsets.UTF_8.decode(buffer));
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.benchmark.relay.CommandRunner;
-import io.micronaut.benchmark.relay.SshCommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.SshCommandRunner;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.Factory;
 import io.micronaut.core.annotation.Nullable;
@@ -13,7 +13,6 @@ import org.apache.sshd.client.SshClient;
 import org.apache.sshd.client.config.hosts.HostConfigEntry;
 import org.apache.sshd.client.config.hosts.HostConfigEntryResolver;
 import org.apache.sshd.client.keyverifier.AcceptAllServerKeyVerifier;
-import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.common.SshException;
 import org.apache.sshd.common.config.keys.loader.pem.RSAPEMResourceKeyPairParser;
 import org.apache.sshd.common.config.keys.writer.openssh.OpenSSHKeyPairResourceWriter;
@@ -47,6 +46,7 @@ public final class SshFactory {
     private static final Logger LOG = LoggerFactory.getLogger(SshFactory.class);
 
     private final SshFactory.SshConfiguration config;
+    private final KeyPair keyPair;
     private final String publicKey;
     private final String privateKey;
     private final SshClient sshClient;
@@ -56,7 +56,6 @@ public final class SshFactory {
     SshFactory(SshConfiguration config, @Named(TaskExecutors.SCHEDULED) ExecutorService scheduler) throws Exception {
         this.config = config;
         this.scheduler = (ScheduledExecutorService) scheduler;
-        KeyPair keyPair;
         if (config.privateKeyLocation() == null) {
             KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
             keyGen.initialize(2048);
@@ -83,6 +82,10 @@ public final class SshFactory {
         sshClient.start();
 
         LOG.info("Public key: {}", publicKey);
+    }
+
+    public KeyPair keyPair() {
+        return keyPair;
     }
 
     public String publicKey() {
@@ -123,11 +126,9 @@ public final class SshFactory {
                         }
                     }
                 }
-                ClientSession sess = sshClient.connect(new HostConfigEntry("", instanceIp, 22, "opc", relay == null ? null : relay.username + "@" + relay.relayIp + ":22")).verify().getClientSession();
-                sess.auth().verify();
-                CommandRunner runner = new SshCommandRunner(sess);
+                SshCommandRunner runner = SshCommandRunner.connect(sshClient, new HostConfigEntry("", instanceIp, 22, "opc", relay == null ? null : relay.username + "@" + relay.relayIp + ":22"));
                 scheduler.scheduleWithFixedDelay(() -> {
-                    if (sess.isClosed()) {
+                    if (runner.getSession().isClosed()) {
                         // ends the task
                         throw new RuntimeException("End the task");
                     }
@@ -159,8 +160,8 @@ public final class SshFactory {
     }
 
     void deployPrivateKey(CommandRunner session) throws IOException {
-        session.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", SshUtil.DEFAULT_PERMISSIONS);
-        session.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", SshUtil.DEFAULT_PERMISSIONS);
+        session.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", CommandRunner.DEFAULT_PERMISSIONS);
+        session.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", CommandRunner.DEFAULT_PERMISSIONS);
     }
 
     /**

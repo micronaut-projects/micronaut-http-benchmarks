@@ -36,13 +36,27 @@ dependencies {
     implementation(libs.bcpkix)
     runtimeOnly(libs.postgresql)
     implementation(project(":relay-api"))
+    testImplementation("org.testcontainers:testcontainers")
+    testImplementation("org.testcontainers:junit-jupiter")
+    testRuntimeOnly("org.apache.commons:commons-compress:1.27.1") // dependency issue
 }
 
 micronaut {
-    version("4.8.2")
+    version(libs.versions.micronaut.asProvider().get())
     testRuntime("junit5")
     processing {
         incremental(true)
         annotations("io.micronaut.benchmark.loadgen.oci.*")
     }
+}
+
+tasks.named<ProcessResources>("processResources") {
+    // TODO: find a better solution
+
+    from("../relay-agent/build/libs/relay-agent-all.jar") {
+        rename { "relay-agent-all.jar" }
+    }
+    dependsOn(
+        project(":relay-agent").tasks.named("shadowJar")
+    )
 }

@@ -1,10 +1,10 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
-import io.micronaut.benchmark.relay.CommandRunner;
-import io.micronaut.benchmark.relay.OutputListener;
-import io.micronaut.benchmark.relay.ProcessBuilder;
-import io.micronaut.benchmark.relay.ProcessHandle;
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
+import io.micronaut.benchmark.loadgen.oci.cmd.ProcessBuilder;
+import io.micronaut.benchmark.loadgen.oci.cmd.ProcessHandle;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;

@@ -59,7 +59,7 @@ public abstract class AbstractDecoratedResource extends PhasedResource<AbstractD
     protected void setUp() throws Exception {
     }
 
-    protected void tearDown() {
+    protected void tearDown() throws Exception {
     }
 
     public final void dependOn(List<PhaseLock> locks) {

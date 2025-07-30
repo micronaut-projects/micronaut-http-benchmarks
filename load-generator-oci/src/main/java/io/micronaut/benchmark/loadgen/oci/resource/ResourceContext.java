@@ -11,6 +11,7 @@ import com.oracle.bmc.identity.IdentityClient;
 import com.oracle.bmc.psql.PostgresqlClient;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 import io.micronaut.benchmark.loadgen.oci.RegionalClient;
+import io.micronaut.context.annotation.Requires;
 import io.micronaut.scheduling.annotation.Scheduled;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
 
 @Singleton
+@Requires(notEnv = "test")
 public final class ResourceContext {
     private static final Logger LOG = LoggerFactory.getLogger(ResourceContext.class);
     public final Clients clients;

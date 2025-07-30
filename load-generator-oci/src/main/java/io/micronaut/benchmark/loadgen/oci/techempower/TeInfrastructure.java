@@ -5,9 +5,9 @@ import io.micronaut.benchmark.loadgen.oci.Compute;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 import io.micronaut.benchmark.loadgen.oci.PhaseTracker;
 import io.micronaut.benchmark.loadgen.oci.SshUtil;
+import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
-import io.micronaut.benchmark.relay.CommandRunner;
-import io.micronaut.benchmark.relay.OutputListener;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.client.HttpClient;
@@ -38,7 +38,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
     private final Map<DockerServer, DockerServerRuntime> dockerServers = new EnumMap<>(DockerServer.class);
 
     private TeInfrastructure(Factory factory, OciLocation location, Path logDirectory) {
-        super(location, logDirectory, factory.context, factory.compute);
+        super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
     }
 
@@ -200,6 +200,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
 
     @Singleton
     public record Factory(
+            AbstractInfrastructure.Factory baseFactory,
             ResourceContext context,
             Compute compute,
             @Named(TaskExecutors.IO) ExecutorService executor,
