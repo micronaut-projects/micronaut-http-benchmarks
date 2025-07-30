@@ -129,6 +129,7 @@ shape="PostgreSQL.VM.Standard.E5.Flex"
 ocpus=4
 memory-in-gb=32
 image=""
+disk-performance-units=0
 
 [variants.hotspot]
 version=24
