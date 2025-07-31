@@ -53,10 +53,10 @@ micronaut {
 tasks.named<ProcessResources>("processResources") {
     // TODO: find a better solution
 
-    from("../relay-agent/build/libs/relay-agent-all.jar") {
-        rename { "relay-agent-all.jar" }
+    from("../relay-agent/build/native/nativeCompile/relay-agent") {
+        rename { "relay-agent-amd64" }
     }
     dependsOn(
-        project(":relay-agent").tasks.named("shadowJar")
+        project(":relay-agent").tasks.named("nativeCompile")
     )
 }

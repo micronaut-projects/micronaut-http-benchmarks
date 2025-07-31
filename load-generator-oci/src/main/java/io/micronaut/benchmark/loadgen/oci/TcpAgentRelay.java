@@ -1,12 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.oracle.bmc.util.VisibleForTesting;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.SshCommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.relay.TcpRelay;
+import io.micronaut.benchmark.relay.TcpRelayMessage;
 import io.micronaut.scheduling.TaskExecutors;
 import io.netty.pkitesting.CertificateBuilder;
 import io.netty.pkitesting.X509Bundle;
@@ -32,15 +32,15 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyPair;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 public final class TcpAgentRelay implements Closeable {
-    @VisibleForTesting
-    static final String JAVA_PACKAGE = "java-21-openjdk-headless";
     static final int PORT = 8443;
     private static final int LOG_PORT = 8444;
 
@@ -53,7 +53,7 @@ public final class TcpAgentRelay implements Closeable {
     private final SshClient sshClient;
 
     static {
-        try (InputStream stream = TcpAgentRelay.class.getResourceAsStream("/relay-agent-all.jar")) {
+        try (InputStream stream = TcpAgentRelay.class.getResourceAsStream("/relay-agent-amd64")) {
             AGENT_BYTES = stream.readAllBytes();
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -78,19 +78,19 @@ public final class TcpAgentRelay implements Closeable {
                 .subject("CN=client")
                 .buildSelfSigned();
 
-        SshUtil.run(builder.bootstrap, "sudo dnf install -y " + JAVA_PACKAGE, log);
-        builder.bootstrap.upload(AGENT_BYTES, "/var/tmp/agent.jar", CommandRunner.DEFAULT_PERMISSIONS);
+        builder.bootstrap.upload(AGENT_BYTES, "/tmp/relay-agent",
+                Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
 
-        StringBuilder agentCommand = new StringBuilder("nohup java -Xmx512M -jar ");
-        agentCommand.append("-Dkey.algorithm=").append(serverCert.getKeyPair().getPrivate().getAlgorithm()).append(' ');
-        agentCommand.append("-Dkey=").append(Base64.getEncoder().encodeToString(serverCert.getKeyPair().getPrivate().getEncoded())).append(' ');
-        agentCommand.append("-Dcert=").append(Base64.getEncoder().encodeToString(serverCert.getCertificate().getEncoded())).append(' ');
-        agentCommand.append("-Dremote-cert=").append(Base64.getEncoder().encodeToString(clientCert.getCertificate().getEncoded())).append(' ');
-        agentCommand.append("-Dport=").append(PORT).append(' ');
-        agentCommand.append("-Dlog-port=").append(LOG_PORT).append(' ');
-        OutputListener.Waiter waiter = new OutputListener.Waiter(ByteBuffer.wrap("Tunnel established".getBytes(StandardCharsets.UTF_8)));
-        builder.bootstrap.run(agentCommand.append("/var/tmp/agent.jar").toString(), log, waiter);
-        waiter.awaitWithNextPattern(null);
+        String agentCommand = "nohup /tmp/relay-agent" +
+                " -Dkey.algorithm=" + serverCert.getKeyPair().getPrivate().getAlgorithm() +
+                " -Dkey=" + Base64.getEncoder().encodeToString(serverCert.getKeyPair().getPrivate().getEncoded()) +
+                " -Dcert=" + Base64.getEncoder().encodeToString(serverCert.getCertificate().getEncoded()) +
+                " -Dremote-cert=" + Base64.getEncoder().encodeToString(clientCert.getCertificate().getEncoded()) +
+                " -Dport=" + PORT +
+                " -Dlog-port=" + LOG_PORT;
+        OutputListener.Waiter startWaiter = new OutputListener.Waiter(ByteBuffer.wrap(TcpRelayMessage.TUNNEL_ESTABLISHED.getBytes(StandardCharsets.UTF_8)));
+        builder.bootstrap.run(agentCommand, log, startWaiter);
+        startWaiter.awaitWithNextPattern(null);
 
         this.relay = new TcpRelay()
                 .tls(clientCert.getKeyPair().getPrivate(), clientCert.getCertificate(), serverCert.getCertificate());
@@ -108,14 +108,19 @@ public final class TcpAgentRelay implements Closeable {
         sshClient.start();
 
         TcpRelay.Binding logBinding = relay.bindForward(new InetSocketAddress("127.0.0.1", LOG_PORT));
+        @SuppressWarnings("resource")
+        Socket socket = new Socket();
+        socket.connect(logBinding.address());
+        OutputListener.Waiter tcpLogWaiter = new OutputListener.Waiter(ByteBuffer.wrap(TcpRelayMessage.TCP_LOG_ESTABLISHED.getBytes(StandardCharsets.UTF_8)));
         builder.factory.blocking.execute(() -> {
-            try (Socket socket = new Socket()) {
-                socket.connect(logBinding.address());
-                socket.getInputStream().transferTo(new OutputListener.Stream(List.of(log)));
+            try (socket) {
+                socket.getInputStream().transferTo(new OutputListener.Stream(List.of(log, tcpLogWaiter)));
             } catch (IOException e) {
                 LOG.warn("Failed to forward log output", e);
             }
         });
+        // wait for TCP log to start
+        tcpLogWaiter.awaitWithNextPattern(null);
     }
 
     public CommandRunner openSession(String host) throws IOException {

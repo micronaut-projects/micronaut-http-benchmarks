@@ -1,6 +1,8 @@
 package io.micronaut.benchmark.relay.agent;
 
 import io.micronaut.benchmark.relay.TcpRelay;
+import io.micronaut.benchmark.relay.TcpRelayMessage;
+import io.netty.buffer.ByteBufAllocator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,6 +21,11 @@ import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 
 public class Main {
+    static {
+        System.setProperty("org.slf4j.simpleLogger.showDateTime", "true");
+        System.setProperty("org.slf4j.simpleLogger.dateTimeFormat", "HH:mm:ss.SSS");
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(Main.class);
 
     public static void main(String[] args) throws GeneralSecurityException, IOException {
@@ -45,13 +52,22 @@ public class Main {
                         Integer.getInteger("port", 8443)
                 );
 
-        LOG.info("Tunnel established");
+        LOG.info(TcpRelayMessage.TUNNEL_ESTABLISHED);
 
         if (logServer != null) {
             Socket socket = logServer.accept();
-            System.setOut(new PrintStream(socket.getOutputStream()));
-            LOG.info("Moved to TCP log");
+
+            LOG.info("Moving to TCP log...");
+
+            AsyncOutputStream asyncOutputStream = new AsyncOutputStream(ByteBufAllocator.DEFAULT, socket.getOutputStream(), 65536);
+            PrintStream printStream = new PrintStream(asyncOutputStream, true);
+            printStream.println("TCP log test message");
+            System.setErr(printStream);
+
             logServer.close();
+
+            LOG.info(TcpRelayMessage.TCP_LOG_ESTABLISHED);
+            asyncOutputStream.run();
         }
     }
 }

@@ -158,27 +158,29 @@ public final class TcpRelay implements Closeable {
 
     private void tunnel(StreamPair pair) {
         if (currentClientChannel == null || !currentClientChannel.isActive()) {
-            LOG.info("Holding back connection: {}", pair);
+            LOG.info("Holding back connection: {}", pair.initialize);
             return;
         }
-        LOG.info("Opening stream for connection {}", pair);
+        LOG.info("Opening stream for connection {}", pair.initialize);
         new Http2StreamChannelBootstrap(currentClientChannel)
                 .handler(new ChannelInitializer<Http2StreamChannel>() {
                     @Override
                     protected void initChannel(Http2StreamChannel ch) {
                         long outputStart = pair.unreliableOutput.position - pair.unreliableOutput.bufferLength;
                         ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+                            private final Request request = new Request(
+                                    pair.initialize.id,
+                                    pair.initialize.host,
+                                    pair.initialize.port,
+                                    outputStart,
+                                    pair.unreliableInput.position
+                            );
+
                             @Override
                             public void channelActive(ChannelHandlerContext ctx) throws Exception {
                                 super.channelActive(ctx);
 
-                                ctx.writeAndFlush(new DefaultHttp2HeadersFrame(new Request(
-                                        pair.initialize.id,
-                                        pair.initialize.host,
-                                        pair.initialize.port,
-                                        outputStart,
-                                        pair.unreliableInput.position
-                                ).toHttp2Headers(), false), ch.voidPromise());
+                                ctx.writeAndFlush(new DefaultHttp2HeadersFrame(request.toHttp2Headers(), false), ch.voidPromise());
                             }
 
                             @Override
@@ -186,7 +188,7 @@ public final class TcpRelay implements Closeable {
                                 Http2HeadersFrame response = (Http2HeadersFrame) msg;
                                 HttpResponseStatus status = HttpResponseStatus.parseLine(response.headers().status());
                                 if (status == HttpResponseStatus.OK) {
-                                    LOG.info("Stream for {} established", pair.initialize);
+                                    LOG.info("Stream for {} established", request);
                                     ch.pipeline().remove(ctx.name());
                                     ch.pipeline()
                                             .addLast(new UnreliableSender(pair.unreliableOutput, outputStart))
@@ -242,6 +244,13 @@ public final class TcpRelay implements Closeable {
             }
 
             ch.pipeline()
+                    /*.addLast(PcapWriteHandler.builder()
+                            .forceTcpChannel(
+                                    new InetSocketAddress("127.0.0.1", 8082),
+                                    new InetSocketAddress("127.0.0.1", 5556),
+                                    false
+                            )
+                            .build(Files.newOutputStream(Path.of("/tmp/pcap"))))*/
                     .addLast(Http2FrameCodecBuilder.forClient()
                             .autoAckPingFrame(true)
                             .autoAckSettingsFrame(true)
@@ -256,24 +265,44 @@ public final class TcpRelay implements Closeable {
 
                         private ScheduledFuture<?> pingFuture;
 
-                        @Override
-                        public void channelActive(ChannelHandlerContext ctx) throws Exception {
+                        private void ready(ChannelHandlerContext ctx) {
                             LOG.info("Connected to tunnel at {}", ch.remoteAddress());
-                            super.channelActive(ctx);
                             currentClientChannel = ch;
                             for (StreamPair pair : streams.values()) {
                                 tunnel(pair);
                             }
-                            ctx.read();
                             pingFuture = ctx.executor().scheduleWithFixedDelay(
                                     () -> ctx.writeAndFlush(new DefaultHttp2PingFrame(ThreadLocalRandom.current().nextLong()), ctx.voidPromise()),
                                     1, 1, TimeUnit.SECONDS);
                         }
 
                         @Override
+                        public void channelActive(ChannelHandlerContext ctx) throws Exception {
+                            super.channelActive(ctx);
+                            if (tls == null) {
+                                ready(ctx);
+                            }
+                            ctx.read();
+                        }
+
+                        @Override
+                        public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+                            if (evt instanceof SslHandshakeCompletionEvent c) {
+                                if (c.isSuccess()) {
+                                    ready(ctx);
+                                } else {
+                                    LOG.warn("SSL handshake failed: {}", c.cause().toString());
+                                    ctx.close();
+                                }
+                            }
+                        }
+
+                        @Override
                         public void channelInactive(ChannelHandlerContext ctx) throws Exception {
                             LOG.info("Tunnel became inactive, reestablishing");
-                            pingFuture.cancel(false);
+                            if (pingFuture != null) {
+                                pingFuture.cancel(false);
+                            }
                             super.channelInactive(ctx);
                             loop.schedule(() -> linkOnce((InetSocketAddress) ctx.channel().remoteAddress()), reestablishDelay.toNanos(), TimeUnit.NANOSECONDS);
                         }
@@ -314,13 +343,6 @@ public final class TcpRelay implements Closeable {
             }
 
             ch.pipeline()
-                    /*.addLast(PcapWriteHandler.builder()
-                            .forceTcpChannel(
-                                    new InetSocketAddress("127.0.0.1", 8082),
-                                    new InetSocketAddress("127.0.0.1", 5556),
-                                    true
-                            )
-                            .build(Files.newOutputStream(Path.of("/tmp/pcap"))))*/
                     .addLast(Http2FrameCodecBuilder.forServer()
                             .autoAckSettingsFrame(true)
                             .autoAckPingFrame(true)

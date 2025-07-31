@@ -16,7 +16,8 @@ svm = { group = "org.graalvm.nativeimage", name = "svm", version = "22.3.1" }
 netty-handler = { group = "io.netty", name = "netty-handler", version.ref = "netty" }
 netty-codec-http2 = { group = "io.netty", name = "netty-codec-http2", version.ref = "netty" }
 netty-pkitesting = { group = "io.netty", name = "netty-pkitesting", version.ref = "netty" }
-slf4j = { group = "org.slf4j", name = "slf4j-api", version = "2.0.17" }
+slf4j = { group = "org.slf4j", name = "slf4j-api", version.ref = "slf4j" }
+slf4j-simple = { group = "org.slf4j", name = "slf4j-simple", version.ref = "slf4j" }
 jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit5" }
 
 [plugins]
@@ -30,3 +31,4 @@ micronaut = "4.9.1"
 micronaut-gradle = "4.5.4"
 netty = "4.2.3.Final"
 junit5 = "5.13.4"
+slf4j = "2.0.17"

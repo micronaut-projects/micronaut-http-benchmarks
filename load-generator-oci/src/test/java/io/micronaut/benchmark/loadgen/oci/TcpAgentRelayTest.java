@@ -70,7 +70,7 @@ class TcpAgentRelayTest {
     @Container
     GenericContainer<?> container = new GenericContainer<>(new ImageFromDockerfile(TcpAgentRelayTest.class.getName().toLowerCase(Locale.ROOT) + "-image", false)
             .withDockerfileFromBuilder(builder -> builder.from("oraclelinux:9")
-                    .run("dnf", "install", "socat", "sudo", TcpAgentRelay.JAVA_PACKAGE)
+                    .run("dnf", "install", "sudo")
                     .run("useradd", "--create-home", "opc")
                     .run("echo 'opc ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/opc")
                     .run("mkdir", "/home/opc/.ssh")
