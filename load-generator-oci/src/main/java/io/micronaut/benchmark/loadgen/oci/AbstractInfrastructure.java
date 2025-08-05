@@ -29,7 +29,6 @@ import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -120,8 +119,9 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                     tcpRelayResource = factory.agentRelayFactory.builder()
                             .log(logDirectory.resolve("http-agent.log"))
                             .sshKeyPair(factory.sshFactory.keyPair())
+                            .prepareCloudInit(relayServerBuilder)
                             .asResource(context, relayServerBuilder.resource());
-                } catch (IOException e) {
+                } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             } else {

@@ -65,7 +65,6 @@ public final class Infrastructure extends AbstractInfrastructure {
 
             progress.update(BenchmarkPhase.DEPLOYING_OS);
             LOG.info("Updating benchmark server");
-            SshUtil.openFirewallPorts(benchmarkServerClient, log);
             // this takes too long
             //SshUtil.run(benchmarkServerClient, "sudo yum update -y", log);
         }

@@ -59,7 +59,6 @@ final class TeInfrastructure extends AbstractInfrastructure {
 
                 try (CommandRunner session = instance.instance.connectSsh()) {
                     // set up docker on the main runtime servers
-                    SshUtil.openFirewallPorts(session, instance.log);
 
                     SshUtil.run(session, "sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo", instance.log);
 

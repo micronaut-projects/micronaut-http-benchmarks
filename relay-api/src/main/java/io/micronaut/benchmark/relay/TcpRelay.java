@@ -298,6 +298,15 @@ public final class TcpRelay implements Closeable {
                         }
 
                         @Override
+                        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+                            if (cause.getMessage() != null && cause.getMessage().contains("certificate_unknown")) {
+                                // This can happen when the server is not up yet, and we log the message above anyway
+                                return;
+                            }
+                            super.exceptionCaught(ctx, cause);
+                        }
+
+                        @Override
                         public void channelInactive(ChannelHandlerContext ctx) throws Exception {
                             LOG.info("Tunnel became inactive, reestablishing");
                             if (pingFuture != null) {

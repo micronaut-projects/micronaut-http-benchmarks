@@ -17,6 +17,7 @@ dependencies {
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-bastion")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-computeinstanceagent")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-psql")
+    implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-objectstorage")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-httpclient-netty")
     implementation("io.micronaut.toml:micronaut-toml")
     implementation(libs.netty.pkitesting)

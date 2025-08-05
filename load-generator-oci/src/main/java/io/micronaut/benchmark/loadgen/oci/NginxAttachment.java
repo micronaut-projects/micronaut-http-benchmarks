@@ -49,7 +49,6 @@ final class NginxAttachment implements Infrastructure.Attachment {
         protected void setUp() throws Exception {
             try (CommandRunner ssh = instance.connectSsh();
                  OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(infrastructure.logDirectory.resolve("nginx.log")))) {
-                SshUtil.openFirewallPorts(ssh, log);
                 SshUtil.run(ssh, "sudo yum install -y nginx", log);
                 SshUtil.run(ssh, "echo -n 'Hello World' | sudo tee /usr/share/nginx/html/hello", log);
                 SshUtil.run(ssh, "sudo systemctl start nginx", log);

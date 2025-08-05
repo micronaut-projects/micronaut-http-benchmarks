@@ -108,10 +108,9 @@ class TcpAgentRelayTest {
 
                 relay = agentRelayFactory.builder()
                         .uri(URI.create("https://" + container.getHost() + ":" + container.getMappedPort(TcpAgentRelay.PORT)))
-                        .bootstrap(bootstrap)
                         .sshKeyPair(KEY_PAIR)
                         .log(new OutputListener.Log(LOG, Level.INFO))
-                        .deploy();
+                        .deploySsh(bootstrap);
             }
         }
     }

@@ -1,5 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import com.oracle.bmc.model.BmcException;
+import com.oracle.bmc.objectstorage.ObjectStorageClient;
+import com.oracle.bmc.objectstorage.model.CreatePreauthenticatedRequestDetails;
+import com.oracle.bmc.objectstorage.model.PreauthenticatedRequest;
+import com.oracle.bmc.objectstorage.requests.CreatePreauthenticatedRequestRequest;
+import com.oracle.bmc.objectstorage.requests.HeadObjectRequest;
+import com.oracle.bmc.objectstorage.requests.PutObjectRequest;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.SshCommandRunner;
@@ -7,10 +14,10 @@ import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.relay.TcpRelay;
 import io.micronaut.benchmark.relay.TcpRelayMessage;
+import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.scheduling.TaskExecutors;
 import io.netty.pkitesting.CertificateBuilder;
 import io.netty.pkitesting.X509Bundle;
-import io.netty.util.NetUtil;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import org.apache.sshd.client.ClientBuilder;
@@ -22,6 +29,7 @@ import org.apache.sshd.core.CoreModuleProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,8 +42,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyPair;
+import java.security.MessageDigest;
+import java.security.cert.CertificateEncodingException;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
+import java.util.Date;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -63,37 +76,8 @@ public final class TcpAgentRelay implements Closeable {
     private TcpAgentRelay(Builder builder) throws Exception {
         this.log = builder.log;
 
-        CertificateBuilder serverCertBuilder = new CertificateBuilder();
-        if (NetUtil.isValidIpV4Address(builder.uri.getHost()) || NetUtil.isValidIpV6Address(builder.uri.getHost())) {
-            serverCertBuilder.addSanIpAddress(builder.uri.getHost());
-        } else {
-            serverCertBuilder.addSanDnsName(builder.uri.getHost());
-        }
-        X509Bundle serverCert = serverCertBuilder
-                .setIsCertificateAuthority(true)
-                .subject("CN=" + builder.uri.getHost())
-                .buildSelfSigned();
-        X509Bundle clientCert = new CertificateBuilder()
-                .setIsCertificateAuthority(true)
-                .subject("CN=client")
-                .buildSelfSigned();
-
-        builder.bootstrap.upload(AGENT_BYTES, "/tmp/relay-agent",
-                Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
-
-        String agentCommand = "nohup /tmp/relay-agent" +
-                " -Dkey.algorithm=" + serverCert.getKeyPair().getPrivate().getAlgorithm() +
-                " -Dkey=" + Base64.getEncoder().encodeToString(serverCert.getKeyPair().getPrivate().getEncoded()) +
-                " -Dcert=" + Base64.getEncoder().encodeToString(serverCert.getCertificate().getEncoded()) +
-                " -Dremote-cert=" + Base64.getEncoder().encodeToString(clientCert.getCertificate().getEncoded()) +
-                " -Dport=" + PORT +
-                " -Dlog-port=" + LOG_PORT;
-        OutputListener.Waiter startWaiter = new OutputListener.Waiter(ByteBuffer.wrap(TcpRelayMessage.TUNNEL_ESTABLISHED.getBytes(StandardCharsets.UTF_8)));
-        builder.bootstrap.run(agentCommand, log, startWaiter);
-        startWaiter.awaitWithNextPattern(null);
-
         this.relay = new TcpRelay()
-                .tls(clientCert.getKeyPair().getPrivate(), clientCert.getCertificate(), serverCert.getCertificate());
+                .tls(builder.clientCert.getKeyPair().getPrivate(), builder.clientCert.getCertificate(), builder.serverCert.getCertificate());
 
         relay.linkTunnel(new InetSocketAddress(builder.uri.getHost(), builder.uri.getPort()));
 
@@ -128,7 +112,7 @@ public final class TcpAgentRelay implements Closeable {
         TcpRelay.Binding binding = relay.bindForward(new InetSocketAddress(uri.getHost(), uri.getPort()));
         SshCommandRunner runner;
         try {
-            runner = SshCommandRunner.connect(sshClient, uri.getUserInfo() + "@" + binding.address().getHostString() + ":" + binding.address().getPort());
+            runner = Infrastructure.retry(() -> SshCommandRunner.connect(sshClient, uri.getUserInfo() + "@" + binding.address().getHostString() + ":" + binding.address().getPort()));
         } catch (Exception e) {
             binding.close();
             throw e;
@@ -162,12 +146,14 @@ public final class TcpAgentRelay implements Closeable {
 
         @Override
         protected void setUp() throws Exception {
-            try (CommandRunner bootstrap = agentInstance.connectSsh()) {
-                SshUtil.openFirewallPorts(bootstrap, builder.log);
-                relay = builder
-                        .uri(URI.create("https://" + agentInstance.publicIp() + ":" + PORT))
-                        .bootstrap(bootstrap)
-                        .deploy();
+            builder.uri(URI.create("https://" + agentInstance.publicIp() + ":" + PORT));
+
+            if (builder.hasCloudInit) {
+                relay = builder.alreadyDeployed();
+            } else {
+                try (CommandRunner bootstrap = agentInstance.connectSsh()) {
+                    relay = builder.deploySsh(bootstrap);
+                }
             }
         }
 
@@ -182,13 +168,25 @@ public final class TcpAgentRelay implements Closeable {
     }
 
     public static class Builder {
+        private static final String AGENT_PATH = "/tmp/relay-agent";
+
         private final Factory factory;
+        private final X509Bundle serverCert = new CertificateBuilder()
+                .setIsCertificateAuthority(true)
+                .subject("CN=server")
+                .addSanDnsName("server")
+                .buildSelfSigned();
+        private final X509Bundle clientCert = new CertificateBuilder()
+                .setIsCertificateAuthority(true)
+                .subject("CN=client")
+                .buildSelfSigned();
+
         private URI uri;
         private KeyPair sshKeyPair;
-        private CommandRunner bootstrap;
         private OutputListener log;
+        private boolean hasCloudInit;
 
-        private Builder(Factory factory) {
+        private Builder(Factory factory) throws Exception {
             this.factory = factory;
         }
 
@@ -202,11 +200,6 @@ public final class TcpAgentRelay implements Closeable {
             return this;
         }
 
-        public Builder bootstrap(CommandRunner bootstrap) {
-            this.bootstrap = bootstrap;
-            return this;
-        }
-
         public Builder log(OutputListener log) {
             this.log = log;
             return this;
@@ -216,7 +209,38 @@ public final class TcpAgentRelay implements Closeable {
             return log(new OutputListener.Write(Files.newOutputStream(log)));
         }
 
-        public TcpAgentRelay deploy() throws Exception {
+        private String agentCommand() throws CertificateEncodingException {
+            return "nohup " + AGENT_PATH +
+                   " -Dkey.algorithm=" + serverCert.getKeyPair().getPrivate().getAlgorithm() +
+                   " -Dkey=" + Base64.getEncoder().encodeToString(serverCert.getKeyPair().getPrivate().getEncoded()) +
+                   " -Dcert=" + Base64.getEncoder().encodeToString(serverCert.getCertificate().getEncoded()) +
+                   " -Dremote-cert=" + Base64.getEncoder().encodeToString(clientCert.getCertificate().getEncoded()) +
+                   " -Dport=" + PORT +
+                   " -Dlog-port=" + LOG_PORT;
+        }
+
+        public Builder prepareCloudInit(Compute.Launch relayInstanceBuilder) throws Exception {
+            URI agentUri = factory.uploadAgent();
+            relayInstanceBuilder.addStartupCommand("curl -o " + AGENT_PATH + " " + agentUri);
+            relayInstanceBuilder.addStartupCommand("chmod +x " + AGENT_PATH);
+            relayInstanceBuilder.addStartupCommand(agentCommand());
+            hasCloudInit = true;
+            return this;
+        }
+
+        private TcpAgentRelay alreadyDeployed() throws Exception {
+            return new TcpAgentRelay(this);
+        }
+
+        public TcpAgentRelay deploySsh(CommandRunner bootstrap) throws Exception {
+            bootstrap.upload(AGENT_BYTES, AGENT_PATH,
+                    Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
+
+            String agentCommand = agentCommand();
+            OutputListener.Waiter startWaiter = new OutputListener.Waiter(ByteBuffer.wrap(TcpRelayMessage.TUNNEL_ESTABLISHED.getBytes(StandardCharsets.UTF_8)));
+            bootstrap.run(agentCommand, log, startWaiter);
+            startWaiter.awaitWithNextPattern(null);
+
             return new TcpAgentRelay(this);
         }
 
@@ -226,9 +250,63 @@ public final class TcpAgentRelay implements Closeable {
     }
 
     @Singleton
-    public record Factory(@Named(TaskExecutors.BLOCKING) ExecutorService blocking) {
-        public Builder builder() {
+    public record Factory(@Named(TaskExecutors.BLOCKING) ExecutorService blocking, Configuration configuration,
+                          ObjectStorageClient objectStorageClient) {
+        private static final String OBJECT_NAME = "tcp-relay-agent";
+
+        public Builder builder() throws Exception {
             return new Builder(this);
         }
+
+        private synchronized URI uploadAgent() throws Exception {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(AGENT_BYTES);
+            String expectedSha256 = Base64.getEncoder().encodeToString(digest);
+
+            String existingHash;
+            try {
+                existingHash = objectStorageClient.headObject(HeadObjectRequest.builder()
+                        .namespaceName(configuration.bucketNamespace)
+                        .bucketName(configuration.bucketName)
+                        .objectName(OBJECT_NAME)
+                        .build()).getOpcContentSha256();
+            } catch (BmcException be) {
+                if (be.getStatusCode() == 404) {
+                    existingHash = null;
+                } else {
+                    throw be;
+                }
+            }
+            if (!expectedSha256.equals(existingHash)) {
+                objectStorageClient.putObject(PutObjectRequest.builder()
+                        .namespaceName(configuration.bucketNamespace)
+                        .bucketName(configuration.bucketName)
+                        .objectName(OBJECT_NAME)
+                        .opcContentSha256(expectedSha256)
+                        .contentLength((long) AGENT_BYTES.length)
+                        .putObjectBody(new ByteArrayInputStream(AGENT_BYTES))
+                        .build());
+            }
+
+            PreauthenticatedRequest preauthenticatedRequest = objectStorageClient.createPreauthenticatedRequest(CreatePreauthenticatedRequestRequest.builder()
+                    .namespaceName(configuration.bucketNamespace)
+                    .bucketName(configuration.bucketName)
+                    .createPreauthenticatedRequestDetails(CreatePreauthenticatedRequestDetails.builder()
+                            .name("tcp-relay-agent access")
+                            .accessType(CreatePreauthenticatedRequestDetails.AccessType.ObjectRead)
+                            .objectName(OBJECT_NAME)
+                            .timeExpires(Date.from(Instant.now().plus(1, ChronoUnit.DAYS)))
+                            .build())
+                    .build()).getPreauthenticatedRequest();
+
+            return URI.create(objectStorageClient.getEndpoint() + preauthenticatedRequest.getAccessUri());
+        }
+    }
+
+    @ConfigurationProperties("tcp-agent-relay")
+    record Configuration(
+            String bucketNamespace,
+            String bucketName
+    ) {
     }
 }

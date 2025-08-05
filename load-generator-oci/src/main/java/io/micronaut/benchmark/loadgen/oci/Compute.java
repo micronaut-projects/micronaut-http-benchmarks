@@ -32,7 +32,9 @@ import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -117,6 +119,25 @@ public final class Compute {
         private final SubnetResource subnet;
         private String privateIp = null;
         private InstanceAccess access;
+        private String userDataScript = """
+                #!/bin/sh
+                set -e
+                tee /etc/nftables/main.nft << EOF
+                # open all ports
+                
+                flush ruleset
+                
+                table inet nftables_svc {
+                        chain INPUT {
+                                type filter hook input priority filter + 20
+                                policy accept
+                                accept
+                        }
+                }
+                EOF
+                systemctl stop firewalld
+                systemctl restart nftables
+                """;
 
         private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
             this.displayName = displayName;
@@ -142,6 +163,11 @@ public final class Compute {
         public Launch access(InstanceAccess access) {
             resource.dependOn(access.require());
             this.access = access;
+            return this;
+        }
+
+        public Launch addStartupCommand(String command) {
+            this.userDataScript = userDataScript + "\n" + command;
             return this;
         }
 
@@ -268,7 +294,9 @@ public final class Compute {
                         .metadata(Map.of(
                                 "ssh_authorized_keys",
                                 Stream.concat(computeConfiguration.debugAuthorizedKeys.stream(), Stream.of(sshFactory.publicKey()))
-                                        .collect(Collectors.joining("\n"))
+                                        .collect(Collectors.joining("\n")),
+                                "user_data",
+                                Base64.getEncoder().encodeToString(launch.userDataScript.getBytes(StandardCharsets.UTF_8))
                         ))
                         .launchOptions(LaunchOptions.builder()
                                 .networkType(LaunchOptions.NetworkType.Vfio)
@@ -312,7 +340,7 @@ public final class Compute {
                     return httpRelayAccess.relay.getRelay().openSession("opc@" + launch.privateIp + ":22");
                 }
                 case PublicIpAccess _ -> {
-                    return sshFactory.connect(this, publicIp, null);
+                    return Infrastructure.retry(() -> sshFactory.connect(this, publicIp, null));
                 }
                 case SshRelayAccess sshRelayAccess -> {
                     SshFactory.Relay relay = new SshFactory.Relay("opc", sshRelayAccess.relayInstance.publicIp);

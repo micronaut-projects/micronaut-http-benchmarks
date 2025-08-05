@@ -30,6 +30,10 @@ compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi
 region="ap-melbourne-1"
 availability-domain="hkYI:AP-MELBOURNE-1-AD-1"
 
+[tcp-agent-relay]
+bucket-namespace="oraclelabs"
+bucket-name="benchmark-data-bucket"
+
 # protocols to test
 [load.protocols.http1]
 protocol="HTTP1"

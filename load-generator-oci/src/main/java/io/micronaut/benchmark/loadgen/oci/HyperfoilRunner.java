@@ -162,7 +162,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                 SshUtil.run(controllerSession, "sudo yum install jdk-17-headless -y", log, 0, 1);
                 controllerSession.uploadRecursive(factory.config.location, REMOTE_HYPERFOIL_LOCATION);
                 factory.sshFactory.deployPrivateKey(controllerSession);
-                SshUtil.openFirewallPorts(controllerSession);
 
                 try (ProcessBuilder builder = controllerSession.builder(REMOTE_HYPERFOIL_LOCATION + "/bin/controller.sh -Djgroups.join_timeout=20000");
                      ProcessHandle controllerCommand = builder
@@ -523,7 +522,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         @Override
         protected void setUp() throws Exception {
             try (CommandRunner agentSession = instance.connectSsh()) {
-                SshUtil.openFirewallPorts(agentSession);
                 SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
                 if (factory.config.agentAsyncProfiler) {
                     factory.asyncProfilerHelper.initialize(agentSession, log);
