@@ -236,9 +236,12 @@ public final class JavaRunFactory {
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
                             uploadClasspath(benchmarkServerClient, log);
                             String start = perfStatConfiguration.asCommandPrefix() + "java ";
+                            AsyncProfilerHelper.Session asyncProfilerSession = null;
                             if (asyncProfilerConfiguration.enabled()) {
-                                asyncProfilerHelper.initialize(benchmarkServerClient, log);
-                                start += asyncProfilerHelper.getJvmArgument() + " ";
+                                AsyncProfilerHelper.Session session = asyncProfilerHelper.createSession(log);
+                                session.initAgent(benchmarkServerClient);
+                                asyncProfilerSession = session;
+                                start += asyncProfilerSession.getJvmArgument() + " ";
                             }
                             LOG.info("Starting benchmark server (hotspot, " + typePrefix + ")");
                             String c = start + combinedOptions() + (additionalJvmArgs == null ? "" : " " + additionalJvmArgs) + " " + jarArgument() + (args == null ? "" : " " + args);
@@ -264,8 +267,8 @@ public final class JavaRunFactory {
                                     }
                                 }
                             } finally {
-                                if (asyncProfilerConfiguration.enabled()) {
-                                    asyncProfilerHelper.finish(benchmarkServerClient, log, outputDirectory);
+                                if (asyncProfilerSession != null) {
+                                    asyncProfilerSession.finish(benchmarkServerClient, outputDirectory);
                                 }
                             }
                         }

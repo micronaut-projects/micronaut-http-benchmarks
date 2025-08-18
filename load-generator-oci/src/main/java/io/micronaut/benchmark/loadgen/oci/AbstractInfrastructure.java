@@ -29,6 +29,7 @@ import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -101,6 +102,11 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         this.location = location;
         this.logDirectory = logDirectory;
         this.context = factory.resourceContext;
+
+        try {
+            Files.createDirectories(logDirectory);
+        } catch (IOException ignored) {
+        }
 
         vcn = new VcnResource(context);
         privateRouteTable = new RouteTableResource(context).vcn(vcn);

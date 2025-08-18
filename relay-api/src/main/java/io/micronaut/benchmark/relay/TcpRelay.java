@@ -126,7 +126,17 @@ public final class TcpRelay implements Closeable {
                 .channel(NioSocketChannel.class)
                 .group(loop)
                 .handler(new ClientInitializer())
-                .connect(address);
+                .connect(address)
+                .addListener((ChannelFutureListener) future -> {
+                    if (!future.isSuccess()) {
+                        LOG.warn("Failed to connect to tunnel at {}, retrying: {}", address, future.cause().toString());
+                        scheduleLink(address);
+                    }
+                });
+    }
+
+    private void scheduleLink(InetSocketAddress address) {
+        loop.schedule(() -> linkOnce(address), reestablishDelay.toNanos(), TimeUnit.NANOSECONDS);
     }
 
     public Binding bindForward(InetSocketAddress remoteAddress) {
@@ -313,7 +323,7 @@ public final class TcpRelay implements Closeable {
                                 pingFuture.cancel(false);
                             }
                             super.channelInactive(ctx);
-                            loop.schedule(() -> linkOnce((InetSocketAddress) ctx.channel().remoteAddress()), reestablishDelay.toNanos(), TimeUnit.NANOSECONDS);
+                            scheduleLink((InetSocketAddress) ctx.channel().remoteAddress());
                         }
 
                         @Override

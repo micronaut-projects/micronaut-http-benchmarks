@@ -3,6 +3,7 @@ package io.micronaut.benchmark.loadgen.oci.cmd;
 import io.micronaut.core.annotation.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.slf4j.event.Level;
 
 import java.io.Closeable;
@@ -13,6 +14,7 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -140,10 +142,12 @@ public interface OutputListener {
         private final Level level;
 
         private final Queue<ByteBuffer> queue = new ArrayDeque<>();
+        private final Map<String, String> mdc;
 
         public Log(Logger logger, Level level) {
             this.logger = logger;
             this.level = level;
+            this.mdc = MDC.getCopyOfContextMap();
         }
 
         @Override
@@ -153,7 +157,7 @@ public interface OutputListener {
                     StringBuilder builder = new StringBuilder();
                     drain(builder);
                     builder.append(StandardCharsets.UTF_8.decode(data.slice(data.position(), i - data.position())));
-                    logger.makeLoggingEventBuilder(level).log(builder.toString());
+                    log(builder.toString());
                     data.position(i + 1);
                 }
             }
@@ -162,11 +166,21 @@ public interface OutputListener {
             }
         }
 
+        protected void log(String msg) {
+            Map<String, String> old = MDC.getCopyOfContextMap();
+            try {
+                MDC.setContextMap(mdc);
+                logger.makeLoggingEventBuilder(level).log(msg);
+            } finally {
+                MDC.setContextMap(old);
+            }
+        }
+
         @Override
         public void onComplete() {
             StringBuilder builder = new StringBuilder();
             drain(builder);
-            logger.makeLoggingEventBuilder(level).log(builder.toString());
+            log(builder.toString());
         }
 
         private void drain(StringBuilder builder) {

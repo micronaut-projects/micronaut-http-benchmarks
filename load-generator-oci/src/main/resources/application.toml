@@ -141,14 +141,19 @@ option-choices={ ""="", "loom-on-netty"="--add-opens=java.base/java.lang=ALL-UNN
 
 [variants.hotspot.async-profiler]
 enabled=false
-args="start,event=cpu,cstack=vm,file=profile.jfr"
+args="start,event=cpu,cstack=vm"
 jfr-config="jdk.ObjectAllocationSample#enabled=false jdk.OldObjectSample#enabled=false"
-outputs=["profile.jfr"]
+output="profile.jfr"
+directory="/var/tmp/async-profiler"
 
 [[variants.hotspot.async-profiler.conversion]]
 input="profile.jfr"
 output="flamegraph.html"
 args="--output html"
+[[variants.hotspot.async-profiler.conversion]]
+input="profile.jfr"
+output="flamegraph-reverse.html"
+args="-r --output html"
 [[variants.hotspot.async-profiler.conversion]]
 input="profile.jfr"
 output="heatmap.html"
@@ -190,33 +195,3 @@ affinity=[
     "enforced",
     #"jdkclient"
 ]
-
-[techempower]
-compartment-id="ocid1.compartment.oc1..aaaaaaaaxhkap5z4hpt3zbbxrxmohfd3nkaf7bxh2p6f6ufalbtaxupgyj2q"
-region="ap-tokyo-1"
-availability-domain="hkYI:AP-TOKYO-1-AD-1"
-
-[compute.instance-types.te-server]
-shape="BM.Standard3.64"
-ocpus=64
-memory-in-gb=1024
-image="Oracle-Linux-9.6-2025.07.21-0"
-disk-performance-units=80
-[compute.instance-types.te-client]
-shape="VM.Standard.E4.Flex"
-ocpus=64
-memory-in-gb=64
-image="Oracle-Linux-9.6-2025.07.21-0"
-disk-performance-units=80
-[compute.instance-types.te-database]
-shape="VM.Standard.E4.Flex"
-ocpus=64
-memory-in-gb=256
-image="Oracle-Linux-9.6-2025.07.21-0"
-disk-performance-units=80
-[compute.instance-types.te-toolset]
-shape="VM.Standard.E4.Flex"
-ocpus=2
-memory-in-gb=4
-image="Oracle-Linux-9.6-2025.07.21-0"
-disk-performance-units=80

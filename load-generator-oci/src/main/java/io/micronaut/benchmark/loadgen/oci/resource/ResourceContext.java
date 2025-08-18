@@ -55,7 +55,11 @@ public final class ResourceContext {
             if (n > 0) {
                 LOG.info("Polling {} items for {}", n, k);
             }
-            poller.poll();
+            try {
+                poller.poll();
+            } catch (Exception e) {
+                LOG.warn("Failed to poll items for {}", k, e);
+            }
         });
     }
 

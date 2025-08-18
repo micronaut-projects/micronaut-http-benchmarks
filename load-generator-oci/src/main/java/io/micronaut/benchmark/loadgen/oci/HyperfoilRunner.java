@@ -125,7 +125,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         for (int i = 0; i < factory.config.agentCount; i++) {
             Compute.Launch launch = infrastructure.computeBuilder(AGENT_INSTANCE_TYPE)
                     .privateIp(agentIp(i));
-            AgentResource r = new AgentResource(context, launch, new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("agent-instance-" + i + ".log"))));
+            AgentResource r = new AgentResource(context, i, launch, new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("agent-instance-" + i + ".log"))));
             r.name("agent" + i);
             agents.add(r);
             agentLocks.addAll(r.require());
@@ -321,8 +321,9 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         Compute.ComputeConfiguration.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
         for (int i = 0; i < factory.config.agentCount; i++) {
             String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
-            if (factory.config.agentAsyncProfiler) {
-                extras += " " + factory.asyncProfilerHelper.getJvmArgument();
+            AsyncProfilerHelper.Session asyncProfilerSession = agents.get(i).asyncProfilerSession;
+            if (asyncProfilerSession != null) {
+                extras += " " + asyncProfilerSession.getJvmArgument();
             }
             benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
                     "threads", String.valueOf((int) agentInstanceType.ocpus() - 1),
@@ -503,12 +504,15 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     }
 
     private final class AgentResource extends AbstractDecoratedResource {
+        private final int i;
         private final Compute.Launch launch;
         private Compute.InstanceResource instance;
         private final OutputListener.Write log;
+        private AsyncProfilerHelper.Session asyncProfilerSession;
 
-        public AgentResource(ResourceContext context, Compute.Launch launch, OutputListener.Write log) {
+        public AgentResource(ResourceContext context, int i, Compute.Launch launch, OutputListener.Write log) {
             super(context);
+            this.i = i;
             this.launch = launch;
             this.log = log;
             dependOn(launch.resource().require());
@@ -524,27 +528,25 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             try (CommandRunner agentSession = instance.connectSsh()) {
                 SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
                 if (factory.config.agentAsyncProfiler) {
-                    factory.asyncProfilerHelper.initialize(agentSession, log);
+                    AsyncProfilerHelper.Session session = factory.asyncProfilerHelper.createSession(log);
+                    session.initAgent(agentSession);
+                    asyncProfilerSession = session;
                 }
-            } catch (Exception e) {
-                throw e;
             }
         }
 
         @Override
         protected void tearDown() {
             try {
-                if (factory.config.agentAsyncProfiler) {
-                    for (int i = 0; i < agents.size(); i++) {
-                        Path dir = logDirectory.resolve("agent" + i);
-                        try {
-                            Files.createDirectories(dir);
-                        } catch (FileAlreadyExistsException ignored) {}
-                        try (CommandRunner agentSession = agents.get(i).instance.connectSsh()) {
-                            factory.asyncProfilerHelper.finish(agentSession, log, dir);
-                        } catch (Exception e) {
-                            LOG.error("Failed to download agent profiler results", e);
-                        }
+                if (asyncProfilerSession != null) {
+                    Path dir = logDirectory.resolve("agent" + i);
+                    try {
+                        Files.createDirectories(dir);
+                    } catch (FileAlreadyExistsException ignored) {}
+                    try (CommandRunner agentSession = instance.connectSsh()) {
+                        asyncProfilerSession.finish(agentSession, dir);
+                    } catch (Exception e) {
+                        LOG.error("Failed to download agent profiler results", e);
                     }
                 }
 

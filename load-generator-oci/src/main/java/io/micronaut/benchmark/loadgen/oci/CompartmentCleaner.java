@@ -35,6 +35,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -52,6 +56,26 @@ public record CompartmentCleaner(
         Compute compute
 ) {
     private static final Logger LOG = LoggerFactory.getLogger(CompartmentCleaner.class);
+
+    public void cleanCompartments(List<OciLocation> locations, boolean delete) throws Exception {
+        try (ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (Future<Void> future : executorService.invokeAll(
+                    locations.stream()
+                            .map(l -> (Callable<Void>) () -> {
+                                try {
+                                    cleanCompartment(l, delete);
+                                    return null;
+                                } catch (Exception e) {
+                                    LOG.error("Failed to clean compartment", e);
+                                    throw e;
+                                }
+                            })
+                            .toList()
+            )) {
+                future.get();
+            }
+        }
+    }
 
     /**
      * Clean a compartment in a given region.
