@@ -609,8 +609,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             Duration pgoDuration,
             double sessionLimitFactor,
             List<StatusRequest> status,
-            Path mtlsKey,
-            Path mtlsCert,
+            @Nullable Path mtlsKey,
+            @Nullable Path mtlsCert,
             boolean agentAsyncProfiler
     ) {
         @EachProperty(value = "status", list = true)
