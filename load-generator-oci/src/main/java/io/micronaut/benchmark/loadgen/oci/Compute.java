@@ -267,8 +267,8 @@ public final class Compute {
         protected void launchDependencies() throws Exception {
             List<Image> images = images(launch.location);
             Image image = images.stream()
-                    .filter(i -> i.getId().equals(launch.instanceType.image) || i.getDisplayName().equals(launch.instanceType.image))
-                    .findAny()
+                    .filter(i -> i.getDisplayName().matches(launch.instanceType.image))
+                    .findFirst()
                     .orElseThrow(() -> new NoSuchElementException("Image " + launch.instanceType.image + " not found. Available images are: \n" + images.stream().map(Image::getDisplayName).collect(Collectors.joining("\n"))));
 
             AbstractInfrastructure.launch(launch.computeResource, () -> launch.computeResource.manageNew(launch.location, () -> {
