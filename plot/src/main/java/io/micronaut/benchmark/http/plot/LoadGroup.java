@@ -342,6 +342,7 @@ final class LoadGroup {
                     if (entry.jfrSummary != null) {
                         html.append("<li><a href='").append(entry.parameters.name()).append("/flamegraph.html'>Flamegraph</a></li>");
                         html.append("<li><a href='").append(entry.parameters.name()).append("/heatmap.html'>Heatmap</a></li>");
+                        html.append("<li><a href='").append(entry.parameters.name()).append("/profile.jfr'>Profile</a></li>");
                     }
                     html.append("</ul>");
                 }

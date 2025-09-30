@@ -184,7 +184,7 @@ public class Main {
             for (JfrSummary summary : jfrSummaries.values()) {
                 for (JfrSummary.PhaseSummary phase : summary.phases.values()) {
                     for (CpuUsageMetric metric : CpuUsageMetric.values()) {
-                        maxCpu.compute(metric, (_, v) -> Math.max(v == null ? 0 : v, phase.get(metric)));
+                        maxCpu.compute(metric, (ignored, v) -> Math.max(v == null ? 0 : v, phase.get(metric)));
                     }
                 }
             }
@@ -274,13 +274,12 @@ public class Main {
         Path outputRoot = Paths.get("output");
         Path plotFile = outputRoot.resolve("plot.html");
         Files.writeString(plotFile, html);
-        Runtime.getRuntime().exec(new String[]{"firefox", plotFile.toString()});
 
         List<Path> resultFiles = new ArrayList<>();
         resultFiles.add(plotFile);
         for (SuiteRunner.BenchmarkParameters parameters : main.index) {
-            for (String s : List.of("flamegraph.html", "heatmap.html")) {
-                Path f = outputRoot.resolve(parameters.name(), s);
+            for (String s : List.of("flamegraph.html", "heatmap.html", "profile.jfr")) {
+                Path f = outputRoot.resolve(parameters.name()).resolve(s);
                 if (Files.exists(f)) {
                     resultFiles.add(f);
                 }
@@ -303,6 +302,7 @@ public class Main {
             String prefix = Instant.now() + "/";
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             for (Path file : resultFiles) {
+                System.out.println("Uploading " + file);
                 byte[] bytes = Files.readAllBytes(file);
                 assert file.startsWith(outputRoot);
                 os.putObject(PutObjectRequest.builder()
@@ -312,7 +312,7 @@ public class Main {
                         .opcContentSha256(Base64.getEncoder().encodeToString(md.digest(bytes)))
                         .contentLength((long) bytes.length)
                         .putObjectBody(new ByteArrayInputStream(bytes))
-                        .contentType("text/html")
+                        .contentType(file.toString().endsWith(".jfr") ? "application/octet-stream" : "text/html")
                         .build());
                 md.reset();
             }
@@ -331,6 +331,7 @@ public class Main {
             String uri = os.getEndpoint() + preauthenticatedRequest.getAccessUri() + prefix + outputRoot.relativize(plotFile);
 
             System.out.println("Result URI: " + uri);
+            Runtime.getRuntime().exec(new String[]{"firefox", uri});
         }
     }
 
