@@ -22,6 +22,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Collection;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -223,23 +224,31 @@ public final class JavaRunFactory {
 
                         @Override
                         public Object parameters() {
-                            return new HotspotParameters(compileConfiguration, combinedOptions());
+                            return new HotspotParameters(compileConfiguration, combinedOptions(), hotspotConfiguration.version(), hotspotConfiguration.uri());
                         }
 
-                        record HotspotParameters(@JsonUnwrapped Object compileConfiguration, String hotspotOptions) {}
+                        record HotspotParameters(@JsonUnwrapped Object compileConfiguration, String hotspotOptions, String version, @Nullable String uri) {}
 
                         @Override
                         public void setupAndRun(CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log, BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
                             progress.update(BenchmarkPhase.INSTALLING_SOFTWARE);
-                            SshUtil.run(benchmarkServerClient, "sudo yum install jdk-" + hotspotConfiguration.version() + "-headful -y", log, 0, 1);
+                            String jdkCommandPrefix;
+                            if (hotspotConfiguration.uri() == null) {
+                                SshUtil.run(benchmarkServerClient, "sudo yum install jdk-" + hotspotConfiguration.version() + "-headful -y", log, 0, 1);
+                                jdkCommandPrefix = "";
+                            } else {
+                                UUID uuid = UUID.randomUUID();
+                                SshUtil.run(benchmarkServerClient, "mkdir /var/tmp/jdk-" + uuid + " && cd /var/tmp/jdk-" + uuid + " && curl " + hotspotConfiguration.uri() + " > jdk.tar && tar --strip-components=1 -xvf jdk.tar && rm jdk.tar");
+                                jdkCommandPrefix = "/var/tmp/jdk-" + uuid + "/bin/";
+                            }
                             SshUtil.run(benchmarkServerClient, "sudo sysctl kernel.yama.ptrace_scope=1", log);
                             progress.update(BenchmarkPhase.DEPLOYING_SERVER);
                             uploadClasspath(benchmarkServerClient, log);
-                            String start = perfStatConfiguration.asCommandPrefix() + "java ";
+                            String start = perfStatConfiguration.asCommandPrefix() + jdkCommandPrefix + "java ";
                             AsyncProfilerHelper.Session asyncProfilerSession = null;
                             if (asyncProfilerConfiguration.enabled()) {
                                 AsyncProfilerHelper.Session session = asyncProfilerHelper.createSession(log);
-                                session.initAgent(benchmarkServerClient);
+                                session.initAgent(benchmarkServerClient, jdkCommandPrefix);
                                 asyncProfilerSession = session;
                                 start += asyncProfilerSession.getJvmArgument() + " ";
                             }
@@ -262,7 +271,7 @@ public final class JavaRunFactory {
                                     } catch (TimeoutException e) {
                                         LOG.warn("Timeout waiting for process to terminate");
                                         SshUtil.run(benchmarkServerClient, "ps -aux", log);
-                                        SshUtil.run(benchmarkServerClient, "sudo jhsdb jstack --pid $(pgrep java)", log);
+                                        SshUtil.run(benchmarkServerClient, "sudo " + jdkCommandPrefix + " jhsdb jstack --pid $(pgrep java)", log);
                                         cmd.kill();
                                     }
                                 }

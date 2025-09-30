@@ -13,5 +13,5 @@ import java.util.Map;
  *                      test different GC setups.
  */
 @ConfigurationProperties("variants.hotspot")
-public record HotspotConfiguration(int version, String commonOptions, Map<String, String> optionChoices) {
+public record HotspotConfiguration(String version, String uri, String commonOptions, Map<String, String> optionChoices) {
 }

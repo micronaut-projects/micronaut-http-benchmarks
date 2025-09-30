@@ -88,6 +88,10 @@ public final class AsyncProfilerHelper {
         }
 
         public void initAgent(CommandRunner ssh) throws Exception {
+            initAgent(ssh, "");
+        }
+
+        public void initAgent(CommandRunner ssh, String jdkCommandPrefix) throws Exception {
             SshUtil.run(ssh, "sudo sysctl kernel.perf_event_paranoid=1", log);
             SshUtil.run(ssh, "sudo sysctl kernel.kptr_restrict=0", log);
             SshUtil.run(ssh, "mkdir -p " + configuration.directory(), log);
@@ -110,7 +114,7 @@ public final class AsyncProfilerHelper {
                     PosixFilePermission.OWNER_EXECUTE
             ));
             if (configuration.jfrConfig != null) {
-                SshUtil.run(ssh, "jfr configure --input default.jfc " + configuration.jfrConfig + " --output " + configuration.directory() + "/" + JFR_CONFIG_LOCATION, log);
+                SshUtil.run(ssh, jdkCommandPrefix + "jfr configure --input default.jfc " + configuration.jfrConfig + " --output " + configuration.directory() + "/" + JFR_CONFIG_LOCATION, log);
             }
         }
 
