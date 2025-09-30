@@ -25,6 +25,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -35,6 +36,14 @@ public class Main {
     static final List<Discriminator> DISCRIMINATORS = List.of(
             new Discriminator("type", SuiteRunner.BenchmarkParameters::type),
             new Discriminator("Hotspot options", p -> ((Map<?, ?>) p.parameters()).get("hotspotOptions").toString()),
+            new Discriminator("Hotspot version", p -> {
+                Map<?, ?> parameters = (Map<?, ?>) p.parameters();
+                String version = Objects.toString(parameters.get("version"));
+                if (parameters.containsKey("uri")) {
+                    version = "<a href='" + parameters.get("uri") + "'>" + version + "</a>";
+                }
+                return version;
+            }),
             new Discriminator("Request", p -> p.load().protocol().protocol().name() + " " + p.load().definition().getMethod() + " " + p.load().definition().getUri())
                     .selectWithDropdown(true),
             new Discriminator("Micronaut version", p -> compileConfiguration(p, "micronaut")),
