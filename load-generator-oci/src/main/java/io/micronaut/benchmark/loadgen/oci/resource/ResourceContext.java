@@ -65,7 +65,7 @@ public final class ResourceContext {
 
     @SuppressWarnings("unchecked")
     public <P extends Poller> P getPoller(Object key, Supplier<P> pollerSupplier) {
-        return (P) phasePollers.computeIfAbsent(key, _ -> pollerSupplier.get());
+        return (P) phasePollers.computeIfAbsent(key, ignore -> pollerSupplier.get());
     }
 
     public <P extends Poller> P getPoller(OciLocation location, Class<?> discriminator, Supplier<P> pollerSupplier) {

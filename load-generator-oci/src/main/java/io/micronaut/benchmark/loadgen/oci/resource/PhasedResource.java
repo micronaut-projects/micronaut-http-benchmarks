@@ -104,7 +104,7 @@ public abstract class PhasedResource<P> {
 
     protected final synchronized PhaseLock lock(P phase) {
         LOG.trace("lock {} {}", getClass().getSimpleName(), phase, new Exception());
-        locks.compute(phase, (_, v) -> v == null ? 1 : v + 1);
+        locks.compute(phase, (ignore, v) -> v == null ? 1 : v + 1);
         return new PhaseLockImpl(phase);
     }
 
@@ -158,7 +158,7 @@ public abstract class PhasedResource<P> {
                 }
                 closed = true;
                 //noinspection DataFlowIssue
-                if (locks.compute(phase, (_, v) -> v - 1) == 0) {
+                if (locks.compute(phase, (ignore, v) -> v - 1) == 0) {
                     PhasedResource.this.notifyAll();
                 }
             }

@@ -339,7 +339,7 @@ public final class Compute {
                 case HttpRelayAccess httpRelayAccess -> {
                     return httpRelayAccess.relay.getRelay().openSession("opc@" + launch.privateIp + ":22");
                 }
-                case PublicIpAccess _ -> {
+                case PublicIpAccess ignore -> {
                     return Infrastructure.retry(() -> sshFactory.connect(this, publicIp, null));
                 }
                 case SshRelayAccess sshRelayAccess -> {

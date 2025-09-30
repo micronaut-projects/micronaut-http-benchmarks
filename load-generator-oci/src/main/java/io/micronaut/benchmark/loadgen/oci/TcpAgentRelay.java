@@ -117,7 +117,7 @@ public final class TcpAgentRelay implements Closeable {
             binding.close();
             throw e;
         }
-        runner.getSession().addCloseFutureListener(_ -> binding.close());
+        runner.getSession().addCloseFutureListener(ignore -> binding.close());
         return runner;
     }
 
