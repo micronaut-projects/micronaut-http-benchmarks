@@ -3,6 +3,13 @@ package io.micronaut.benchmark.http.plot;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.oracle.bmc.auth.ConfigFileAuthenticationDetailsProvider;
+import com.oracle.bmc.objectstorage.ObjectStorage;
+import com.oracle.bmc.objectstorage.ObjectStorageClient;
+import com.oracle.bmc.objectstorage.model.CreatePreauthenticatedRequestDetails;
+import com.oracle.bmc.objectstorage.model.PreauthenticatedRequest;
+import com.oracle.bmc.objectstorage.requests.CreatePreauthenticatedRequestRequest;
+import com.oracle.bmc.objectstorage.requests.PutObjectRequest;
 import io.hyperfoil.http.statistics.HttpStats;
 import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
 import io.micronaut.benchmark.loadgen.oci.SuiteRunner;
@@ -11,6 +18,7 @@ import one.jfr.event.CPULoad;
 import one.jfr.event.Event;
 import one.jfr.event.ExecutionSample;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -18,8 +26,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.sql.Date;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -254,26 +267,70 @@ public class Main {
         return html.toString();
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
         Main main = new Main();
         String html = main.plot();
-        Path tmp = Paths.get("output/plot.html");
-        Files.writeString(tmp, html);
-        Runtime.getRuntime().exec(new String[]{"firefox", tmp.toString()});
 
-        Path zipped = Paths.get("output/plot.zip");
-        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(zipped))) {
-            zip.putNextEntry(new ZipEntry("plot.html"));
-            Files.copy(tmp, zip);
-            for (SuiteRunner.BenchmarkParameters parameters : main.index) {
-                for (String s : List.of("flamegraph.html", "heatmap.html")) {
-                    Path f = Paths.get("output", parameters.name(), s);
-                    if (Files.exists(f)) {
-                        zip.putNextEntry(new ZipEntry(parameters.name() + "/" + s));
-                        Files.copy(f, zip);
-                    }
+        Path outputRoot = Paths.get("output");
+        Path plotFile = outputRoot.resolve("plot.html");
+        Files.writeString(plotFile, html);
+        Runtime.getRuntime().exec(new String[]{"firefox", plotFile.toString()});
+
+        List<Path> resultFiles = new ArrayList<>();
+        resultFiles.add(plotFile);
+        for (SuiteRunner.BenchmarkParameters parameters : main.index) {
+            for (String s : List.of("flamegraph.html", "heatmap.html")) {
+                Path f = outputRoot.resolve(parameters.name(), s);
+                if (Files.exists(f)) {
+                    resultFiles.add(f);
                 }
             }
+        }
+
+        System.out.println("Creating plot.zip…");
+        Path zipped = outputRoot.resolve("plot.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(zipped))) {
+            for (Path file : resultFiles) {
+                assert file.startsWith(outputRoot);
+                zip.putNextEntry(new ZipEntry(outputRoot.relativize(file).toString()));
+                Files.copy(file, zip);
+            }
+        }
+
+        System.out.println("Uploading to bucket…");
+        try (ObjectStorage os = ObjectStorageClient.builder()
+                .build(new ConfigFileAuthenticationDetailsProvider((String) null))) {
+            String prefix = Instant.now() + "/";
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            for (Path file : resultFiles) {
+                byte[] bytes = Files.readAllBytes(file);
+                assert file.startsWith(outputRoot);
+                os.putObject(PutObjectRequest.builder()
+                        .namespaceName("oraclelabs")
+                        .bucketName("benchmark-results")
+                        .objectName(prefix + outputRoot.relativize(file))
+                        .opcContentSha256(Base64.getEncoder().encodeToString(md.digest(bytes)))
+                        .contentLength((long) bytes.length)
+                        .putObjectBody(new ByteArrayInputStream(bytes))
+                        .contentType("text/html")
+                        .build());
+                md.reset();
+            }
+
+            PreauthenticatedRequest preauthenticatedRequest = os.createPreauthenticatedRequest(CreatePreauthenticatedRequestRequest.builder()
+                    .namespaceName("oraclelabs")
+                    .bucketName("benchmark-results")
+                    .createPreauthenticatedRequestDetails(CreatePreauthenticatedRequestDetails.builder()
+                            .name("Access to result set " + prefix)
+                            .accessType(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead)
+                            .bucketListingAction(PreauthenticatedRequest.BucketListingAction.ListObjects)
+                            .objectName(prefix)
+                            .timeExpires(Date.from(Instant.now().plus(30, ChronoUnit.DAYS)))
+                            .build())
+                    .build()).getPreauthenticatedRequest();
+            String uri = os.getEndpoint() + preauthenticatedRequest.getAccessUri() + prefix + outputRoot.relativize(plotFile);
+
+            System.out.println("Result URI: " + uri);
         }
     }
 
