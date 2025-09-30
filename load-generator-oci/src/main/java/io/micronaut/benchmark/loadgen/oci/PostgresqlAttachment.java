@@ -78,19 +78,26 @@ final class PostgresqlAttachment implements Infrastructure.Attachment {
             try (ResilientSshPortForwarder fwd = sshPortForwarderFactory.create(relay::connectSsh, new SshdSocketAddress(POSTGRES_IP, PORT))) {
                 InetSocketAddress bound = fwd.bind();
                 String s = "jdbc:postgresql://" + bound.getHostString() + ":" + bound.getPort();
-                try (Connection conn = AbstractInfrastructure.retry(() -> DriverManager.getConnection(s + "/postgres", USERNAME, PASSWORD))) {
-                    conn.prepareStatement("CREATE DATABASE " + DATABASE).execute();
-                }
-                try (Connection conn = AbstractInfrastructure.retry(() -> DriverManager.getConnection(s + "/" + DATABASE, USERNAME, PASSWORD))) {
-                    conn.prepareStatement("CREATE TABLE values (index integer not null primary key, value varchar(40) not null)").execute();
-                    PreparedStatement ins = conn.prepareStatement("INSERT INTO values (index,value) VALUES (?,?)");
-                    for (int i = 0; i < 1024; i++) {
-                        ins.setInt(1, i);
-                        ins.setString(2, UUID.randomUUID().toString());
-                        ins.addBatch();
+
+                AbstractInfrastructure.retry(() -> {
+                    try (Connection conn = AbstractInfrastructure.retry(() -> DriverManager.getConnection(s + "/postgres", USERNAME, PASSWORD))) {
+                        conn.prepareStatement("CREATE DATABASE " + DATABASE).execute();
                     }
-                    ins.executeBatch();
-                }
+                    return null;
+                });
+                AbstractInfrastructure.retry(() -> {
+                    try (Connection conn = AbstractInfrastructure.retry(() -> DriverManager.getConnection(s + "/" + DATABASE, USERNAME, PASSWORD))) {
+                        conn.prepareStatement("CREATE TABLE values (index integer not null primary key, value varchar(40) not null)").execute();
+                        PreparedStatement ins = conn.prepareStatement("INSERT INTO values (index,value) VALUES (?,?)");
+                        for (int i = 0; i < 1024; i++) {
+                            ins.setInt(1, i);
+                            ins.setString(2, UUID.randomUUID().toString());
+                            ins.addBatch();
+                        }
+                        ins.executeBatch();
+                    }
+                    return null;
+                });
             }
         }
     }
