@@ -38,7 +38,7 @@ dependencies {
     implementation("io.projectreactor:reactor-core")
     compileOnly(libs.findLibrary("svm").get())
     runtimeOnly(libs.findLibrary("bcpkix").get())
-    implementation(libs.findLibrary("hikari").get())
+    implementation(libs.findLibrary("agroal").get())
     runtimeOnly(libs.findLibrary("postgresql").get())
 
     testImplementation("org.junit.jupiter:junit-jupiter-api")
