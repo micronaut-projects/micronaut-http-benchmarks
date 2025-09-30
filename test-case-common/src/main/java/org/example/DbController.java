@@ -1,7 +1,7 @@
 package org.example;
 
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
+import io.agroal.api.AgroalDataSource;
+import io.agroal.api.configuration.supplier.AgroalPropertiesReader;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.annotation.Value;
 import io.micronaut.http.annotation.Controller;
@@ -9,27 +9,27 @@ import io.micronaut.http.annotation.Get;
 import io.micronaut.scheduling.TaskExecutors;
 import io.micronaut.scheduling.annotation.ExecuteOn;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class DbController {
     @Controller("/db")
     @Requires(property = "execute-on", value = "blocking")
     public static class BlockingJdbc {
-        private final HikariDataSource dataSource;
+        private final DataSource dataSource;
 
-        BlockingJdbc(@Value("${db-remote:10.0.0.11}") String remote) {
-            HikariConfig config = new HikariConfig();
-            config.setJdbcUrl("jdbc:postgresql://" + remote + "/benchmark");
-            config.setUsername("benchmark");
-            config.setPassword("Benchmark1!");
-            config.setInitializationFailTimeout(-1);
-            config.setThreadFactory(Thread.ofVirtual().factory());
-            config.setMaximumPoolSize(100);
-            dataSource = new HikariDataSource(config);
+        BlockingJdbc(@Value("${db-remote:10.0.0.11}") String remote) throws Exception {
+            dataSource = AgroalDataSource.from(new AgroalPropertiesReader().readProperties(Map.of(
+                    "jdbcUrl", "jdbc:postgresql://" + remote + "/benchmark",
+                    "principal", "benchmark",
+                    "credential", "Benchmark1!",
+                    "maxSize", "100"
+            )));
         }
 
         @Get
