@@ -27,8 +27,11 @@ import io.micronaut.benchmark.loadgen.oci.cmd.ProcessHandle;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
+import io.micronaut.context.BeanProvider;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
+import io.micronaut.http.ssl.CertificateProvider;
+import io.micronaut.inject.qualifiers.Qualifiers;
 import io.micronaut.scheduling.TaskExecutors;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClosedException;
@@ -38,6 +41,7 @@ import jakarta.inject.Singleton;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -55,6 +59,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -93,8 +98,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     private final Factory factory;
     private final Path logDirectory;
 
-    private final X509Certificate mtlsCert;
-    private final PrivateKey mtlsKey;
+    private X509Certificate mtlsCert;
+    private PrivateKey mtlsKey;
 
     private CommandRunner controllerSession;
     private final Compute.Launch controllerLaunch;
@@ -131,9 +136,23 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             agentLocks.addAll(r.require());
         }
 
-        if (factory.config.mtlsKey != null) {
-            mtlsKey = Pem.decoder().decodePrivateKey(Files.readAllBytes(factory.config.mtlsKey));
-            mtlsCert = (X509Certificate) Pem.decoder().decodeCertificate(Files.readString(factory.config.mtlsCert));
+        if (factory.config.mtls != null) {
+            CertificateProvider provider = factory.certificateProviders.get(Qualifiers.byName(factory.config.mtls));
+            Flux.from(provider.getKeyStore()).subscribe(keyStore -> {
+                try {
+                    Enumeration<String> aliases = keyStore.aliases();
+                    while (aliases.hasMoreElements()) {
+                        String alias = aliases.nextElement();
+                        if (keyStore.isKeyEntry(alias)) {
+                            mtlsKey = (PrivateKey) keyStore.getKey(alias, "".toCharArray());
+                            mtlsCert = (X509Certificate) keyStore.getCertificate(alias);
+                            break;
+                        }
+                    }
+                } catch (Exception e) {
+                    LOG.error("Error loading key store", e);
+                }
+            });
         } else {
             mtlsCert = null;
             mtlsKey = null;
@@ -244,10 +263,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             }
         };
     }
-    
-    private static byte[] pem(String type, byte[] der) {
-        return ("-----BEGIN " + type + "-----\n" + Base64.getEncoder().encodeToString(der) + "\n-----END " + type + "-----").getBytes(StandardCharsets.UTF_8);
-    }
 
     private String createCurlCommand(Protocol protocol, RequestDefinition definition, String socketUri, boolean verbose) throws CertificateEncodingException {
         StringBuilder builder = new StringBuilder("curl");
@@ -256,12 +271,12 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         builder.append(" --max-time 20");
         if (mtlsCert != null) {
             builder.append(" --cert <(echo '");
-            builder.append(Base64.getEncoder().encodeToString(pem("CERTIFICATE", mtlsCert.getEncoded())));
+            builder.append(Base64.getEncoder().encodeToString(Pem.encoder().encode(mtlsCert).getBytes(StandardCharsets.UTF_8)));
             builder.append("' | base64 -d)");
         }
         if (mtlsKey != null) {
             builder.append(" --key <(echo '");
-            builder.append(Base64.getEncoder().encodeToString(pem("PRIVATE KEY", mtlsKey.getEncoded())));
+            builder.append(Base64.getEncoder().encodeToString(Pem.encoder().encode(mtlsKey)));
             builder.append("' | base64 -d)");
         }
         builder.append(verbose ? " -v" : " --silent");
@@ -568,8 +583,9 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
+        private final BeanProvider<CertificateProvider> certificateProviders;
 
-        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
+        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, BeanProvider<CertificateProvider> certificateProviders) {
             this.context = context;
             this.compute = compute;
             this.sshFactory = sshFactory;
@@ -578,6 +594,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             this.asyncProfilerHelper = asyncProfilerHelper;
             this.objectMapper = objectMapper;
             this.resilientForwarderFactory = resilientForwarderFactory;
+            this.certificateProviders = certificateProviders;
             this.vertx = Vertx.vertx();
 
             objectMapper.registerSubtypes(HttpStats.class);
@@ -609,8 +626,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             Duration pgoDuration,
             double sessionLimitFactor,
             List<StatusRequest> status,
-            @Nullable Path mtlsKey,
-            @Nullable Path mtlsCert,
+            @Nullable String mtls,
             boolean agentAsyncProfiler
     ) {
         @EachProperty(value = "status", list = true)

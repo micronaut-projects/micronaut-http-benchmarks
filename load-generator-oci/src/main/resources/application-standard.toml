@@ -11,7 +11,7 @@ enabled-run-types=[
 ]
 
 [variants.hotspot]
-common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,affinity --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
+common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,affinity --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions"# -XX:-DoJVMTIVirtualThreadTransitions
 
 [[load.documents]]
 name="6-6"

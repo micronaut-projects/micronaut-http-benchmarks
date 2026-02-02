@@ -7,6 +7,7 @@ version = "unspecified"
 
 repositories {
     mavenCentral()
+    mavenLocal()
 }
 
 dependencies {
@@ -33,6 +34,7 @@ dependencies {
     implementation(libs.mina.sshd.core)
     implementation(libs.mina.sshd.scp)
     implementation(libs.mina.sshd.sftp)
+    implementation("io.projectreactor:reactor-core")
     runtimeOnly(libs.logback.classic)
     implementation(libs.bcpkix)
     runtimeOnly(libs.postgresql)

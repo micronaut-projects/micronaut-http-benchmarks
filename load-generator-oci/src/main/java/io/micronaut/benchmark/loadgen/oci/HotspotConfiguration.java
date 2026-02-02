@@ -1,6 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import io.micronaut.context.annotation.ConfigurationProperties;
+import io.micronaut.core.annotation.Nullable;
 
 import java.util.Map;
 
@@ -13,5 +14,5 @@ import java.util.Map;
  *                      test different GC setups.
  */
 @ConfigurationProperties("variants.hotspot")
-public record HotspotConfiguration(String version, String uri, String commonOptions, Map<String, String> optionChoices) {
+public record HotspotConfiguration(String version, @Nullable String uri, String commonOptions, Map<String, String> optionChoices) {
 }

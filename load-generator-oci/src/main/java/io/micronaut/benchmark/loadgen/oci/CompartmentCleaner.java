@@ -27,6 +27,8 @@ import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.loadgen.oci.resource.RouteTableResource;
 import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
 import io.micronaut.benchmark.loadgen.oci.resource.VcnResource;
+import io.micronaut.scheduling.TaskExecutors;
+import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -47,6 +48,7 @@ import java.util.function.Function;
  */
 @Singleton
 public record CompartmentCleaner(
+        @Named(TaskExecutors.IO) ExecutorService executorService,
         ResourceContext context,
         RegionalClient<IdentityClient> identityClient,
         RegionalClient<ComputeClient> computeClient,
@@ -58,22 +60,20 @@ public record CompartmentCleaner(
     private static final Logger LOG = LoggerFactory.getLogger(CompartmentCleaner.class);
 
     public void cleanCompartments(List<OciLocation> locations, boolean delete) throws Exception {
-        try (ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (Future<Void> future : executorService.invokeAll(
-                    locations.stream()
-                            .map(l -> (Callable<Void>) () -> {
-                                try {
-                                    cleanCompartment(l, delete);
-                                    return null;
-                                } catch (Exception e) {
-                                    LOG.error("Failed to clean compartment", e);
-                                    throw e;
-                                }
-                            })
-                            .toList()
-            )) {
-                future.get();
-            }
+        for (Future<Void> future : executorService.invokeAll(
+                locations.stream()
+                        .map(l -> (Callable<Void>) () -> {
+                            try {
+                                cleanCompartment(l, delete);
+                                return null;
+                            } catch (Exception e) {
+                                LOG.error("Failed to clean compartment", e);
+                                throw e;
+                            }
+                        })
+                        .toList()
+        )) {
+            future.get();
         }
     }
 

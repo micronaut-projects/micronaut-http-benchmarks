@@ -178,8 +178,11 @@ public final class JavaRunFactory {
                             });
                         }
                     }
-                    log.println("Uploading classpath");
-                    benchmarkServerClient.upload(tmp, "classpath.zip");
+                    Infrastructure.retry(() -> {
+                        log.println("Uploading classpath");
+                        benchmarkServerClient.upload(tmp, "classpath.zip");
+                        return null;
+                    });
                     SshUtil.run(benchmarkServerClient, "rm -rf " + CLASSPATH_LOCATION, log);
                     SshUtil.run(benchmarkServerClient, "unzip classpath.zip", log);
                 } finally {
