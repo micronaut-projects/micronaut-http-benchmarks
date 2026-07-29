@@ -184,7 +184,7 @@ class TcpAgentRelayTest {
     @Test
     public void portForward() throws IOException {
         try (CommandRunner session = relay.openSession("opc@127.0.0.1:" + SSH_PORT);
-             ProcessHandle _ = session.run("cd /tmp && python3 -m http.server 3456");
+             ProcessHandle ph = session.run("cd /tmp && python3 -m http.server 3456");
              PortForwardHandle forwardHandle = session.portForward(new InetSocketAddress("127.0.0.1", 3456));
              BlockingHttpClient client = beanContext.createBean(HttpClient.class, "http://" + forwardHandle.localAddress().getHostString() + ":" + forwardHandle.localAddress().getPort()).toBlocking()) {
 
