@@ -13,22 +13,26 @@ max-concurrent-runs=25 # only respected for infrastructure-per-run
 infrastructure-mode="reuse"
 
 # the compartments to run the benchmark suite in. the compartment should be empty; it will be cleared before and after each run.
+#[[suite.location]]
+#compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
+#region="ap-tokyo-1"
+#availability-domain="hkYI:AP-TOKYO-1-AD-1"
 [[suite.location]]
 compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
-region="ap-tokyo-1"
-availability-domain="hkYI:AP-TOKYO-1-AD-1"
-[[suite.location]]
-compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
-region="ap-osaka-1"
-availability-domain="hkYI:AP-OSAKA-1-AD-1"
-[[suite.location]]
-compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
-region="ap-sydney-1"
-availability-domain="hkYI:AP-SYDNEY-1-AD-1"
-[[suite.location]]
-compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
-region="ap-melbourne-1"
-availability-domain="hkYI:AP-MELBOURNE-1-AD-1"
+region="eu-frankfurt-1"
+availability-domain="hkYI:EU-FRANKFURT-1-AD-1"
+#[[suite.location]]
+#compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
+#region="ap-melbourne-1"
+#availability-domain="hkYI:AP-MELBOURNE-1-AD-1"
+#[[suite.location]]
+#compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
+#region="ap-osaka-1"
+#availability-domain="hkYI:AP-OSAKA-1-AD-1"
+#[[suite.location]]
+#compartment-id="ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
+#region="ap-sydney-1"
+#availability-domain="hkYI:AP-SYDNEY-1-AD-1"
 
 [tcp-agent-relay]
 bucket-namespace="oraclelabs"
