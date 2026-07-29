@@ -1,5 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci.cmd;
 
+import io.micronaut.core.annotation.Nullable;
+
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
@@ -8,9 +10,11 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -63,6 +67,32 @@ public interface CommandRunner extends Closeable {
 
     default void download(String remote, Path local) throws IOException {
         Files.write(local, downloadBytes(remote));
+    }
+
+    /**
+     * Perform a remote directory listing.
+     *
+     * @param remote The directory to list
+     * @return The directory files, or {@code null} if the target is a file, not a directory
+     * @throws IOException If the remote path does not exist
+     */
+    @Nullable
+    default List<String> ls(String remote) throws IOException {
+        ByteArrayOutputStream listing = new ByteArrayOutputStream();
+        try (ProcessHandle ph = run("ls --literal --almost-all --indicator-style=none -1 -- " + remote, new OutputListener.Write(listing))) {
+            CommandResult result = ph.waitFor();
+            if (result.status() == 2) {
+                throw new NoSuchFileException("ls: '" + listing.toString(StandardCharsets.UTF_8) + "'");
+            }
+        } catch (InterruptedException e) {
+            throw new InterruptedIOException();
+        }
+        String[] parts = listing.toString(StandardCharsets.UTF_8).split("\n");
+        if (parts.length == 1 && parts[0].equals(remote)) {
+            return null;
+        } else {
+            return List.of(parts);
+        }
     }
 
     default void downloadRecursive(String remote, Path local) throws IOException {
