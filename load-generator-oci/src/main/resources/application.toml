@@ -58,7 +58,8 @@ sla={"0.99"="200ms"}
 
 # configuration for the hyperfoil cluster
 [hyperfoil]
-location="/home/yawkat/bin/hyperfoil-0.27"
+#location="/home/yawkat/bin/hyperfoil-0.27"
+location="/home/yawkat/dev/Hyperfoil/distribution/target/distribution"
 agent-count=2
 
 warmup-duration="1m"
@@ -91,7 +92,7 @@ debug-authorized-keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIObBGYqEuujvGhBwr1S/
 shape="VM.Standard.E4.Flex"
 ocpus=3
 memory-in-gb=24
-image="Oracle-Linux-[\\d\\.]+-202.+"
+image="Oracle-Linux-1[\\d\\.]+-202.+"
 disk-performance-units=80
 
 # relay server used as an SSH gateway to other servers
@@ -99,7 +100,7 @@ disk-performance-units=80
 shape="VM.Standard.E4.Flex"
 ocpus=2
 memory-in-gb=8
-image="Oracle-Linux-[\\d\\.]+-202.+"
+image="Oracle-Linux-1[\\d\\.]+-202.+"
 disk-performance-units=80
 
 # hyperfoil controller
@@ -107,7 +108,7 @@ disk-performance-units=80
 shape="VM.Standard.A1.Flex"
 ocpus=2
 memory-in-gb=4
-image="Oracle-Linux-[\\d\\.]+-aarch64-202.+"
+image="Oracle-Linux-1[\\d\\.]+-aarch64-202.+"
 disk-performance-units=80
 
 # hyperfoil agent
@@ -115,7 +116,7 @@ disk-performance-units=80
 shape="VM.Standard.E5.Flex"
 ocpus=8
 memory-in-gb=16
-image="Oracle-Linux-[\\d\\.]+-202.+"
+image="Oracle-Linux-1[\\d\\.]+-202.+"
 disk-performance-units=80
 
 # nginx backend
@@ -123,7 +124,7 @@ disk-performance-units=80
 shape="VM.Standard.E5.Flex"
 ocpus=8
 memory-in-gb=16
-image="Oracle-Linux-[\\d\\.]+-202.+"
+image="Oracle-Linux-1[\\d\\.]+-202.+"
 disk-performance-units=80
 
 # postgres backend
@@ -134,10 +135,17 @@ memory-in-gb=32
 image=""
 disk-performance-units=0
 
+#[variants.hotspot]
+#version="26-loom"
+#uri="https://builds.shipilev.net/openjdk-jdk-loom/openjdk-jdk-loom-linux-x86_64-server.tar.xz"
+#common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192" # -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions
+#option-choices={ "vthread-pollers"="-Djdk.pollerMode=2", "poller-per-carrier"="-Djdk.pollerMode=3" }
+
 [variants.hotspot]
 version=24
 common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192" # -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions
-option-choices={ ""="", "loom-on-netty"="--add-opens=java.base/java.lang=ALL-UNNAMED -Dmicronaut.netty.event-loops.default.loom-carrier=true -Dmicronaut.http.client.event-loop-group=default" }
+# "loom-on-netty"="--add-opens=java.base/java.lang=ALL-UNNAMED -Dmicronaut.netty.event-loops.default.loom-carrier=true -Dmicronaut.http.client.event-loop-group=default"
+option-choices={ ""="" }
 
 [variants.hotspot.async-profiler]
 enabled=false
