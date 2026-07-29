@@ -37,6 +37,8 @@ public interface OutputListener {
         private final Condition foundCondition = lock.newCondition();
         private ByteBuffer pattern;
         private boolean done = false;
+        private boolean esc = false;
+        private boolean csi = false;
 
         /**
          * @param initialPattern The initial pattern to look for
@@ -45,13 +47,39 @@ public interface OutputListener {
             this.pattern = initialPattern;
         }
 
+        boolean found() {
+            lock.lock();
+            try {
+                return pattern == null;
+            } finally {
+                lock.unlock();
+            }
+        }
+
         @Override
         public void onData(ByteBuffer byteBuffer) {
             lock.lock();
             try {
                 while (byteBuffer.hasRemaining() && pattern != null) {
-                    byte expected = pattern.get();
                     byte actual = byteBuffer.get();
+                    // ignore csi sequences (bash color codes)
+                    if (csi) {
+                        if (actual >= 0x40 && actual <= 0x7e) {
+                            csi = false;
+                        }
+                        continue;
+                    } else if (esc) {
+                        esc = false;
+                        if (actual == '[') {
+                            csi = true;
+                            continue;
+                        }
+                    } else if (actual == 0x1b) {
+                        esc = true;
+                        continue;
+                    }
+
+                    byte expected = pattern.get();
                     if (actual != expected) {
                         pattern.rewind();
                     } else if (!pattern.hasRemaining()) {
