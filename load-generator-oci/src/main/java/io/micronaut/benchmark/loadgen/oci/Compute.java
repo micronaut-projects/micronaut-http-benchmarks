@@ -17,6 +17,7 @@ import com.oracle.bmc.core.model.LaunchOptions;
 import com.oracle.bmc.core.requests.GetVnicRequest;
 import com.oracle.bmc.core.requests.ListImagesRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
+import com.oracle.bmc.core.responses.ListImagesResponse;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
@@ -82,9 +83,13 @@ public final class Compute {
     }
 
     private List<Image> images(OciLocation location) {
-        return imagesByCompartment.computeIfAbsent(location, k -> computeClient.forRegion(k).listImages(ListImagesRequest.builder()
-                .compartmentId(k.compartmentId())
-                .build()).getItems());
+        return imagesByCompartment.computeIfAbsent(location, k -> CompartmentCleaner.list(
+                computeClient.forRegion(k)::listImages,
+                ListImagesRequest.builder().compartmentId(k.compartmentId()),
+                ListImagesRequest.Builder::page,
+                ListImagesResponse::getOpcNextPage,
+                ListImagesResponse::getItems
+        ));
     }
 
     /**
