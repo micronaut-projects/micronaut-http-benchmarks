@@ -41,14 +41,12 @@ public final class JavaRunFactory {
 
     private final HotspotConfiguration hotspotConfiguration;
     private final NativeImageConfiguration nativeImageConfiguration;
-    private final AsyncProfilerHelper.AsyncProfilerConfiguration asyncProfilerConfiguration;
     private final AsyncProfilerHelper asyncProfilerHelper;
     private final PerfStatConfiguration perfStatConfiguration;
 
-    public JavaRunFactory(HotspotConfiguration hotspotConfiguration, NativeImageConfiguration nativeImageConfiguration, AsyncProfilerHelper.AsyncProfilerConfiguration asyncProfilerConfiguration, AsyncProfilerHelper asyncProfilerHelper, PerfStatConfiguration perfStatConfiguration) {
+    public JavaRunFactory(HotspotConfiguration hotspotConfiguration, NativeImageConfiguration nativeImageConfiguration, AsyncProfilerHelper asyncProfilerHelper, PerfStatConfiguration perfStatConfiguration) {
         this.hotspotConfiguration = hotspotConfiguration;
         this.nativeImageConfiguration = nativeImageConfiguration;
-        this.asyncProfilerConfiguration = asyncProfilerConfiguration;
         this.asyncProfilerHelper = asyncProfilerHelper;
         this.perfStatConfiguration = perfStatConfiguration;
     }
@@ -218,7 +216,7 @@ public final class JavaRunFactory {
 
                         @Override
                         public String name() {
-                            return typePrefix + "-hotspot-" + configString + "-" + optionsToString(hotspotOptions) + (asyncProfilerConfiguration.enabled() ? "-async-profiler" : "");
+                            return typePrefix + "-hotspot-" + configString + "-" + optionsToString(hotspotOptions) + (asyncProfilerHelper.enabled() ? "-async-profiler" : "");
                         }
 
                         private String combinedOptions() {
@@ -249,7 +247,7 @@ public final class JavaRunFactory {
                             uploadClasspath(benchmarkServerClient, log);
                             String start = perfStatConfiguration.asCommandPrefix() + jdkCommandPrefix + "java ";
                             AsyncProfilerHelper.Session asyncProfilerSession = null;
-                            if (asyncProfilerConfiguration.enabled()) {
+                            if (asyncProfilerHelper.enabled()) {
                                 AsyncProfilerHelper.Session session = asyncProfilerHelper.createSession(log);
                                 session.initAgent(benchmarkServerClient, jdkCommandPrefix);
                                 asyncProfilerSession = session;

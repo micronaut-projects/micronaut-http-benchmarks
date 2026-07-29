@@ -45,6 +45,10 @@ public final class AsyncProfilerHelper {
         this.configuration = configuration;
     }
 
+    public boolean enabled() {
+        return configuration.enabled();
+    }
+
     public Session createSession(OutputListener.Write log) {
         return new Session(log);
     }

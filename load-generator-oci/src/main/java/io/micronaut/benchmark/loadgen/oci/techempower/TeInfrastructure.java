@@ -140,7 +140,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
 
         DockerServerRuntime server = dockerServers.get(DockerServer.SERVER);
         Map<String, AsyncProfilerHelper.Session> asyncProfilerSessions = null;
-        if (factory.asyncProfilerConfiguration.enabled()) {
+        if (factory.asyncProfilerHelper.enabled()) {
             LOG.info("Preparing async-profiler");
             asyncProfilerSessions = new HashMap<>();
             try (CommandRunner initSession = server.instance.connectSsh()) {
@@ -306,7 +306,6 @@ final class TeInfrastructure extends AbstractInfrastructure {
             HttpClient httpClient,
             TeConfiguration configuration,
             AsyncProfilerHelper asyncProfilerHelper,
-            AsyncProfilerHelper.AsyncProfilerConfiguration asyncProfilerConfiguration,
             HotspotConfiguration hotspotConfiguration,
             ObjectMapper objectMapper
     ) {
