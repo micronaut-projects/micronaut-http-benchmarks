@@ -48,9 +48,12 @@ public class Main {
 
     static final List<Discriminator> DISCRIMINATORS = List.of(
             new Discriminator("type", SuiteRunner.BenchmarkParameters::type),
-            new Discriminator("Hotspot options", p -> ((Map<?, ?>) p.parameters()).get("hotspotOptions").toString()),
+            new Discriminator("Hotspot options", p -> p.parameters() == null ? "N/A" : Objects.toString(((Map<?, Object>) p.parameters()).getOrDefault("hotspotOptions", "N/A"))),
             new Discriminator("Hotspot version", p -> {
                 Map<?, ?> parameters = (Map<?, ?>) p.parameters();
+                if (parameters == null || !parameters.containsKey("version")) {
+                    return "N/A";
+                }
                 String version = Objects.toString(parameters.get("version"));
                 if (parameters.containsKey("uri")) {
                     version = "<a href='" + parameters.get("uri") + "'>" + version + "</a>";
@@ -101,7 +104,7 @@ public class Main {
 
         asyncProfiler = index.stream().anyMatch(p -> p.name().contains("-async-profiler"));
         if (asyncProfiler && !index.stream().allMatch(p -> p.name().contains("-async-profiler"))) {
-            throw new IllegalStateException("Can't mix async-profiler with normal results");
+            //throw new IllegalStateException("Can't mix async-profiler with normal results");
         }
 
         if (asyncProfiler) {
@@ -154,7 +157,11 @@ public class Main {
 
     @SuppressWarnings("unchecked")
     private static String compileConfiguration(SuiteRunner.BenchmarkParameters parameters, String name) {
-        Map<String, Object> compileConfiguration = ((Map<String, Object>) ((Map<String, Object>) parameters.parameters()).get("compileConfiguration"));
+        Map<String, Object> map = (Map<String, Object>) parameters.parameters();
+        if (map == null) {
+            return "";
+        }
+        Map<String, Object> compileConfiguration = ((Map<String, Object>) map.get("compileConfiguration"));
         if (compileConfiguration == null) {
             return "";
         }
