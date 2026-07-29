@@ -91,11 +91,17 @@ public final class AsyncProfilerHelper {
             this.log = log;
         }
 
+        @Deprecated
         public void initAgent(CommandRunner ssh) throws Exception {
             initAgent(ssh, "");
         }
 
+        @Deprecated
         public void initAgent(CommandRunner ssh, String jdkCommandPrefix) throws Exception {
+            initAgent(ssh, RemoteJdk.fromPrefix(jdkCommandPrefix));
+        }
+
+        public void initAgent(CommandRunner ssh, RemoteJdk jdk) throws Exception {
             SshUtil.run(ssh, "sudo sysctl kernel.perf_event_paranoid=1", log);
             SshUtil.run(ssh, "sudo sysctl kernel.kptr_restrict=0", log);
             SshUtil.run(ssh, "mkdir -p " + configuration.directory(), log);
@@ -118,12 +124,16 @@ public final class AsyncProfilerHelper {
                     PosixFilePermission.OWNER_EXECUTE
             ));
             if (configuration.jfrConfig != null) {
-                SshUtil.run(ssh, jdkCommandPrefix + "jfr configure --input default.jfc " + configuration.jfrConfig + " --output " + configuration.directory() + "/" + JFR_CONFIG_LOCATION, log);
+                SshUtil.run(ssh, jdk.command("jfr") + " configure --input default.jfc " + configuration.jfrConfig + " --output " + configuration.directory() + "/" + JFR_CONFIG_LOCATION, log);
             }
         }
 
         public String getJvmArgument() {
-            String s = "-agentpath:" + configuration.directory() + "/" + PROFILER_LOCATION + "=" + configuration.args();
+            return getJvmArgument("-agentpath:");
+        }
+
+        public String getJvmArgument(String agentpathPrefix) {
+            String s = agentpathPrefix + configuration.directory() + "/" + PROFILER_LOCATION + "=" + configuration.args();
             if (configuration.jfrConfig != null) {
                 s += ",jfrsync=" + configuration.directory() + "/" + JFR_CONFIG_LOCATION;
             }
