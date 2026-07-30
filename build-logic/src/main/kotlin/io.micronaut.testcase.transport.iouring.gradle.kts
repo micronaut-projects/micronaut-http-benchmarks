@@ -7,8 +7,10 @@ plugins {
     id("io.micronaut.testcase")
 }
 
+val versionCatalog = extensions.getByType(VersionCatalogsExtension::class.java).named("libs")
+
 dependencies {
-    runtimeOnly("io.netty:netty-transport-native-io_uring::linux-x86_64")
+    runtimeOnly(variantOf(versionCatalog.findLibrary("netty-io-uring").get()) { classifier("linux-x86_64") })
 }
 
 tasks.withType<BuildNativeImageTask>().configureEach {
