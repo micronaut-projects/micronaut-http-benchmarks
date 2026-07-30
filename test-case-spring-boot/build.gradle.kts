@@ -1,7 +1,7 @@
 plugins {
     id("java")
     id("application")
-    id("org.springframework.boot") version "3.0.4"
+    alias(libs.plugins.spring.boot)
 }
 
 repositories {
@@ -13,15 +13,20 @@ application {
 }
 
 dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web:3.2.1") {
+    implementation(libs.spring.boot.starter.web) {
         exclude("org.springframework.boot", "spring-boot-starter-tomcat")
     }
-    implementation("org.springframework.boot:spring-boot-starter-jetty:3.2.1")
-    runtimeOnly("org.eclipse.jetty:jetty-alpn-server:12.0.5")
-    runtimeOnly("org.eclipse.jetty:jetty-alpn-java-server:12.0.5")
-    runtimeOnly("org.eclipse.jetty.http2:jetty-http2-server:12.0.5")
-    runtimeOnly("ch.qos.logback:logback-classic:1.4.14")
-    testImplementation("org.junit.jupiter:junit-jupiter-engine:5.9.2")
+    implementation(libs.spring.boot.starter.jetty)
+    runtimeOnly(libs.jetty.alpn.server)
+    runtimeOnly(libs.jetty.alpn.java.server)
+    runtimeOnly(libs.jetty.http2.server)
+    runtimeOnly(libs.logback.classic)
+    testImplementation(libs.jupiter)
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 }
 
 tasks.withType<Test> {
