@@ -7,7 +7,10 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.socket.ServerSocketChannel;
+import io.netty.channel.uring.IoUringIoHandler;
+import io.netty.channel.uring.IoUringServerSocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http2.Http2ConnectionHandlerBuilder;
@@ -20,8 +23,6 @@ import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.netty.handler.timeout.ReadTimeoutHandler;
-import io.netty.incubator.channel.uring.IOUringEventLoopGroup;
-import io.netty.incubator.channel.uring.IOUringServerSocketChannel;
 
 import javax.net.ssl.SSLException;
 import java.net.InetSocketAddress;
@@ -36,9 +37,9 @@ public final class HttpServer implements AutoCloseable {
     private final EventLoopGroup group;
 
     public HttpServer() {
-        group = new IOUringEventLoopGroup(Runtime.getRuntime().availableProcessors());
+        group = new MultiThreadIoEventLoopGroup(Runtime.getRuntime().availableProcessors(), IoUringIoHandler.newFactory());
         tcpBootstrap = new ServerBootstrap()
-                .channel(IOUringServerSocketChannel.class)
+                .channel(IoUringServerSocketChannel.class)
                 .group(group)
                 .option(ChannelOption.SO_BACKLOG, Integer.MAX_VALUE)
                 .childOption(ChannelOption.AUTO_READ, true);
