@@ -27,8 +27,8 @@ application {
     mainClass.set("io.micronaut.benchmark.relay.agent.Main")
 }
 
-tasks.named<JavaCompile>("compileJava") {
-    options.release.set(21)
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 }
 
 graalvmNative {
