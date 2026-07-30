@@ -1,7 +1,7 @@
 plugins {
     id("java")
     id("application")
-    id("com.github.johnrengelman.shadow")
+    id("com.gradleup.shadow")
 }
 
 repositories {
@@ -13,16 +13,21 @@ application {
 }
 
 dependencies {
-    implementation("io.helidon.webserver:helidon-webserver:4.1.7")
-    implementation("io.helidon.webserver:helidon-webserver-http2:4.1.7")
-    implementation("io.helidon.http.media:helidon-http-media-jsonb:4.1.7")
+    implementation(libs.helidon.webserver)
+    implementation(libs.helidon.webserver.http2)
+    implementation(libs.helidon.http.media.jsonb)
 
     // for self-signed cert generation
-    implementation("io.netty:netty-handler:4.1.119.Final")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
+    implementation(libs.netty.handler)
+    implementation(libs.bcpkix)
 
-    testImplementation("org.junit.jupiter:junit-jupiter-engine:5.9.2")
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.16.1")
+    testImplementation(libs.jupiter)
+    testImplementation(libs.jackson.databind)
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 }
 
 tasks.getByName<Test>("test") {

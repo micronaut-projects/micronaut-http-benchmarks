@@ -1,6 +1,5 @@
 package org.example;
 
-import io.helidon.common.config.Config;
 import io.helidon.common.socket.SocketOptions;
 import io.helidon.common.tls.Tls;
 import io.helidon.webserver.WebServer;
@@ -35,7 +34,6 @@ public class Main {
                 })
                 .get("/status", (req, res) -> res.send(new Status()));
         WebServerConfig.Builder builder = WebServer.builder()
-                .config(Config.empty())
                 .putSocket("http", s -> s.host("0.0.0.0").port(httpPort).routing(routing)
                         .connectionOptions(SocketOptions.builder()
                                 .tcpNoDelay(true)
