@@ -10,6 +10,10 @@ repositories {
     mavenLocal()
 }
 
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
+}
+
 dependencies {
     runtimeOnly("org.yaml:snakeyaml")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-sdk")
@@ -39,8 +43,8 @@ dependencies {
     implementation(libs.bcpkix)
     runtimeOnly(libs.postgresql)
     implementation(project(":relay-api"))
-    testImplementation("org.testcontainers:testcontainers")
-    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation(libs.testcontainers)
+    testImplementation(libs.testcontainers.junit.jupiter)
     testRuntimeOnly("org.apache.commons:commons-compress:1.27.1") // dependency issue
 }
 

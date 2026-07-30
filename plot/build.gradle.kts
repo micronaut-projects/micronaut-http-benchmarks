@@ -9,6 +9,10 @@ repositories {
     mavenCentral()
 }
 
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
+}
+
 dependencies {
     implementation(libs.chartjs)
     implementation(project(":load-generator-oci"))
