@@ -48,7 +48,7 @@ public class LoopController {
             if (client == null) {
                 Thread.Builder.OfVirtual builder = Thread.ofVirtual()
                         .name("jdk-client-thread-", 0);
-                PrivateLoomSupport.setScheduler(builder, el);
+                PrivateLoomSupport.setScheduler(builder, el.eventLoop());
                 Executor executor = Executors.newThreadPerTaskExecutor(builder.factory());
                 client = createClient(executor);
                 if (!attr.compareAndSet(null, client)) {

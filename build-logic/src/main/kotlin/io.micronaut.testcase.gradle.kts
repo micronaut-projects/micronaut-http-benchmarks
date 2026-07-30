@@ -26,6 +26,10 @@ application {
     mainClass.set("org.example.Main")
 }
 
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
+}
+
 val libs = extensions.getByType(VersionCatalogsExtension::class.java).named("libs")
 
 dependencies {
@@ -79,7 +83,7 @@ graalvmNative {
 // The following configurations are used to aggregate the shadowJar and nativeImage tasks
 // So that the root project can collect them all in a single directory
 
-val shadowJars by configurations.creating {
+val shadowJars = configurations.create("shadowJars") {
     isCanBeConsumed = true
     isCanBeResolved = false
     outgoing.artifact(tasks.named("shadowJar"))
