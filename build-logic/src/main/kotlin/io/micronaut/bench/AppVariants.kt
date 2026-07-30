@@ -31,10 +31,18 @@ abstract class AppVariants(val settings: Settings) {
     private fun buildVariant(path: String, variantSpecs: List<VariantSpec>, variantNames: List<String>) {
         val projectPath = ":test-case:${path.replace('/', ':')}"
         settings.include(projectPath)
-        settings.project(projectPath).setProjectDir(File(settings.rootDir, "test-case-common"))
+        val projectSegments = projectPath.split(':').drop(1)
+        projectSegments.indices.map { index ->
+            ":${projectSegments.take(index + 1).joinToString(":")}"
+        }.dropLast(1).forEach { syntheticProjectPath ->
+            val syntheticProjectDir = File(settings.rootDir, ".gradle/synthetic-projects/${syntheticProjectPath.drop(1).replace(':', '/')}")
+            syntheticProjectDir.mkdirs()
+            settings.project(syntheticProjectPath).projectDir = syntheticProjectDir
+        }
+        settings.project(projectPath).projectDir = File(settings.rootDir, "test-case-common")
         gradle.beforeProject {
             if (this.path == projectPath) {
-                setBuildDir(File(projectDir, "build/${path}"))
+                layout.buildDirectory.set(projectDir.resolve("build/${path}"))
                 project.plugins.withId("java") {
                     project.extensions.findByType(JavaPluginExtension::class.java)?.let { java ->
                         variantNames.forEach { variantName ->

@@ -6,11 +6,11 @@ plugins {
     id("base")
 }
 
-val shadowJarAggregator by configurations.creating {
+val shadowJarAggregator = configurations.create("shadowJarAggregator") {
     isCanBeConsumed = false
     isCanBeResolved = true
 }
-val nativeImages by configurations.creating {
+val nativeImages = configurations.create("nativeImages") {
     isCanBeConsumed = false
     isCanBeResolved = true
 }
