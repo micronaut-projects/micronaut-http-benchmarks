@@ -1,6 +1,8 @@
 .gradle
 build/
+!nix/build/
 !gradle/wrapper/gradle-wrapper.jar
+**/.omo/run-continuation/
 
 ### IntelliJ IDEA ###
 .idea/

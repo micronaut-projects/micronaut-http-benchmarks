@@ -27,12 +27,15 @@ import java.net.ConnectException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
@@ -49,6 +52,7 @@ public final class SshFactory {
     private final KeyPair keyPair;
     private final String publicKey;
     private final String privateKey;
+    private final Path privateKeyFile;
     private final SshClient sshClient;
     private final ScheduledExecutorService scheduler;
     private final Set<String> openedRoutes = new HashSet<>();
@@ -70,6 +74,14 @@ public final class SshFactory {
         ByteArrayOutputStream privateStream = new ByteArrayOutputStream();
         OpenSSHKeyPairResourceWriter.INSTANCE.writePrivateKey(keyPair, "micronaut-benchmark", null, privateStream);
         privateKey = privateStream.toString(StandardCharsets.UTF_8);
+
+        if (config.privateKeyLocation() == null) {
+            privateKeyFile = Files.createTempFile("micronaut-benchmark-ssh-id_rsa", null, PosixFilePermissions.asFileAttribute(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)));
+            privateKeyFile.toFile().deleteOnExit();
+            Files.writeString(privateKeyFile, privateKey);
+        } else {
+            privateKeyFile = config.privateKeyLocation();
+        }
 
         sshClient = ClientBuilder.builder()
                 .serverKeyVerifier(AcceptAllServerKeyVerifier.INSTANCE)
@@ -162,6 +174,13 @@ public final class SshFactory {
     void deployPrivateKey(CommandRunner session) throws IOException {
         session.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", CommandRunner.DEFAULT_PERMISSIONS);
         session.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", CommandRunner.DEFAULT_PERMISSIONS);
+    }
+
+    Map<String, String> standardSshOptions() {
+        return Map.of(
+                "IdentityFile", privateKeyFile.toAbsolutePath().toString(),
+                "IdentitiesOnly", "yes"
+        );
     }
 
     /**

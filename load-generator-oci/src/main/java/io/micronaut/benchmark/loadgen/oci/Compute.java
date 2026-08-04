@@ -1,6 +1,5 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.oracle.bmc.bastion.BastionClient;
 import com.oracle.bmc.bastion.model.CreatePortForwardingSessionTargetResourceDetails;
 import com.oracle.bmc.bastion.model.CreateSessionDetails;
 import com.oracle.bmc.bastion.model.PublicKeyDetails;
@@ -19,6 +18,7 @@ import com.oracle.bmc.core.requests.ListImagesRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
 import com.oracle.bmc.core.responses.ListImagesResponse;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.VanillaSsh;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
@@ -27,21 +27,18 @@ import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
-import io.micronaut.scheduling.TaskExecutors;
-import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -53,14 +50,16 @@ public final class Compute {
     private static final Logger LOG = LoggerFactory.getLogger(Compute.class);
     private static final String BASTION_PLUGIN_NAME = "Bastion";
 
+    private static final Pattern BASE_IMAGE_AMD64 = Pattern.compile("Canonical-Ubuntu-[\\d.]+-Minimal-[\\d.-]+");
+    private static final Pattern BASE_IMAGE_AARCH64 = Pattern.compile("Canonical-Ubuntu-[\\d.]+-Minimal-aarch64-[\\d.-]+");
+
     private final ResourceContext context;
     private final ComputeConfiguration computeConfiguration;
     private final Map<String, ComputeConfiguration.InstanceType> instanceTypes;
     private final RegionalClient<ComputeClient> computeClient;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
-    private final RegionalClient<BastionClient> bastionClient;
     private final SshFactory sshFactory;
-    private final Executor blocking;
+    private final Nix nix;
 
     private final Map<OciLocation, List<Image>> imagesByCompartment = new ConcurrentHashMap<>();
 
@@ -69,17 +68,14 @@ public final class Compute {
                    Map<String, ComputeConfiguration.InstanceType> instanceTypes,
                    RegionalClient<ComputeClient> computeClient,
                    RegionalClient<VirtualNetworkClient> vcnClient,
-                   RegionalClient<BastionClient> bastionClient,
-                   SshFactory sshFactory,
-                   @Named(TaskExecutors.BLOCKING) Executor blocking) {
+                   SshFactory sshFactory, Nix nix) {
         this.context = context;
         this.computeConfiguration = computeConfiguration;
         this.instanceTypes = instanceTypes;
         this.computeClient = computeClient;
         this.vcnClient = vcnClient;
-        this.bastionClient = bastionClient;
         this.sshFactory = sshFactory;
-        this.blocking = blocking;
+        this.nix = nix;
     }
 
     private List<Image> images(OciLocation location) {
@@ -101,8 +97,8 @@ public final class Compute {
      * @param subnet       Subnet for the instance VNIC
      * @return The instance builder
      */
-    public Launch builder(String instanceType, OciLocation location, SubnetResource subnet) {
-        return new Launch(instanceType, getInstanceType(instanceType), location, subnet);
+    public Launch builder(String instanceType, OciLocation location, SubnetResource subnet, String nixFlake) {
+        return new Launch(instanceType, getInstanceType(instanceType), location, subnet, nixFlake);
     }
 
     /**
@@ -122,33 +118,16 @@ public final class Compute {
         private final ComputeConfiguration.InstanceType instanceType;
         private final OciLocation location;
         private final SubnetResource subnet;
+        private final String nixFlake;
         private String privateIp = null;
         private InstanceAccess access;
-        private String userDataScript = """
-                #!/bin/sh
-                set -e
-                tee /etc/nftables/main.nft << EOF
-                # open all ports
-                
-                flush ruleset
-                
-                table inet nftables_svc {
-                        chain INPUT {
-                                type filter hook input priority filter + 20
-                                policy accept
-                                accept
-                        }
-                }
-                EOF
-                systemctl stop firewalld
-                systemctl restart nftables
-                """;
 
-        private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
+        private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet, String nixFlake) {
             this.displayName = displayName;
             this.instanceType = Objects.requireNonNull(instanceType, "instanceType");
             this.location = location;
             this.subnet = subnet;
+            this.nixFlake = nixFlake;
             this.computeResource.name(displayName);
             computeResource.dependOn(subnet.require());
             resource.dependOn(computeResource.require());
@@ -168,11 +147,6 @@ public final class Compute {
         public Launch access(InstanceAccess access) {
             resource.dependOn(access.require());
             this.access = access;
-            return this;
-        }
-
-        public Launch addStartupCommand(String command) {
-            this.userDataScript = userDataScript + "\n" + command;
             return this;
         }
 
@@ -298,10 +272,8 @@ public final class Compute {
                         .imageId(image.getId())
                         .metadata(Map.of(
                                 "ssh_authorized_keys",
-                                Stream.concat(computeConfiguration.debugAuthorizedKeys.stream(), Stream.of(sshFactory.publicKey()))
-                                        .collect(Collectors.joining("\n")),
-                                "user_data",
-                                Base64.getEncoder().encodeToString(launch.userDataScript.getBytes(StandardCharsets.UTF_8))
+                                authorizedKeys()
+                                        .collect(Collectors.joining("\n"))
                         ))
                         .launchOptions(LaunchOptions.builder()
                                 .networkType(LaunchOptions.NetworkType.Vfio)
@@ -320,7 +292,7 @@ public final class Compute {
         }
 
         @Override
-        protected void setUp() {
+        protected void setUp() throws Exception {
             if (launch.access instanceof PublicIpAccess) {
                 this.publicIp = Infrastructure.retry(() -> {
                     String vnic = computeClient.forRegion(launch.location).listVnicAttachments(ListVnicAttachmentsRequest.builder()
@@ -333,6 +305,58 @@ public final class Compute {
                             .build()).getVnic().getPublicIp();
                 });
             }
+
+            try (VanillaSsh ssh = connectVanillaSsh()) {
+                nix.anywhere(log, ssh, authorizedKeys().toList(), launch.nixFlake);
+            }
+        }
+
+        private Stream<String> authorizedKeys() {
+            return Stream.concat(computeConfiguration.debugAuthorizedKeys.stream(), Stream.of(sshFactory.publicKey()));
+        }
+
+        public VanillaSsh connectVanillaSsh() throws Exception {
+            return switch (launch.access) {
+                case BastionAccess bastionAccess -> new VanillaSsh() {
+                    @Override
+                    public String host() {
+                        return launch.privateIp;
+                    }
+
+                    @Override
+                    public Map<String, String> options() {
+                        var options = new HashMap<String, String>(sshFactory.standardSshOptions());
+                        options.put("ProxyJump", bastionAccess.sessionResource.getBastionUserName() + "@host.bastion." + launch.location.region() + ".oci.oraclecloud.com");
+                        return options;
+                    }
+                };
+                case HttpRelayAccess httpRelayAccess ->
+                        httpRelayAccess.relay.getRelay().openVanillaSsh("benchmark", launch.privateIp, 22, sshFactory.standardSshOptions());
+                case PublicIpAccess _ -> new VanillaSsh() {
+                    @Override
+                    public String host() {
+                        return publicIp;
+                    }
+
+                    @Override
+                    public Map<String, String> options() {
+                        return sshFactory.standardSshOptions();
+                    }
+                };
+                case SshRelayAccess sshRelayAccess -> new VanillaSsh() {
+                    @Override
+                    public String host() {
+                        return launch.privateIp;
+                    }
+
+                    @Override
+                    public Map<String, String> options() {
+                        var options = new HashMap<String, String>(sshFactory.standardSshOptions());
+                        options.put("ProxyJump", "benchmark@" + sshRelayAccess.relayInstance.publicIp);
+                        return options;
+                    }
+                };
+            };
         }
 
         public CommandRunner connectSsh() throws Exception {
@@ -344,7 +368,7 @@ public final class Compute {
                 case HttpRelayAccess httpRelayAccess -> {
                     return httpRelayAccess.relay.getRelay().openSession("opc@" + launch.privateIp + ":22");
                 }
-                case PublicIpAccess ignore -> {
+                case PublicIpAccess _ -> {
                     return Infrastructure.retry(() -> sshFactory.connect(this, publicIp, null));
                 }
                 case SshRelayAccess sshRelayAccess -> {

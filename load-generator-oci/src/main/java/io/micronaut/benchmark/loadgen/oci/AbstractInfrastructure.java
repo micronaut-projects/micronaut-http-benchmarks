@@ -118,7 +118,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
             publicRouteTable = new RouteTableResource(context).vcn(vcn);
             publicRouteTable.dependOn(internet.require());
             publicSubnet = new SubnetResource(context).vcn(vcn).routeTable(publicRouteTable);
-            relayServerBuilder = compute.builder("relay-server", location, publicSubnet).access(new Compute.PublicIpAccess());
+            relayServerBuilder = compute.builder("relay-server", location, publicSubnet, ".#relay-server").access(new Compute.PublicIpAccess());
             lifecycleLocks.addAll(relayServerBuilder.resource().require());
             if (RELAY_MODE == SshRelayMode.TCP_AGENT) {
                 try {
