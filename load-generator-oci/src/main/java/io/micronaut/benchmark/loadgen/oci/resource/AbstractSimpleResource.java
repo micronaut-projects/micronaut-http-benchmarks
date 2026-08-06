@@ -71,7 +71,9 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
                 for (PhaseLock lock : locks) {
                     lock.close();
                 }
-                setPhase(terminated);
+                if (terminated != null) {
+                    setPhase(terminated);
+                }
             }
         }
         manageExisting(location, ocid);
@@ -102,8 +104,10 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
                 });
             }
 
-            getPoller(location).subscribeUntil(ocid, this, terminated);
-            awaitPhase(terminated);
+            if (terminated != null) {
+                getPoller(location).subscribeUntil(ocid, this, terminated);
+                awaitPhase(terminated);
+            }
         } finally {
             for (PhaseLock lock : locks) {
                 lock.close();

@@ -1,27 +1,36 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import com.oracle.bmc.Region;
 import com.oracle.bmc.bastion.model.CreatePortForwardingSessionTargetResourceDetails;
 import com.oracle.bmc.bastion.model.CreateSessionDetails;
 import com.oracle.bmc.bastion.model.PublicKeyDetails;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
+import com.oracle.bmc.core.model.CreateImageDetails;
 import com.oracle.bmc.core.model.CreateVnicDetails;
 import com.oracle.bmc.core.model.Image;
+import com.oracle.bmc.core.model.ImageSourceDetails;
+import com.oracle.bmc.core.model.ImageSourceViaObjectStorageTupleDetails;
 import com.oracle.bmc.core.model.InstanceAgentPluginConfigDetails;
 import com.oracle.bmc.core.model.InstanceSourceViaImageDetails;
 import com.oracle.bmc.core.model.LaunchInstanceAgentConfigDetails;
 import com.oracle.bmc.core.model.LaunchInstanceDetails;
 import com.oracle.bmc.core.model.LaunchInstanceShapeConfigDetails;
 import com.oracle.bmc.core.model.LaunchOptions;
+import com.oracle.bmc.core.requests.DeleteImageRequest;
 import com.oracle.bmc.core.requests.GetVnicRequest;
-import com.oracle.bmc.core.requests.ListImagesRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
-import com.oracle.bmc.core.responses.ListImagesResponse;
+import com.oracle.bmc.model.BmcException;
+import com.oracle.bmc.objectstorage.ObjectStorageClient;
+import com.oracle.bmc.objectstorage.requests.HeadObjectRequest;
+import com.oracle.bmc.objectstorage.requests.PutObjectRequest;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
+import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.VanillaSsh;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
+import io.micronaut.benchmark.loadgen.oci.resource.CustomImageResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
@@ -30,12 +39,17 @@ import io.micronaut.context.annotation.EachProperty;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -56,22 +70,26 @@ public final class Compute {
     private final ResourceContext context;
     private final ComputeConfiguration computeConfiguration;
     private final Map<String, ComputeConfiguration.InstanceType> instanceTypes;
+    private final ObjectStorageClient objectStorageClient;
     private final RegionalClient<ComputeClient> computeClient;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
     private final SshFactory sshFactory;
     private final Nix nix;
 
     private final Map<OciLocation, List<Image>> imagesByCompartment = new ConcurrentHashMap<>();
+    private final Map<String, NixosImageResource> nixosBootstrapByPlatform = new ConcurrentHashMap<>();
 
     public Compute(ResourceContext context,
                    ComputeConfiguration computeConfiguration,
                    Map<String, ComputeConfiguration.InstanceType> instanceTypes,
+                   ObjectStorageClient objectStorageClient,
                    RegionalClient<ComputeClient> computeClient,
                    RegionalClient<VirtualNetworkClient> vcnClient,
                    SshFactory sshFactory, Nix nix) {
         this.context = context;
         this.computeConfiguration = computeConfiguration;
         this.instanceTypes = instanceTypes;
+        this.objectStorageClient = objectStorageClient;
         this.computeClient = computeClient;
         this.vcnClient = vcnClient;
         this.sshFactory = sshFactory;
@@ -79,13 +97,15 @@ public final class Compute {
     }
 
     private List<Image> images(OciLocation location) {
-        return imagesByCompartment.computeIfAbsent(location, k -> CompartmentCleaner.list(
-                computeClient.forRegion(k)::listImages,
-                ListImagesRequest.builder().compartmentId(k.compartmentId()),
-                ListImagesRequest.Builder::page,
-                ListImagesResponse::getOpcNextPage,
-                ListImagesResponse::getItems
-        ));
+        return CustomImageResource.list(context, location);
+    }
+
+    private NixosImageResource getNixosBootstrapImage(String platform) {
+        return nixosBootstrapByPlatform.computeIfAbsent(platform, k -> {
+            NixosImageResource resource = new NixosImageResource(context, k);
+            AbstractInfrastructure.launch(resource, resource::manage);
+            return resource;
+        });
     }
 
     /**
@@ -233,6 +253,109 @@ public final class Compute {
         }
     }
 
+    private final class NixosImageResource extends AbstractDecoratedResource {
+        private final String platform;
+        private String id;
+
+        NixosImageResource(ResourceContext context, String platform) {
+            super(context);
+            this.platform = platform;
+        }
+
+        public String getId() {
+            if (id == null) {
+                throw new IllegalStateException("Not yet ready");
+            }
+            return id;
+        }
+
+        @Override
+        protected void setUp() throws Exception {
+            LOG.info("Building nixos image for {}", platform);
+            Path path = nix.build(new OutputListener.Log(LOG, Level.DEBUG), ".#packages." + platform + ".oci-bootstrap-image").resolve("nixos.qcow2");
+
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            try (InputStream is = Files.newInputStream(path)) {
+                byte[] buffer = new byte[65536];
+                int read;
+                while ((read = is.read(buffer)) != -1) {
+                    md.update(buffer, 0, read);
+                }
+            }
+            String expectedSha256 = Base64.getEncoder().encodeToString(md.digest());
+
+            String existingHash;
+            try {
+                existingHash = objectStorageClient.headObject(HeadObjectRequest.builder()
+                        .namespaceName(computeConfiguration.nixosImageBucketNamespace)
+                        .bucketName(computeConfiguration.nixosImageBucketName)
+                        .objectName(platform)
+                        .build()).getOpcContentSha256();
+            } catch (BmcException be) {
+                if (be.getStatusCode() == 404) {
+                    existingHash = null;
+                } else {
+                    throw be;
+                }
+            }
+
+            if (expectedSha256.equals(existingHash)) {
+                LOG.info("Nixos image {}:{} already present in object storage", platform, expectedSha256);
+            } else {
+                LOG.info("Uploading nixos image {}:{}", platform, expectedSha256);
+                objectStorageClient.putObject(PutObjectRequest.builder()
+                        .namespaceName(computeConfiguration.nixosImageBucketNamespace)
+                        .bucketName(computeConfiguration.nixosImageBucketName)
+                        .objectName(platform)
+                        .opcContentSha256(expectedSha256)
+                        .contentLength(Files.size(path))
+                        .putObjectBody(Files.newInputStream(path))
+                        .build());
+            }
+
+            String os = "nixos-" + platform;
+            @SuppressWarnings("UnnecessaryLocalVariable")
+            String version = expectedSha256;
+
+            OciLocation imageLocation = new OciLocation(computeConfiguration.nixosImageCompartment, Region.EU_FRANKFURT_1.getRegionId(), null);
+            Image match = null;
+            for (Image image : CustomImageResource.list(context, imageLocation)) {
+                if (image.getOperatingSystem().equals(os)) {
+                    if (image.getOperatingSystemVersion().equals(version)) {
+                        match = image;
+                    } else {
+                        LOG.info("Deleting stale nixos image {} ({})", image.getDisplayName(), image.getId());
+                        computeClient.forRegion(imageLocation).deleteImage(DeleteImageRequest.builder()
+                                .imageId(image.getId())
+                                .build());
+                    }
+                }
+            }
+            CustomImageResource imageResource = new CustomImageResource(context);
+
+            if (match == null) {
+                AbstractInfrastructure.launch(imageResource, () -> imageResource.manageNew(imageLocation, CreateImageDetails.builder()
+                        .compartmentId(imageLocation.compartmentId())
+                        .displayName(os + "-" + version)
+                        .imageSourceDetails(ImageSourceViaObjectStorageTupleDetails.builder()
+                                .namespaceName(computeConfiguration.nixosImageBucketNamespace)
+                                .bucketName(computeConfiguration.nixosImageBucketName)
+                                .operatingSystem(os)
+                                .operatingSystemVersion(version)
+                                .sourceImageType(ImageSourceDetails.SourceImageType.Qcow2)
+                                .build())
+                        .launchMode(CreateImageDetails.LaunchMode.Native)));
+            } else {
+                id = match.getId();
+                AbstractInfrastructure.launch(imageResource, () -> imageResource.manageExisting(imageLocation, id));
+            }
+
+            List<PhaseLock> imageLock = imageResource.require();
+            dependOn(imageLock);
+            PhaseLock.awaitAll(imageLock);
+        }
+    }
+
     public final class InstanceResource extends AbstractDecoratedResource {
         private final Launch launch;
         private String publicIp;
@@ -244,11 +367,10 @@ public final class Compute {
 
         @Override
         protected void launchDependencies() throws Exception {
-            List<Image> images = images(launch.location);
-            Image image = images.stream()
-                    .filter(i -> i.getDisplayName().matches(launch.instanceType.image))
-                    .findFirst()
-                    .orElseThrow(() -> new NoSuchElementException("Image " + launch.instanceType.image + " not found. Available images are: \n" + images.stream().map(Image::getDisplayName).collect(Collectors.joining("\n"))));
+            String platform = launch.instanceType.shape.startsWith("VM.Standard.A") ? "aarch64-linux" : "x86_64-linux";
+            NixosImageResource imageResource = getNixosBootstrapImage(platform);
+
+            launch.computeResource.dependOn(imageResource.require());
 
             AbstractInfrastructure.launch(launch.computeResource, () -> launch.computeResource.manageNew(launch.location, () -> {
                 CreateVnicDetails.Builder vnicDetails = CreateVnicDetails.builder()
@@ -259,7 +381,7 @@ public final class Compute {
                 }
                 return LaunchInstanceDetails.builder()
                         .sourceDetails(InstanceSourceViaImageDetails.builder()
-                                .imageId(image.getId())
+                                .imageId(imageResource.getId())
                                 .bootVolumeVpusPerGB((long) launch.instanceType.diskPerformanceUnits)
                                 .build())
                         .displayName(launch.displayName)
@@ -269,13 +391,18 @@ public final class Compute {
                                 .memoryInGBs(launch.instanceType.memoryInGb)
                                 .build())
                         .createVnicDetails(vnicDetails.build())
-                        .imageId(image.getId())
+                        .imageId(imageResource.getId())
                         .metadata(Map.of(
                                 "ssh_authorized_keys",
                                 authorizedKeys()
                                         .collect(Collectors.joining("\n"))
                         ))
                         .launchOptions(LaunchOptions.builder()
+                                .bootVolumeType(LaunchOptions.BootVolumeType.Paravirtualized)
+                                .remoteDataVolumeType(LaunchOptions.RemoteDataVolumeType.Paravirtualized)
+                                .firmware(LaunchOptions.Firmware.Uefi64)
+                                .isConsistentVolumeNamingEnabled(true)
+                                .isPvEncryptionInTransitEnabled(true)
                                 .networkType(LaunchOptions.NetworkType.Vfio)
                                 .build())
                         .agentConfig(LaunchInstanceAgentConfigDetails.builder()
@@ -395,7 +522,10 @@ public final class Compute {
     @ConfigurationProperties("compute")
     public record ComputeConfiguration(
             List<InstanceType> instanceTypes,
-            List<String> debugAuthorizedKeys
+            List<String> debugAuthorizedKeys,
+            String nixosImageCompartment,
+            String nixosImageBucketNamespace,
+            String nixosImageBucketName
     ) {
 
         /**

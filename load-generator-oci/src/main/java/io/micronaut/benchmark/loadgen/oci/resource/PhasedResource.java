@@ -49,6 +49,12 @@ public abstract class PhasedResource<P> {
         return Integer.compare(indexA, indexB);
     }
 
+    /**
+     * Wait until the given phase is reached.
+     *
+     * @param phase The phase to wait for
+     * @throws IllegalStateException If we go past the given phase
+     */
     protected final void awaitPhase(P phase) throws InterruptedException {
         P current = awaitPhaseOrPast(phase);
         if (current != phase) {
@@ -56,6 +62,12 @@ public abstract class PhasedResource<P> {
         }
     }
 
+    /**
+     * Wait until the given phase is reached.
+     *
+     * @param phase The phase to wait for
+     * @return The new phase we've entered
+     */
     protected final synchronized P awaitPhaseOrPast(P phase) throws InterruptedException {
         P current;
         while (true) {
@@ -68,6 +80,11 @@ public abstract class PhasedResource<P> {
         return current;
     }
 
+    /**
+     * Set the current phase.
+     *
+     * @param phase The phase
+     */
     public final synchronized void setPhase(P phase) {
         if (this.currentPhase == phase) {
             return;
@@ -80,6 +97,12 @@ public abstract class PhasedResource<P> {
         notifyAll();
     }
 
+    /**
+     * Wait until all locks for the given phase have been released.
+     *
+     * @param phase The phase to wait for. If we go past this phase, this method will return early
+     * @return The new phase at the end of this method call. Can still be the same {@code phase}, or a succeeding phase
+     */
     protected final synchronized P awaitUnlocked(P phase) throws InterruptedException {
         P current;
         boolean first = true;
@@ -102,6 +125,12 @@ public abstract class PhasedResource<P> {
         return current;
     }
 
+    /**
+     * Add a lock that prevents this resource from moving out of the given phase.
+     *
+     * @param phase The phase to lock
+     * @return The lock
+     */
     protected final synchronized PhaseLock lock(P phase) {
         LOG.trace("lock {} {}", getClass().getSimpleName(), phase, new Exception());
         locks.compute(phase, (ignore, v) -> v == null ? 1 : v + 1);
