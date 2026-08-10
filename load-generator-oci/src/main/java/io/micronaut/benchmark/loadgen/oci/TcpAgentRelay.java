@@ -4,7 +4,6 @@ import com.oracle.bmc.objectstorage.ObjectStorageClient;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.SshCommandRunner;
-import io.micronaut.benchmark.loadgen.oci.cmd.VanillaSsh;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.relay.TcpRelay;
@@ -40,7 +39,6 @@ import java.security.cert.CertificateEncodingException;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
@@ -110,36 +108,6 @@ public final class TcpAgentRelay implements Closeable {
         }
         runner.getSession().addCloseFutureListener(ignore -> binding.close());
         return runner;
-    }
-
-    public VanillaSsh openVanillaSsh(String username, String host, int port, Map<String, String> options) {
-        TcpRelay.Binding binding = relay.bindForward(new InetSocketAddress(host, port));
-        return new VanillaSsh() {
-            @Override
-            public String host() {
-                return binding.address().getHostString();
-            }
-
-            @Override
-            public int port() {
-                return binding.address().getPort();
-            }
-
-            @Override
-            public String username() {
-                return username;
-            }
-
-            @Override
-            public Map<String, String> options() {
-                return options;
-            }
-
-            @Override
-            public void close() {
-                binding.close();
-            }
-        };
     }
 
     @Override

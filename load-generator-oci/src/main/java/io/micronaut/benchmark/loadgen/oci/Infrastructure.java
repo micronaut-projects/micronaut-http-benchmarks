@@ -10,7 +10,6 @@ import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -37,7 +36,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private boolean started;
     private boolean stopped;
 
-    private Infrastructure(Factory factory, OciLocation location, Path logDirectory) throws IOException {
+    private Infrastructure(Factory factory, OciLocation location, Path logDirectory) throws Exception {
         super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
 
@@ -173,7 +172,7 @@ public final class Infrastructure extends AbstractInfrastructure {
             SutMonitor sutMonitor,
             List<Attachment> attachments
     ) {
-        Infrastructure create(OciLocation location, Path logDirectory) throws IOException {
+        Infrastructure create(OciLocation location, Path logDirectory) throws Exception {
             return new Infrastructure(this, location, logDirectory);
         }
     }

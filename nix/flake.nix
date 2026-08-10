@@ -10,15 +10,17 @@
   outputs = { nixpkgs, disko, ... }:
   let
     lib = nixpkgs.lib;
+    supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
 
     mkHost = {
+      system,
       definition
     }: lib.nixosSystem {
+      inherit system;
       modules = [
         disko.nixosModules.disko
         ./system/base.nix
         definition
-        { hardware.facter.reportPath = ./build/facter.json; }
       ];
     };
 
@@ -29,12 +31,20 @@
 
     ociBootstrapImage = system: (mkOciBootstrapImage system).config.system.build.image;
   in {
-    packages = lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: {
+    packages = lib.genAttrs supportedSystems (system: {
       oci-bootstrap-image = ociBootstrapImage system;
+      hyperfoil-agent-system = (mkHost {
+        inherit system;
+        definition = ./system/hyperfoil-agent.nix;
+      }).config.system.build.toplevel;
+      hyperfoil-controller-system = (mkHost {
+        inherit system;
+        definition = ./system/hyperfoil-controller.nix;
+      }).config.system.build.toplevel;
+      relay-server-system = (mkHost {
+        inherit system;
+        definition = ./system/relay-server.nix;
+      }).config.system.build.toplevel;
     });
-
-    nixosConfigurations = {
-      relay-server = mkHost { definition = ./system/relay-server.nix; };
-    };
   };
 }

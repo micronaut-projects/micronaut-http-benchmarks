@@ -35,7 +35,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
@@ -104,6 +103,10 @@ public final class SshFactory {
         return publicKey;
     }
 
+    byte[] privateKeyBytes() {
+        return privateKey.getBytes(StandardCharsets.UTF_8);
+    }
+
     @Singleton
     @Factory
     public SshClient sshClient() {
@@ -138,7 +141,7 @@ public final class SshFactory {
                         }
                     }
                 }
-                SshCommandRunner runner = SshCommandRunner.connect(sshClient, new HostConfigEntry("", instanceIp, 22, "opc", relay == null ? null : relay.username + "@" + relay.relayIp + ":22"));
+                SshCommandRunner runner = SshCommandRunner.connect(sshClient, new HostConfigEntry("", instanceIp, 22, "root", relay == null ? null : relay.username + "@" + relay.relayIp + ":22"));
                 scheduler.scheduleWithFixedDelay(() -> {
                     if (runner.getSession().isClosed()) {
                         // ends the task
@@ -169,18 +172,6 @@ public final class SshFactory {
                 throw new IOException("Failed to connect to SSH server " + instance + " at " + instanceIp + " via " + relay);
             }
         }
-    }
-
-    void deployPrivateKey(CommandRunner session) throws IOException {
-        session.upload(privateKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa", CommandRunner.DEFAULT_PERMISSIONS);
-        session.upload(publicKey.getBytes(StandardCharsets.UTF_8), ".ssh/id_rsa.pub", CommandRunner.DEFAULT_PERMISSIONS);
-    }
-
-    Map<String, String> standardSshOptions() {
-        return Map.of(
-                "IdentityFile", privateKeyFile.toAbsolutePath().toString(),
-                "IdentitiesOnly", "yes"
-        );
     }
 
     /**

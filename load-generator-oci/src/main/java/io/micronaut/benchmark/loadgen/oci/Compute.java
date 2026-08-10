@@ -23,7 +23,6 @@ import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
 import com.oracle.bmc.objectstorage.ObjectStorageClient;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
-import io.micronaut.benchmark.loadgen.oci.cmd.VanillaSsh;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
@@ -171,12 +170,16 @@ public final class Compute {
         }
 
         public Launch nixosConfiguration(String configurationName) throws Exception {
-            String installable = ".#nixosConfigurations." + configurationName + ".config.system.build.toplevel";
+            String installable = ".#packages." + platform() + "." + configurationName + "-system";
             nixosConfiguration = new NixosCacheResource(context, computeConfiguration.storageBucketNamespace, computeConfiguration.storageBucketBucketName, "nixos-cache", installable, true);
             computeResource.dependOn(nixosConfiguration.require());
             AbstractInfrastructure.launch(nixosConfiguration, nixosConfiguration::manage);
             nixosConfigurationDerivation = nix.getDerivation(new OutputListener.Log(LOG, Level.INFO), installable);
             return this;
+        }
+
+        private String platform() {
+            return instanceType.shape.startsWith("VM.Standard.A") ? "aarch64-linux" : "x86_64-linux";
         }
 
         public Launch systemdCredential(Path path, byte[] value) {
@@ -362,8 +365,7 @@ public final class Compute {
         @SuppressWarnings("StringConcatenationInLoop")
         @Override
         protected void launchDependencies() throws Exception {
-            String platform = launch.instanceType.shape.startsWith("VM.Standard.A") ? "aarch64-linux" : "x86_64-linux";
-            NixosImageResource imageResource = getNixosBootstrapImage(platform);
+            NixosImageResource imageResource = getNixosBootstrapImage(launch.platform());
             launch.computeResource.dependOn(imageResource.require());
 
             AbstractInfrastructure.launch(launch.computeResource, () -> launch.computeResource.manageNew(launch.location, () -> {
@@ -386,6 +388,9 @@ public final class Compute {
                     userDataScript += "profile=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths " + launch.nixosConfigurationDerivation + "^out)\n";
                     userDataScript += "$profile/bin/switch-to-configuration switch\n";
                 }
+                userDataScript += "install -d /var/lib/micronaut-benchmark\n";
+                userDataScript += "touch /var/lib/micronaut-benchmark/role-activated\n";
+                userDataScript += "systemctl start sshd.service\n";
 
                 return LaunchInstanceDetails.builder()
                         .sourceDetails(InstanceSourceViaImageDetails.builder()
@@ -448,50 +453,6 @@ public final class Compute {
             return Stream.concat(computeConfiguration.debugAuthorizedKeys.stream(), Stream.of(sshFactory.publicKey()));
         }
 
-        public VanillaSsh connectVanillaSsh() throws Exception {
-            return switch (launch.access) {
-                case BastionAccess bastionAccess -> new VanillaSsh() {
-                    @Override
-                    public String host() {
-                        return launch.privateIp;
-                    }
-
-                    @Override
-                    public Map<String, String> options() {
-                        var options = new HashMap<String, String>(sshFactory.standardSshOptions());
-                        options.put("ProxyJump", bastionAccess.sessionResource.getBastionUserName() + "@host.bastion." + launch.location.region() + ".oci.oraclecloud.com");
-                        return options;
-                    }
-                };
-                case HttpRelayAccess httpRelayAccess ->
-                        httpRelayAccess.relay.getRelay().openVanillaSsh("benchmark", launch.privateIp, 22, sshFactory.standardSshOptions());
-                case PublicIpAccess _ -> new VanillaSsh() {
-                    @Override
-                    public String host() {
-                        return publicIp;
-                    }
-
-                    @Override
-                    public Map<String, String> options() {
-                        return sshFactory.standardSshOptions();
-                    }
-                };
-                case SshRelayAccess sshRelayAccess -> new VanillaSsh() {
-                    @Override
-                    public String host() {
-                        return launch.privateIp;
-                    }
-
-                    @Override
-                    public Map<String, String> options() {
-                        var options = new HashMap<String, String>(sshFactory.standardSshOptions());
-                        options.put("ProxyJump", "benchmark@" + sshRelayAccess.relayInstance.publicIp);
-                        return options;
-                    }
-                };
-            };
-        }
-
         public CommandRunner connectSsh() throws Exception {
             switch (launch.access) {
                 case BastionAccess bastionAccess -> {
@@ -499,13 +460,13 @@ public final class Compute {
                     return Infrastructure.retry(() -> sshFactory.connect(this, launch.privateIp, relay));
                 }
                 case HttpRelayAccess httpRelayAccess -> {
-                    return httpRelayAccess.relay.getRelay().openSession("opc@" + launch.privateIp + ":22");
+                    return httpRelayAccess.relay.getRelay().openSession("root@" + launch.privateIp + ":22");
                 }
                 case PublicIpAccess _ -> {
                     return Infrastructure.retry(() -> sshFactory.connect(this, publicIp, null));
                 }
                 case SshRelayAccess sshRelayAccess -> {
-                    SshFactory.Relay relay = new SshFactory.Relay("opc", sshRelayAccess.relayInstance.publicIp);
+                    SshFactory.Relay relay = new SshFactory.Relay("root", sshRelayAccess.relayInstance.publicIp);
                     return Infrastructure.retry(() -> sshFactory.connect(this, launch.privateIp, relay));
                 }
             }

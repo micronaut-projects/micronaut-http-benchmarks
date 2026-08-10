@@ -62,8 +62,6 @@ sla={"0.99"="200ms"}
 
 # configuration for the hyperfoil cluster
 [hyperfoil]
-#location="/home/yawkat/bin/hyperfoil-0.27"
-location="/home/yawkat/dev/Hyperfoil/distribution/target/distribution"
 agent-count=2
 
 warmup-duration="1m"

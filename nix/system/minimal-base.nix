@@ -10,6 +10,8 @@
     settings.PermitRootLogin = "prohibit-password";
   };
 
+  systemd.services.sshd.unitConfig.ConditionPathExists = "/var/lib/micronaut-benchmark/role-activated";
+
   networking = {
     dhcpcd.enable = false;
     nftables.enable = true;

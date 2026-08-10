@@ -9,7 +9,6 @@ import io.hyperfoil.api.config.SLABuilder;
 import io.hyperfoil.api.config.ScenarioBuilder;
 import io.hyperfoil.api.statistics.StatisticsSummary;
 import io.hyperfoil.client.RestClient;
-import io.hyperfoil.client.RestClientException;
 import io.hyperfoil.controller.Client;
 import io.hyperfoil.controller.model.RequestStatisticsResponse;
 import io.hyperfoil.controller.model.RequestStats;
@@ -22,8 +21,6 @@ import io.hyperfoil.http.steps.HttpRequestStepBuilder;
 import io.hyperfoil.http.steps.HttpStepCatalog;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
-import io.micronaut.benchmark.loadgen.oci.cmd.ProcessBuilder;
-import io.micronaut.benchmark.loadgen.oci.cmd.ProcessHandle;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
@@ -34,7 +31,6 @@ import io.micronaut.http.ssl.CertificateProvider;
 import io.micronaut.inject.qualifiers.Qualifiers;
 import io.micronaut.scheduling.TaskExecutors;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClosedException;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
@@ -85,10 +81,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
      */
     private static final String HYPERFOIL_AGENT_PREFIX = "10.0.1.";
     /**
-     * Directory of the hyperfoil controller.
-     */
-    private static final String REMOTE_HYPERFOIL_LOCATION = "hyperfoil";
-    /**
      * {@link Compute} instance type name for hyperfoil agents.
      */
     private static final String AGENT_INSTANCE_TYPE = "hyperfoil-agent";
@@ -115,7 +107,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         System.setProperty("io.hyperfoil.cli.request.timeout", "60000");
     }
 
-    private HyperfoilRunner(Factory factory, Path logDirectory, AbstractInfrastructure infrastructure) throws IOException {
+    private HyperfoilRunner(Factory factory, Path logDirectory, AbstractInfrastructure infrastructure) throws Exception {
         super(factory.context);
         this.factory = factory;
         this.logDirectory = logDirectory;
@@ -125,11 +117,14 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         } catch (FileAlreadyExistsException ignored) {}
 
         controllerLaunch = infrastructure.computeBuilder("hyperfoil-controller")
-                .privateIp(HYPERFOIL_CONTROLLER_IP);
+                .privateIp(HYPERFOIL_CONTROLLER_IP)
+                .systemdCredential(Path.of("/etc/credstore/hyperfoil-controller/id_rsa"), factory.sshFactory.privateKeyBytes())
+                .nixosConfiguration("hyperfoil-controller");
         controllerLocks = controllerLaunch.resource().require();
         for (int i = 0; i < factory.config.agentCount; i++) {
             Compute.Launch launch = infrastructure.computeBuilder(AGENT_INSTANCE_TYPE)
-                    .privateIp(agentIp(i));
+                    .privateIp(agentIp(i))
+                    .nixosConfiguration("hyperfoil-agent");
             AgentResource r = new AgentResource(context, i, launch, new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("agent-instance-" + i + ".log"))));
             r.name("agent" + i);
             agents.add(r);
@@ -175,42 +170,16 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             PhaseLock.awaitAll(controllerLocks);
             setPhase(HyperfoilPhase.SETTING_UP_CONTROLLER);
 
-            try (
-                    OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("hyperfoil.log")));
-                    CommandRunner controllerSession = controller.connectSsh()) {
-                SshUtil.run(controllerSession, "sudo yum install jdk-17-headless -y", log, 0, 1);
-                controllerSession.uploadRecursive(factory.config.location, REMOTE_HYPERFOIL_LOCATION);
-                factory.sshFactory.deployPrivateKey(controllerSession);
-
-                try (ProcessBuilder builder = controllerSession.builder(REMOTE_HYPERFOIL_LOCATION + "/bin/controller.sh -Djgroups.join_timeout=20000");
-                     ProcessHandle controllerCommand = builder
-                             .forwardOutput(log)
-                             .start();
-                     ResilientSshPortForwarder controllerPortForward = factory.resilientForwarderFactory.create(
-                             controller::connectSsh,
-                             new SshdSocketAddress("localhost", 8090)
-                     );
+            try (CommandRunner controllerSession = controller.connectSsh()) {
+                try (ResilientSshPortForwarder controllerPortForward = factory.resilientForwarderFactory.create(
+                              controller::connectSsh,
+                              new SshdSocketAddress("localhost", 8090)
+                      );
                      RestClient client = new RestClient(
                              factory.vertx,
                              controllerPortForward.address().getHostName(),
                              controllerPortForward.address().getPort(),
                              false, true, null)) {
-
-                    while (true) {
-                        try {
-                            client.ping();
-                            break;
-                        } catch (RestClientException e) {
-                            if (!(e.getCause() instanceof HttpClosedException hce) || !hce.getMessage().equals("Connection was closed")) {
-                                throw e;
-                            }
-                        }
-                        if (!controllerCommand.isOpen()) {
-                            throw new IllegalStateException("Controller exec channel closed, did the controller die?");
-                        }
-                        LOG.info("Connecting to hyperfoil controller forwarded at {}", controllerPortForward.address());
-                        TimeUnit.SECONDS.sleep(1);
-                    }
 
                     setPhase(HyperfoilPhase.AWAITING_AGENTS);
                     PhaseLock.awaitAll(agentLocks);
@@ -342,7 +311,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             }
             benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
                     "threads", String.valueOf((int) agentInstanceType.ocpus() - 1),
-                    "extras", extras
+                    "extras", extras,
+                    "user", "root"
             ));
         }
 
@@ -540,9 +510,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
         @Override
         protected void setUp() throws Exception {
-            try (CommandRunner agentSession = instance.connectSsh()) {
-                SshUtil.run(agentSession, "sudo yum install jdk-17-headless -y", log);
-                if (factory.config.agentAsyncProfiler) {
+            if (factory.config.agentAsyncProfiler) {
+                try (CommandRunner agentSession = instance.connectSsh()) {
                     AsyncProfilerHelper.Session session = factory.asyncProfilerHelper.createSession(log);
                     session.initAgent(agentSession);
                     asyncProfilerSession = session;
@@ -600,13 +569,12 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             objectMapper.registerSubtypes(HttpStats.class);
         }
 
-        public HyperfoilRunner create(Path outputDirectory, AbstractInfrastructure infrastructure) throws IOException {
+        public HyperfoilRunner create(Path outputDirectory, AbstractInfrastructure infrastructure) throws Exception {
             return new HyperfoilRunner(this, outputDirectory, infrastructure);
         }
     }
 
     /**
-     * @param location           Location of the hyperfoil directory
      * @param agentCount         Number of agents to create
      * @param warmupDuration     Duration of the warmup run
      * @param benchmarkDuration  Duration of each main benchmark run
@@ -619,7 +587,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
      */
     @ConfigurationProperties("hyperfoil")
     public record HyperfoilConfiguration(
-            Path location,
             int agentCount,
             Duration warmupDuration,
             Duration benchmarkDuration,
