@@ -1,12 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.oracle.bmc.model.BmcException;
 import com.oracle.bmc.objectstorage.ObjectStorageClient;
-import com.oracle.bmc.objectstorage.model.CreatePreauthenticatedRequestDetails;
-import com.oracle.bmc.objectstorage.model.PreauthenticatedRequest;
-import com.oracle.bmc.objectstorage.requests.CreatePreauthenticatedRequestRequest;
-import com.oracle.bmc.objectstorage.requests.HeadObjectRequest;
-import com.oracle.bmc.objectstorage.requests.PutObjectRequest;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.SshCommandRunner;
@@ -30,7 +24,6 @@ import org.apache.sshd.core.CoreModuleProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -43,13 +36,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyPair;
-import java.security.MessageDigest;
 import java.security.cert.CertificateEncodingException;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -252,10 +241,11 @@ public final class TcpAgentRelay implements Closeable {
         }
 
         public Builder prepareCloudInit(Compute.Launch relayInstanceBuilder) throws Exception {
-            URI agentUri = factory.uploadAgent();
-            relayInstanceBuilder.addStartupCommand("curl -o " + AGENT_PATH + " " + agentUri);
-            relayInstanceBuilder.addStartupCommand("chmod +x " + AGENT_PATH);
-            relayInstanceBuilder.addStartupCommand(agentCommand());
+            relayInstanceBuilder.systemdCredential(Path.of("/etc/credstore/relay-agent/key-algorithm"), serverCert.getKeyPair().getPrivate().getAlgorithm().getBytes(StandardCharsets.UTF_8));
+            relayInstanceBuilder.systemdCredential(Path.of("/etc/credstore/relay-agent/key"), Base64.getEncoder().encodeToString(serverCert.getKeyPair().getPrivate().getEncoded()).getBytes(StandardCharsets.UTF_8));
+            relayInstanceBuilder.systemdCredential(Path.of("/etc/credstore/relay-agent/cert"), Base64.getEncoder().encodeToString(serverCert.getCertificate().getEncoded()).getBytes(StandardCharsets.UTF_8));
+            relayInstanceBuilder.systemdCredential(Path.of("/etc/credstore/relay-agent/remote-cert"), Base64.getEncoder().encodeToString(clientCert.getCertificate().getEncoded()).getBytes(StandardCharsets.UTF_8));
+            relayInstanceBuilder.nixosConfiguration("relay-server");
             hasCloudInit = true;
             return this;
         }
@@ -284,54 +274,8 @@ public final class TcpAgentRelay implements Closeable {
     @Singleton
     public record Factory(@Named(TaskExecutors.BLOCKING) ExecutorService blocking, Configuration configuration,
                           ObjectStorageClient objectStorageClient) {
-        private static final String OBJECT_NAME = "tcp-relay-agent";
-
         public Builder builder() throws Exception {
             return new Builder(this);
-        }
-
-        private synchronized URI uploadAgent() throws Exception {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] digest = md.digest(AGENT_BYTES);
-            String expectedSha256 = Base64.getEncoder().encodeToString(digest);
-
-            String existingHash;
-            try {
-                existingHash = objectStorageClient.headObject(HeadObjectRequest.builder()
-                        .namespaceName(configuration.bucketNamespace)
-                        .bucketName(configuration.bucketName)
-                        .objectName(OBJECT_NAME)
-                        .build()).getOpcContentSha256();
-            } catch (BmcException be) {
-                if (be.getStatusCode() == 404) {
-                    existingHash = null;
-                } else {
-                    throw be;
-                }
-            }
-            if (!expectedSha256.equals(existingHash)) {
-                objectStorageClient.putObject(PutObjectRequest.builder()
-                        .namespaceName(configuration.bucketNamespace)
-                        .bucketName(configuration.bucketName)
-                        .objectName(OBJECT_NAME)
-                        .opcContentSha256(expectedSha256)
-                        .contentLength((long) AGENT_BYTES.length)
-                        .putObjectBody(new ByteArrayInputStream(AGENT_BYTES))
-                        .build());
-            }
-
-            PreauthenticatedRequest preauthenticatedRequest = objectStorageClient.createPreauthenticatedRequest(CreatePreauthenticatedRequestRequest.builder()
-                    .namespaceName(configuration.bucketNamespace)
-                    .bucketName(configuration.bucketName)
-                    .createPreauthenticatedRequestDetails(CreatePreauthenticatedRequestDetails.builder()
-                            .name("tcp-relay-agent access")
-                            .accessType(CreatePreauthenticatedRequestDetails.AccessType.ObjectRead)
-                            .objectName(OBJECT_NAME)
-                            .timeExpires(Date.from(Instant.now().plus(1, ChronoUnit.DAYS)))
-                            .build())
-                    .build()).getPreauthenticatedRequest();
-
-            return URI.create(objectStorageClient.getEndpoint() + preauthenticatedRequest.getAccessUri());
         }
     }
 

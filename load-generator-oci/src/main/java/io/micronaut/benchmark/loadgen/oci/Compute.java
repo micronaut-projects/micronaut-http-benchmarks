@@ -20,10 +20,7 @@ import com.oracle.bmc.core.model.LaunchOptions;
 import com.oracle.bmc.core.requests.DeleteImageRequest;
 import com.oracle.bmc.core.requests.GetVnicRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
-import com.oracle.bmc.model.BmcException;
 import com.oracle.bmc.objectstorage.ObjectStorageClient;
-import com.oracle.bmc.objectstorage.requests.HeadObjectRequest;
-import com.oracle.bmc.objectstorage.requests.PutObjectRequest;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.VanillaSsh;
@@ -31,8 +28,10 @@ import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
 import io.micronaut.benchmark.loadgen.oci.resource.CustomImageResource;
+import io.micronaut.benchmark.loadgen.oci.resource.NixosCacheResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
+import io.micronaut.benchmark.loadgen.oci.resource.StorageObjectResource;
 import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.context.annotation.EachProperty;
@@ -41,10 +40,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.event.Level;
 
-import java.io.InputStream;
-import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HashMap;
@@ -103,7 +100,7 @@ public final class Compute {
     private NixosImageResource getNixosBootstrapImage(String platform) {
         return nixosBootstrapByPlatform.computeIfAbsent(platform, k -> {
             NixosImageResource resource = new NixosImageResource(context, k);
-            AbstractInfrastructure.launch(resource, resource::manage);
+            resource.start();
             return resource;
         });
     }
@@ -117,8 +114,8 @@ public final class Compute {
      * @param subnet       Subnet for the instance VNIC
      * @return The instance builder
      */
-    public Launch builder(String instanceType, OciLocation location, SubnetResource subnet, String nixFlake) {
-        return new Launch(instanceType, getInstanceType(instanceType), location, subnet, nixFlake);
+    public Launch builder(String instanceType, OciLocation location, SubnetResource subnet) {
+        return new Launch(instanceType, getInstanceType(instanceType), location, subnet);
     }
 
     /**
@@ -138,16 +135,19 @@ public final class Compute {
         private final ComputeConfiguration.InstanceType instanceType;
         private final OciLocation location;
         private final SubnetResource subnet;
-        private final String nixFlake;
         private String privateIp = null;
         private InstanceAccess access;
 
-        private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet, String nixFlake) {
+        private NixosCacheResource nixosConfiguration;
+        private String nixosConfigurationDerivation;
+
+        private final Map<Path, byte[]> systemdCredentials = new HashMap<>();
+
+        private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
             this.displayName = displayName;
             this.instanceType = Objects.requireNonNull(instanceType, "instanceType");
             this.location = location;
             this.subnet = subnet;
-            this.nixFlake = nixFlake;
             this.computeResource.name(displayName);
             computeResource.dependOn(subnet.require());
             resource.dependOn(computeResource.require());
@@ -167,6 +167,20 @@ public final class Compute {
         public Launch access(InstanceAccess access) {
             resource.dependOn(access.require());
             this.access = access;
+            return this;
+        }
+
+        public Launch nixosConfiguration(String configurationName) throws Exception {
+            String installable = ".#nixosConfigurations." + configurationName + ".config.system.build.toplevel";
+            nixosConfiguration = new NixosCacheResource(context, computeConfiguration.storageBucketNamespace, computeConfiguration.storageBucketBucketName, "nixos-cache", installable, true);
+            computeResource.dependOn(nixosConfiguration.require());
+            AbstractInfrastructure.launch(nixosConfiguration, nixosConfiguration::manage);
+            nixosConfigurationDerivation = nix.getDerivation(new OutputListener.Log(LOG, Level.INFO), installable);
+            return this;
+        }
+
+        public Launch systemdCredential(Path path, byte[] value) {
+            systemdCredentials.put(path, value);
             return this;
         }
 
@@ -254,12 +268,34 @@ public final class Compute {
     }
 
     private final class NixosImageResource extends AbstractDecoratedResource {
+        private final StorageObjectResource imageResource;
         private final String platform;
         private String id;
 
         NixosImageResource(ResourceContext context, String platform) {
             super(context);
             this.platform = platform;
+            this.imageResource = new StorageObjectResource(
+                    context,
+                    computeConfiguration.storageBucketNamespace,
+                    computeConfiguration.storageBucketBucketName,
+                    objectName(platform),
+                    upload -> {
+                        LOG.info("Building nixos image for {}", platform);
+                        Path path = nix.build(new OutputListener.Log(LOG, Level.DEBUG), ".#packages." + platform + ".oci-bootstrap-image").resolve("nixos.qcow2");
+                        upload.accept(path);
+                    }
+            );
+        }
+
+        private static String objectName(String platform) {
+            return "nixos/image/" + platform;
+        }
+
+        void start() {
+            dependOn(imageResource.require());
+            AbstractInfrastructure.launch(imageResource, imageResource::manage);
+            AbstractInfrastructure.launch(this, this::manage);
         }
 
         public String getId() {
@@ -271,53 +307,10 @@ public final class Compute {
 
         @Override
         protected void setUp() throws Exception {
-            LOG.info("Building nixos image for {}", platform);
-            Path path = nix.build(new OutputListener.Log(LOG, Level.DEBUG), ".#packages." + platform + ".oci-bootstrap-image").resolve("nixos.qcow2");
-
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            try (InputStream is = Files.newInputStream(path)) {
-                byte[] buffer = new byte[65536];
-                int read;
-                while ((read = is.read(buffer)) != -1) {
-                    md.update(buffer, 0, read);
-                }
-            }
-            String expectedSha256 = Base64.getEncoder().encodeToString(md.digest());
-
-            String existingHash;
-            try {
-                existingHash = objectStorageClient.headObject(HeadObjectRequest.builder()
-                        .namespaceName(computeConfiguration.nixosImageBucketNamespace)
-                        .bucketName(computeConfiguration.nixosImageBucketName)
-                        .objectName(platform)
-                        .build()).getOpcContentSha256();
-            } catch (BmcException be) {
-                if (be.getStatusCode() == 404) {
-                    existingHash = null;
-                } else {
-                    throw be;
-                }
-            }
-
-            if (expectedSha256.equals(existingHash)) {
-                LOG.info("Nixos image {}:{} already present in object storage", platform, expectedSha256);
-            } else {
-                LOG.info("Uploading nixos image {}:{}", platform, expectedSha256);
-                objectStorageClient.putObject(PutObjectRequest.builder()
-                        .namespaceName(computeConfiguration.nixosImageBucketNamespace)
-                        .bucketName(computeConfiguration.nixosImageBucketName)
-                        .objectName(platform)
-                        .opcContentSha256(expectedSha256)
-                        .contentLength(Files.size(path))
-                        .putObjectBody(Files.newInputStream(path))
-                        .build());
-            }
-
             String os = "nixos-" + platform;
-            @SuppressWarnings("UnnecessaryLocalVariable")
-            String version = expectedSha256;
+            String version = imageResource.getHash();
 
-            OciLocation imageLocation = new OciLocation(computeConfiguration.nixosImageCompartment, Region.EU_FRANKFURT_1.getRegionId(), null);
+            OciLocation imageLocation = new OciLocation(computeConfiguration.storageBucketCompartment, Region.EU_FRANKFURT_1.getRegionId(), null);
             Image match = null;
             for (Image image : CustomImageResource.list(context, imageLocation)) {
                 if (image.getOperatingSystem().equals(os)) {
@@ -338,8 +331,9 @@ public final class Compute {
                         .compartmentId(imageLocation.compartmentId())
                         .displayName(os + "-" + version)
                         .imageSourceDetails(ImageSourceViaObjectStorageTupleDetails.builder()
-                                .namespaceName(computeConfiguration.nixosImageBucketNamespace)
-                                .bucketName(computeConfiguration.nixosImageBucketName)
+                                .namespaceName(computeConfiguration.storageBucketNamespace)
+                                .bucketName(computeConfiguration.storageBucketBucketName)
+                                .objectName(objectName(platform))
                                 .operatingSystem(os)
                                 .operatingSystemVersion(version)
                                 .sourceImageType(ImageSourceDetails.SourceImageType.Qcow2)
@@ -365,11 +359,11 @@ public final class Compute {
             this.launch = launch;
         }
 
+        @SuppressWarnings("StringConcatenationInLoop")
         @Override
         protected void launchDependencies() throws Exception {
             String platform = launch.instanceType.shape.startsWith("VM.Standard.A") ? "aarch64-linux" : "x86_64-linux";
             NixosImageResource imageResource = getNixosBootstrapImage(platform);
-
             launch.computeResource.dependOn(imageResource.require());
 
             AbstractInfrastructure.launch(launch.computeResource, () -> launch.computeResource.manageNew(launch.location, () -> {
@@ -379,6 +373,20 @@ public final class Compute {
                 if (launch.privateIp != null) {
                     vnicDetails.privateIp(launch.privateIp);
                 }
+
+                String userDataScript = "#!/bin/sh\nset -e\n";
+                for (Map.Entry<Path, byte[]> entry : launch.systemdCredentials.entrySet()) {
+                    userDataScript += "mkdir -p " + entry.getKey().getParent() + "\n";
+                    userDataScript += "touch " + entry.getKey() + "\n";
+                    userDataScript += "chmod 600 " + entry.getKey() + "\n";
+                    userDataScript += "echo '" + Base64.getEncoder().encodeToString(entry.getValue()) + "' | base64 -d > " + entry.getKey() + "\n";
+                }
+                if (launch.nixosConfiguration != null) {
+                    userDataScript += "nix --extra-experimental-features 'nix-command flakes' copy --no-check-sigs --from " + launch.nixosConfiguration.buildCacheUri() + " " + launch.nixosConfigurationDerivation + "\n";
+                    userDataScript += "profile=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths " + launch.nixosConfigurationDerivation + "^out)\n";
+                    userDataScript += "$profile/bin/switch-to-configuration switch\n";
+                }
+
                 return LaunchInstanceDetails.builder()
                         .sourceDetails(InstanceSourceViaImageDetails.builder()
                                 .imageId(imageResource.getId())
@@ -395,7 +403,9 @@ public final class Compute {
                         .metadata(Map.of(
                                 "ssh_authorized_keys",
                                 authorizedKeys()
-                                        .collect(Collectors.joining("\n"))
+                                        .collect(Collectors.joining("\n")),
+                                "user_data",
+                                Base64.getEncoder().encodeToString(userDataScript.getBytes(StandardCharsets.UTF_8))
                         ))
                         .launchOptions(LaunchOptions.builder()
                                 .bootVolumeType(LaunchOptions.BootVolumeType.Paravirtualized)
@@ -431,10 +441,6 @@ public final class Compute {
                             .vnicId(vnic)
                             .build()).getVnic().getPublicIp();
                 });
-            }
-
-            try (VanillaSsh ssh = connectVanillaSsh()) {
-                nix.anywhere(log, ssh, authorizedKeys().toList(), launch.nixFlake);
             }
         }
 
@@ -523,9 +529,9 @@ public final class Compute {
     public record ComputeConfiguration(
             List<InstanceType> instanceTypes,
             List<String> debugAuthorizedKeys,
-            String nixosImageCompartment,
-            String nixosImageBucketNamespace,
-            String nixosImageBucketName
+            String storageBucketCompartment,
+            String storageBucketNamespace,
+            String storageBucketBucketName
     ) {
 
         /**

@@ -8,7 +8,9 @@ import com.oracle.bmc.bastion.BastionClient;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.identity.IdentityClient;
+import com.oracle.bmc.objectstorage.ObjectStorageClient;
 import com.oracle.bmc.psql.PostgresqlClient;
+import io.micronaut.benchmark.loadgen.oci.Nix;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 import io.micronaut.benchmark.loadgen.oci.RegionalClient;
 import io.micronaut.context.annotation.Requires;
@@ -95,7 +97,9 @@ public final class ResourceContext {
             RegionalClient<ComputeClient> compute,
             RegionalClient<VirtualNetworkClient> vcn,
             RegionalClient<BastionClient> bastion,
-            RegionalClient<PostgresqlClient> postgres
+            RegionalClient<PostgresqlClient> postgres,
+            ObjectStorageClient objectStorage,
+            Nix nix
     ) {
     }
 

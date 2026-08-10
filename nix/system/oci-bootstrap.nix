@@ -1,8 +1,6 @@
 { config, lib, modulesPath, pkgs, ... }:
 {
   imports = [
-    (modulesPath + "/profiles/minimal.nix")
-    (modulesPath + "/virtualisation/oci-image.nix")
     ./minimal-base.nix
   ];
 
@@ -25,7 +23,6 @@
   };
 
   programs.command-not-found.enable = false;
-  system.copySystemConfiguration = false;
 
   virtualisation.diskSize = 4096;
 

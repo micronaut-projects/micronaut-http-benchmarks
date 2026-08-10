@@ -83,8 +83,9 @@ interval="5s"
 
 [compute]
 debug-authorized-keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIObBGYqEuujvGhBwr1S/y+ungP2B7wFDmaX61Jek+Dli yawkat@yawkat-oracle"]
-nixos-image-bucket-namespace = "oraclelabs"
-nixos-image-bucket-name = "nixos-images"
+storage-bucket-compartment = "ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhhg75ndjpjdmxihi2gltvb5zazhv2oe7wea"
+storage-bucket-namespace = "oraclelabs"
+storage-bucket-name = "benchmark-storage"
 
 # configuration for the different compute instances for the benchmark
 

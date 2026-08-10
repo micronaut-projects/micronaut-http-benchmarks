@@ -1,6 +1,6 @@
 { pkgs, lib, ... }:
 {
-  import = [
+  imports = [
     ./minimal-base.nix
   ];
 
@@ -10,8 +10,6 @@
     enable = true;
     defaultEditor = true;
   };
-
-  environment.enableAllTerminfo = true;
 
   environment.systemPackages = [
     pkgs.htop

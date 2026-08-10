@@ -6,6 +6,7 @@ import jakarta.inject.Singleton;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -93,5 +94,28 @@ public class Nix {
             throw new IllegalStateException("Weird result path");
         }
         return path;
+    }
+
+    /**
+     * Get the nix-store path name of a derivation.
+     *
+     * @param installable The installable, e.g. {@code .#nixosConfigurations.relay-server.config.system.build.toplevel}
+     * @return The nix-store path name, e.g. {@code kzzvpzy4qg13w6iqbxgaj8d0qps547la-nixos-system-nixos-oci-26.05.20260803.531670d.drv}
+     */
+    public String getDerivation(OutputListener log, String installable) throws Exception {
+        return nixJson(log, List.of("path-info", "--json-format", "2", "--derivation", installable)).get("info").propertyNames().iterator().next();
+    }
+
+    public void uploadCache(OutputListener log, URI cache, String installable, boolean derivation) throws Exception {
+        List<String> args = new ArrayList<>();
+        args.add("--copy");
+        if (derivation) {
+            args.add("--derivation");
+        }
+        args.add("--to");
+        args.add(cache + "?compression=zstd");
+        args.add(installable);
+
+        nix(log, args);
     }
 }
