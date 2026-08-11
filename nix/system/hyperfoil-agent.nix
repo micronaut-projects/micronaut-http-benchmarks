@@ -1,5 +1,9 @@
 { pkgs, ... }:
 {
+  imports = [
+    ./base.nix
+  ];
+
   environment.systemPackages = [
     pkgs.jdk25_headless
     pkgs.coreutils

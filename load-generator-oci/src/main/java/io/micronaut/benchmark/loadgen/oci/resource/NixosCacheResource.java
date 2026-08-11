@@ -3,6 +3,7 @@ package io.micronaut.benchmark.loadgen.oci.resource;
 import com.oracle.bmc.objectstorage.model.CreatePreauthenticatedRequestDetails;
 import com.oracle.bmc.objectstorage.model.PreauthenticatedRequest;
 import com.oracle.bmc.objectstorage.requests.CreatePreauthenticatedRequestRequest;
+import io.micronaut.benchmark.loadgen.oci.Nix;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,15 +24,14 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     private final String bucket;
     private final String path;
     private final String installable;
-    private final boolean derivation;
+    private String derivationPath;
 
-    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable, boolean derivation) {
+    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable) {
         super(context);
         this.namespace = namespace;
         this.bucket = bucket;
         this.path = path;
         this.installable = installable;
-        this.derivation = derivation;
     }
 
     @Override
@@ -44,12 +44,20 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     }
 
     public void manage() throws Exception {
-        context.clients.nix().uploadCache(
-                new OutputListener.Log(LOG, Level.INFO),
-                buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite),
-                installable,
-                derivation
-        );
+        setPhase(Phase.Uploading);
+        try {
+            derivationPath = context.clients.nix().getDerivation(new OutputListener.Log(LOG, Level.INFO), installable);
+            context.clients.nix().uploadCache(
+                    new OutputListener.Log(LOG, Level.INFO),
+                    buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite),
+                    installable,
+                    true
+            );
+            setPhase(Phase.Available);
+        } catch (Exception e) {
+            setPhase(Phase.Failed);
+            throw e;
+        }
     }
 
     private URI buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType accessType) {
@@ -75,8 +83,13 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
         return buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
     }
 
+    public String activation() {
+        return Nix.activate(buildCacheUri(), derivationPath);
+    }
+
     public enum Phase {
         Uploading,
         Available,
+        Failed,
     }
 }

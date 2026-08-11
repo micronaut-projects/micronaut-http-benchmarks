@@ -35,6 +35,11 @@ public interface FrameworkRun {
     @Nullable
     Object parameters();
 
+    @Nullable
+    default String nixosConfiguration() {
+        return null;
+    }
+
     /**
      * Set up the benchmark environment, and run this benchmark. Note that the server-under-test VM may not be "clean",
      * in some setups it has been used for other benchmarks before.

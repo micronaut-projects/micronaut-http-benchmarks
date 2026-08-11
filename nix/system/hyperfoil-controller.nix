@@ -36,6 +36,10 @@ let
   '';
 in
 {
+  imports = [
+    ./base.nix
+  ];
+
   users.users.hyperfoil = {
     isNormalUser = true;
     home = "/home/hyperfoil";

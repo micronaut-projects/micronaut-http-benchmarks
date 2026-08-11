@@ -6,6 +6,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,6 +14,7 @@ import java.util.List;
 
 @Singleton
 public class Nix {
+    private static final String NIX = "/nix/var/nix/profiles/default/bin/nix";
     private final JsonMapper jsonMapper;
 
     public Nix(JsonMapper jsonMapper) {
@@ -21,7 +23,7 @@ public class Nix {
 
     private void nix(OutputListener log, List<String> args) throws Exception {
         List<String> cmd = new ArrayList<>(Arrays.asList(
-                "/nix/var/nix/profiles/default/bin/nix",
+                NIX,
                 "--extra-experimental-features", "nix-command",
                 "--extra-experimental-features", "flakes"
         ));
@@ -41,7 +43,7 @@ public class Nix {
 
     private JsonNode nixJson(OutputListener log, List<String> args) throws Exception {
         List<String> cmd = new ArrayList<>(Arrays.asList(
-                "/nix/var/nix/profiles/default/bin/nix",
+                NIX,
                 "--extra-experimental-features", "nix-command",
                 "--extra-experimental-features", "flakes"
         ));
@@ -70,6 +72,17 @@ public class Nix {
             throw new IllegalStateException("Weird result path");
         }
         return path;
+    }
+
+    public byte[] buildFrameworkRuns(OutputListener log) throws Exception {
+        return Files.readAllBytes(build(log, ".#nix-framework-runs"));
+    }
+
+    public static String activate(URI cacheUri, String derivation) {
+        return "set -e\n"
+                + NIX + " copy --no-check-sigs --from " + cacheUri + " " + derivation + "\n"
+                + "profile=$(" + NIX + " build --no-link --print-out-paths " + derivation + "^out)\n"
+                + "$profile/bin/switch-to-configuration switch\n";
     }
 
     /**

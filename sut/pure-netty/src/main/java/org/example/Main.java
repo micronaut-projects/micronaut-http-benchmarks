@@ -12,5 +12,12 @@ public class Main {
         System.out.println("Bound to http://0.0.0.0:8080");
         httpServer.bindHttps("0.0.0.0", 8443);
         System.out.println("Bound to https://0.0.0.0:8443");
+
+        Process notify = new ProcessBuilder("systemd-notify", "--ready")
+                .inheritIO()
+                .start();
+        if (notify.waitFor() != 0) {
+            throw new IllegalStateException("systemd-notify failed");
+        }
     }
 }

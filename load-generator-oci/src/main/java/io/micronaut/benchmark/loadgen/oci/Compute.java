@@ -138,7 +138,6 @@ public final class Compute {
         private InstanceAccess access;
 
         private NixosCacheResource nixosConfiguration;
-        private String nixosConfigurationDerivation;
 
         private final Map<Path, byte[]> systemdCredentials = new HashMap<>();
 
@@ -169,12 +168,15 @@ public final class Compute {
             return this;
         }
 
-        public Launch nixosConfiguration(String configurationName) throws Exception {
-            String installable = ".#packages." + platform() + "." + configurationName + "-system";
-            nixosConfiguration = new NixosCacheResource(context, computeConfiguration.storageBucketNamespace, computeConfiguration.storageBucketBucketName, "nixos-cache", installable, true);
-            computeResource.dependOn(nixosConfiguration.require());
+        public Launch nixosConfiguration(String configurationName) {
+            nixosConfiguration = cacheResource(instanceType, configurationName);
             AbstractInfrastructure.launch(nixosConfiguration, nixosConfiguration::manage);
-            nixosConfigurationDerivation = nix.getDerivation(new OutputListener.Log(LOG, Level.INFO), installable);
+            return nixosConfiguration(nixosConfiguration);
+        }
+
+        public Launch nixosConfiguration(NixosCacheResource nixosConfiguration) {
+            this.nixosConfiguration = Objects.requireNonNull(nixosConfiguration, "nixosConfiguration");
+            computeResource.dependOn(nixosConfiguration.require());
             return this;
         }
 
@@ -268,6 +270,18 @@ public final class Compute {
         public CommandRunner connectSsh() throws Exception {
             return resource.connectSsh();
         }
+    }
+
+    NixosCacheResource cacheResource(ComputeConfiguration.InstanceType instanceType, String configuration) {
+        String platform = instanceType.shape.startsWith("VM.Standard.A") ? "aarch64-linux" : "x86_64-linux";
+        String installable = ".#packages." + platform + "." + configuration + "-system";
+        return new NixosCacheResource(
+                context,
+                computeConfiguration.storageBucketNamespace,
+                computeConfiguration.storageBucketBucketName,
+                "nixos-cache",
+                installable
+        );
     }
 
     private final class NixosImageResource extends AbstractDecoratedResource {
@@ -384,9 +398,7 @@ public final class Compute {
                     userDataScript += "echo '" + Base64.getEncoder().encodeToString(entry.getValue()) + "' | base64 -d > " + entry.getKey() + "\n";
                 }
                 if (launch.nixosConfiguration != null) {
-                    userDataScript += "nix --extra-experimental-features 'nix-command flakes' copy --no-check-sigs --from " + launch.nixosConfiguration.buildCacheUri() + " " + launch.nixosConfigurationDerivation + "\n";
-                    userDataScript += "profile=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths " + launch.nixosConfigurationDerivation + "^out)\n";
-                    userDataScript += "$profile/bin/switch-to-configuration switch\n";
+                    userDataScript += launch.nixosConfiguration.activation();
                 }
                 userDataScript += "install -d /var/lib/micronaut-benchmark\n";
                 userDataScript += "touch /var/lib/micronaut-benchmark/role-activated\n";

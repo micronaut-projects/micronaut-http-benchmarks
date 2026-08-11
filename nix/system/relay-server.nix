@@ -44,6 +44,10 @@ let
   '';
 in
 {
+  imports = [
+    ./base.nix
+  ];
+
   nix.settings.sandbox = "relaxed";
 
   networking.firewall.allowedTCPPorts = [ 8443 ];

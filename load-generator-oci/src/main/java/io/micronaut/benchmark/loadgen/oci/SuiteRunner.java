@@ -16,10 +16,12 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.stream.Collectors;
 
 /**
  * Main runner for the benchmark suite.
@@ -71,6 +73,13 @@ public final class SuiteRunner {
         clean();
 
         List<LoadVariant> loadVariants = loadManager.getLoadVariants();
+        List<FrameworkRun> enabledRuns = frameworks.stream()
+                .flatMap(framework -> framework.getRuns().stream().map(FrameworkRun.class::cast))
+                .filter(run -> suiteConfiguration.enabledRunTypes.contains(run.type()))
+                .toList();
+        Set<String> enabledConfigurations = enabledRuns.stream()
+                .map(this::configuration)
+                .collect(Collectors.toUnmodifiableSet());
         // all benchmark tasks (all FrameworkRuns * all LoadVariants * number of reps)
         List<Callable<Void>> allTasks = new ArrayList<>();
         // benchmark index
@@ -84,18 +93,14 @@ public final class SuiteRunner {
             Infrastructure repInfra;
             if (suiteConfiguration.infrastructureMode == InfrastructureMode.REUSE) {
                 // create the shared infrastructure for this repetition
-                repInfra = infraFactory.create(location, outputDir.resolve("infra-" + repetition));
+                repInfra = infraFactory.create(location, outputDir.resolve("infra-" + repetition), enabledConfigurations);
                 sharedInfra.add(repInfra);
             } else {
                 repInfra = null;
             }
             // iterate over all runs, and fill the allTasks list
-            for (FrameworkRunSet framework : frameworks) {
-                for (FrameworkRun run : framework.getRuns()) {
-                    if (!suiteConfiguration.enabledRunTypes.contains(run.type())) {
-                        continue;
-                    }
-                    for (LoadVariant loadVariant : loadVariants) {
+            for (FrameworkRun run : enabledRuns) {
+                for (LoadVariant loadVariant : loadVariants) {
                         String name = run.name() + "-" + loadVariant.name() + "-" + repetition;
                         index.add(new BenchmarkParameters(
                                 name,
@@ -121,7 +126,7 @@ public final class SuiteRunner {
                                     } else {
                                         semaphore.acquire();
                                         // create a new infra just for us.
-                                        try (Infrastructure infra = infraFactory.create(location, out)) {
+                                        try (Infrastructure infra = infraFactory.create(location, out, Set.of(configuration(run)))) {
                                             infra.run(out, run, loadVariant, phaseUpdater);
                                             phaseUpdater.update(BenchmarkPhase.SHUTTING_DOWN);
                                         }
@@ -145,7 +150,6 @@ public final class SuiteRunner {
                             });
                             return null;
                         });
-                    }
                 }
             }
         }
@@ -183,6 +187,11 @@ public final class SuiteRunner {
         Files.move(newIndex, outputDir.resolve("index.json"), StandardCopyOption.REPLACE_EXISTING);
         LOG.info("All benchmarks complete");
         System.exit(0);
+    }
+
+    private String configuration(FrameworkRun run) {
+        String configuration = run.nixosConfiguration();
+        return configuration == null ? Infrastructure.BENCHMARK_BOOTSTRAP : configuration;
     }
 
     /**
