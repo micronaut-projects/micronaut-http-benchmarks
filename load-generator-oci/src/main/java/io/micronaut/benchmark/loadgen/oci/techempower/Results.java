@@ -2,17 +2,16 @@ package io.micronaut.benchmark.loadgen.oci.techempower;
 
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
-import com.fasterxml.jackson.core.JacksonException;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JsonDeserializer;
-import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.SerializerProvider;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.JsonParser;
+import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.SerializationContext;
+import tools.jackson.databind.ValueDeserializer;
+import tools.jackson.databind.ValueSerializer;
+import tools.jackson.databind.annotation.JsonDeserialize;
+import tools.jackson.databind.annotation.JsonSerialize;
 
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -97,9 +96,9 @@ public record Results(
         }
     }
 
-    static final class DurationDeserializer extends JsonDeserializer<Duration> {
+    static final class DurationDeserializer extends ValueDeserializer<Duration> {
         @Override
-        public Duration deserialize(JsonParser p, DeserializationContext ctxt) throws IOException, JacksonException {
+        public Duration deserialize(JsonParser p, DeserializationContext ctxt) throws JacksonException {
             String s = p.getValueAsString();
             int shift = 0;
             for (String suffix : List.of("ns", "us", "ms", "s")) {
@@ -113,9 +112,9 @@ public record Results(
         }
     }
 
-    static final class DurationSerializer extends JsonSerializer<Duration> {
+    static final class DurationSerializer extends ValueSerializer<Duration> {
         @Override
-        public void serialize(Duration value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+        public void serialize(Duration value, JsonGenerator gen, SerializationContext context) throws JacksonException {
             BigDecimal decimal = new BigDecimal(value.toNanos());
             String s;
             if (value.toSeconds() > 0) {

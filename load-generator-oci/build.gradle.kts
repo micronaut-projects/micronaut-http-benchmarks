@@ -27,7 +27,6 @@ dependencies {
     implementation("io.micronaut.toml:micronaut-toml")
     implementation(libs.netty.pkitesting)
     api("io.micronaut:micronaut-jackson-databind")
-    runtimeOnly("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
     implementation("io.micronaut:micronaut-http-client")
     api(libs.hyperfoil.api)
     api(libs.hyperfoil.core)
@@ -55,15 +54,4 @@ micronaut {
         incremental(true)
         annotations("io.micronaut.benchmark.loadgen.oci.*")
     }
-}
-
-tasks.named<ProcessResources>("processResources") {
-    // TODO: find a better solution
-
-    from("../relay-agent/build/native/nativeCompile/relay-agent") {
-        rename { "relay-agent-amd64" }
-    }
-    dependsOn(
-        project(":relay-agent").tasks.named("nativeCompile")
-    )
 }

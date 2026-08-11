@@ -1,14 +1,13 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.event.Level;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -19,9 +18,9 @@ public final class BenchmarkMetadata {
     private final List<NixFrameworkMetadata> frameworkRuns;
     private final Map<String, InstanceType> instanceTypes;
 
-    public BenchmarkMetadata(Nix nix, ObjectMapper objectMapper) throws Exception {
+    public BenchmarkMetadata(Nix nix, JsonMapper objectMapper) throws Exception {
         this(objectMapper.readValue(
-                new String(nix.buildBenchmarkMetadata(new OutputListener.Log(LOG, Level.DEBUG)), StandardCharsets.UTF_8),
+                nix.buildBenchmarkMetadata(new OutputListener.Log(LOG, Level.DEBUG)),
                 Document.class
         ));
     }
@@ -36,11 +35,7 @@ public final class BenchmarkMetadata {
     }
 
     private static Document parseDocument(ObjectMapper objectMapper, String json) {
-        try {
-            return objectMapper.readValue(json, Document.class);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Invalid benchmark metadata", e);
-        }
+        return objectMapper.readValue(json, Document.class);
     }
 
     public List<NixFrameworkMetadata> frameworkRuns() {

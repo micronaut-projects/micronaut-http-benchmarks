@@ -1,7 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oracle.bmc.http.client.pki.Pem;
 import io.hyperfoil.api.config.Benchmark;
 import io.hyperfoil.api.config.BenchmarkBuilder;
@@ -38,6 +37,7 @@ import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -561,12 +561,13 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             this.executor = executor;
             this.config = config;
             this.asyncProfilerHelper = asyncProfilerHelper;
-            this.objectMapper = objectMapper;
+            this.objectMapper = objectMapper.rebuild()
+                    .registerSubtypes(HttpStats.class)
+                    .build();
             this.resilientForwarderFactory = resilientForwarderFactory;
             this.certificateProviders = certificateProviders;
             this.vertx = Vertx.vertx();
 
-            objectMapper.registerSubtypes(HttpStats.class);
         }
 
         public HyperfoilRunner create(Path outputDirectory, AbstractInfrastructure infrastructure) throws Exception {

@@ -2,8 +2,6 @@ package io.micronaut.benchmark.loadgen.oci.resource;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.core.StreamWriteFeature;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.oracle.bmc.bastion.BastionClient;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
@@ -18,9 +16,12 @@ import io.micronaut.scheduling.annotation.Scheduled;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.core.StreamWriteFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -42,6 +43,10 @@ public final class ResourceContext {
     ResourceContext(Clients clients) throws IOException {
         this.clients = clients;
 
+        try {
+            Files.createDirectories(Path.of("output"));
+        } catch (FileAlreadyExistsException _) {
+        }
         eventLog = Files.newOutputStream(Path.of("output/events.log"));
         eventLogMapper = JsonMapper.builder()
                 .registerSubtypes(LogEvent.class.getPermittedSubclasses())

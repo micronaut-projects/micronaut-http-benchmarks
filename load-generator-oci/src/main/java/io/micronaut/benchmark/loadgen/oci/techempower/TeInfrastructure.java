@@ -1,7 +1,5 @@
 package io.micronaut.benchmark.loadgen.oci.techempower;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.benchmark.loadgen.oci.AbstractInfrastructure;
 import io.micronaut.benchmark.loadgen.oci.AsyncProfilerHelper;
 import io.micronaut.benchmark.loadgen.oci.BenchmarkMetadata;
@@ -24,6 +22,9 @@ import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.event.Level;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -277,8 +278,8 @@ final class TeInfrastructure extends AbstractInfrastructure {
         return results;
     }
 
-    static String uploadResults(HttpClient httpClient, Results results) throws JsonProcessingException {
-        Map response = httpClient.toBlocking().retrieve(HttpRequest.POST("https://tfb-status.techempower.com/share/upload", new ObjectMapper().writeValueAsBytes(results)), Map.class);
+    static String uploadResults(HttpClient httpClient, Results results) throws JacksonException {
+        Map response = httpClient.toBlocking().retrieve(HttpRequest.POST("https://tfb-status.techempower.com/share/upload", JsonMapper.builder().build().writeValueAsBytes(results)), Map.class);
         return response.get("visualizeResultsUrl").toString();
     }
 

@@ -1,11 +1,11 @@
 package org.example;
 
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.helidon.webserver.WebServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
@@ -23,7 +23,7 @@ public class NimaServerTest {
     private final HttpClient client = HttpClient.newBuilder()
             .sslContext(trustAllSslContext())
             .build();
-    private final JsonMapper jsonMapper = new JsonMapper();
+    private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     private WebServer webServer;
 

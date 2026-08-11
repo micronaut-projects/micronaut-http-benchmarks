@@ -19,7 +19,7 @@ netty-codec-http = { group = "io.netty", name = "netty-codec-http", version.ref 
 netty-codec-http2 = { group = "io.netty", name = "netty-codec-http2", version.ref = "netty" }
 netty-pkitesting = { group = "io.netty", name = "netty-pkitesting", version.ref = "netty" }
 netty-io-uring = { group = "io.netty", name = "netty-transport-native-io_uring", version.ref = "netty" }
-jackson-databind = { group = "com.fasterxml.jackson.core", name = "jackson-databind", version.ref = "jackson" }
+jackson-databind = { group = "tools.jackson.core", name = "jackson-databind", version.ref = "jackson" }
 slf4j = { group = "org.slf4j", name = "slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { group = "org.slf4j", name = "slf4j-simple", version.ref = "slf4j" }
 jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit5" }
@@ -47,7 +47,7 @@ mina-sshd = "2.19.0"
 micronaut = "5.1.0"
 micronaut-gradle = "5.0.2"
 netty = "4.2.16.Final"
-jackson = "2.22.1"
+jackson = "3.2.1"
 bouncycastle = "1.85"
 logback = "1.5.19"
 hikari = "6.3.3"

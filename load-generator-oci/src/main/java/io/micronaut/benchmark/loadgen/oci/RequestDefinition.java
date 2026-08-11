@@ -1,21 +1,20 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.fasterxml.jackson.core.JacksonException;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.databind.BeanProperty;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.JsonDeserializer;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import io.hyperfoil.http.api.HttpMethod;
 import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.bind.annotation.Bindable;
 import io.micronaut.core.naming.Named;
 import io.micronaut.core.util.StringUtils;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.databind.BeanProperty;
+import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.JavaType;
+import tools.jackson.databind.ValueDeserializer;
+import tools.jackson.databind.annotation.JsonDeserialize;
 
-import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
@@ -96,7 +95,7 @@ public interface RequestDefinition {
         }
     }
 
-    class Deser extends JsonDeserializer<RequestDefinition> {
+    class Deser extends ValueDeserializer<RequestDefinition> {
         private static final Set<Class<?>> INTERFACES = Set.of(
                 RequestDefinition.class,
                 SampleRequestDefinition.class,
@@ -104,13 +103,13 @@ public interface RequestDefinition {
         );
 
         @Override
-        public RequestDefinition deserialize(JsonParser p, DeserializationContext ctxt) throws IOException, JacksonException {
+        public RequestDefinition deserialize(JsonParser p, DeserializationContext ctxt) throws JacksonException {
             if (!p.isExpectedStartObjectToken()) {
                 return (RequestDefinition) ctxt.handleUnexpectedToken(RequestDefinition.class, p);
             }
             Map<Method, Object> values = new HashMap<>();
             while (true) {
-                String name = p.nextFieldName();
+                String name = p.nextName();
                 if (name == null) {
                     break;
                 }

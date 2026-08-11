@@ -1,9 +1,9 @@
 package io.micronaut.benchmark.http.plot;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import one.jfr.JfrReader;
 import one.jfr.event.Event;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.nio.file.Files;

@@ -1,10 +1,10 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.ProcessBuilder;
 import jakarta.inject.Singleton;
+import tools.jackson.databind.JsonNode;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -93,5 +93,6 @@ public final class NixRunSet implements FrameworkRunSet {
     }
 }
 
-record NixFrameworkMetadata(String type, String name, JsonNode parameters, String nixosConfiguration, String serviceName) {
+record NixFrameworkMetadata(String type, String name, JsonNode parameters,
+                            String nixosConfiguration, String serviceName) {
 }

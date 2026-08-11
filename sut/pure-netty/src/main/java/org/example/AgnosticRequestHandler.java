@@ -1,8 +1,8 @@
 package org.example;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectReader;
-import com.fasterxml.jackson.databind.ObjectWriter;
+import tools.jackson.databind.ObjectReader;
+import tools.jackson.databind.ObjectWriter;
+import tools.jackson.databind.json.JsonMapper;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.buffer.ByteBufOutputStream;
@@ -18,9 +18,10 @@ import java.util.List;
 final class AgnosticRequestHandler {
     static final AgnosticRequestHandler INSTANCE = new AgnosticRequestHandler();
 
-    private final ObjectReader reader = new ObjectMapper().readerFor(Input.class);
-    private final ObjectWriter writerResult = new ObjectMapper().writerFor(Result.class);
-    private final ObjectWriter writerStatus = new ObjectMapper().writerFor(Status.class);
+    private final JsonMapper mapper = JsonMapper.builder().build();
+    private final ObjectReader reader = mapper.readerFor(Input.class);
+    private final ObjectWriter writerResult = mapper.writerFor(Result.class);
+    private final ObjectWriter writerStatus = mapper.writerFor(Status.class);
 
     ByteBuf find(ChannelHandlerContext ctx, ByteBuf content) throws IOException {
         Input input;

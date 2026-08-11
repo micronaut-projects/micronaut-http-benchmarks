@@ -1,11 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci.techempower;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import io.micronaut.http.client.HttpClient;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -22,9 +23,9 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ResultsTest {
-    final ObjectMapper mapper = new ObjectMapper()
+    final ObjectMapper mapper = JsonMapper.builder()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
-            .findAndRegisterModules();
+            .build();
 
     @Test
     @Disabled // durations are not preserved perfectly
@@ -65,7 +66,7 @@ class ResultsTest {
                 })).orElseThrow();
             }
             byte[] resultBytes = Files.readAllBytes(ourResultDir.resolve("results.json"));
-            results.add(new ObjectMapper().readValue(resultBytes, Results.class));
+            results.add(JsonMapper.builder().build().readValue(resultBytes, Results.class));
         }
         Results merged = Results.merge(results);
         System.out.println(TeInfrastructure.uploadResults(HttpClient.create(new URL("https://tfb-status.techempower.com")), merged));;

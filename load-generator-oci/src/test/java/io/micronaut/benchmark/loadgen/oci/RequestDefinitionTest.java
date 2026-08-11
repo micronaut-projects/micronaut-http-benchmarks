@@ -1,8 +1,8 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.lang.reflect.Proxy;
 import java.util.Set;
@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class RequestDefinitionTest {
     @Test
-    public void deserialize() throws JsonProcessingException {
+    public void deserialize() throws JacksonException {
         RequestDefinition.SampleRequestDefinition input = (RequestDefinition.SampleRequestDefinition) Proxy.newProxyInstance(
                 RequestDefinitionTest.class.getClassLoader(),
                 new Class[]{RequestDefinition.SampleRequestDefinition.class},

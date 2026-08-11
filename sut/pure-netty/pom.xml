@@ -12,7 +12,7 @@
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <netty.version>4.2.16.Final</netty.version>
-        <jackson.version>2.22.1</jackson.version>
+        <jackson.version>3.2.1</jackson.version>
         <bouncycastle.version>1.85</bouncycastle.version>
         <logback.version>1.5.19</logback.version>
         <junit.version>5.14.4</junit.version>
@@ -42,7 +42,7 @@
             <classifier>linux-aarch_64</classifier>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
+            <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>${jackson.version}</version>
         </dependency>

@@ -1,8 +1,5 @@
 package io.micronaut.benchmark.http.plot;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.oracle.bmc.auth.ConfigFileAuthenticationDetailsProvider;
 import com.oracle.bmc.objectstorage.ObjectStorage;
 import com.oracle.bmc.objectstorage.ObjectStorageClient;
@@ -17,6 +14,9 @@ import one.jfr.JfrReader;
 import one.jfr.event.CPULoad;
 import one.jfr.event.Event;
 import one.jfr.event.ExecutionSample;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -147,11 +147,7 @@ public class Main {
     private HyperfoilRunner.StatsAll getBenchmark(String benchmarkName) {
         return benchmarkOutput.computeIfAbsent(benchmarkName, n -> {
             Path path = OUTPUT.resolve(n).resolve("output.json");
-            try {
-                return mapper.readValue(path.toFile(), HyperfoilRunner.StatsAll.class);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to parse " + path, e);
-            }
+            return mapper.readValue(path.toFile(), HyperfoilRunner.StatsAll.class);
         });
     }
 

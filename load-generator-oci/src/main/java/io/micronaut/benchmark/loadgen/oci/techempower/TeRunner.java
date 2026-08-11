@@ -1,6 +1,5 @@
 package io.micronaut.benchmark.loadgen.oci.techempower;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.benchmark.loadgen.oci.CompartmentCleaner;
 import io.micronaut.benchmark.loadgen.oci.MdcTracker;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
@@ -9,6 +8,7 @@ import io.micronaut.http.client.HttpClient;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.ObjectMapper;
 
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
