@@ -14,7 +14,6 @@ import java.util.List;
 
 @Singleton
 public class Nix {
-    private static final String NIX = "/nix/var/nix/profiles/default/bin/nix";
     private final JsonMapper jsonMapper;
 
     public Nix(JsonMapper jsonMapper) {
@@ -23,7 +22,7 @@ public class Nix {
 
     private void nix(OutputListener log, List<String> args) throws Exception {
         List<String> cmd = new ArrayList<>(Arrays.asList(
-                NIX,
+                "/nix/var/nix/profiles/default/bin/nix",
                 "--extra-experimental-features", "nix-command",
                 "--extra-experimental-features", "flakes"
         ));
@@ -43,7 +42,7 @@ public class Nix {
 
     private JsonNode nixJson(OutputListener log, List<String> args) throws Exception {
         List<String> cmd = new ArrayList<>(Arrays.asList(
-                NIX,
+                "/nix/var/nix/profiles/default/bin/nix",
                 "--extra-experimental-features", "nix-command",
                 "--extra-experimental-features", "flakes"
         ));
@@ -80,8 +79,8 @@ public class Nix {
 
     public static String activate(URI cacheUri, String derivation) {
         return "set -e\n"
-                + NIX + " copy --no-check-sigs --from " + cacheUri + " " + derivation + "\n"
-                + "profile=$(" + NIX + " build --no-link --print-out-paths " + derivation + "^out)\n"
+                + "/run/current-system/sw/bin/nix copy --no-check-sigs --from " + cacheUri + " " + derivation + "\n"
+                + "profile=$(/run/current-system/sw/bin/nix build --no-link --print-out-paths " + derivation + "^out)\n"
                 + "$profile/bin/switch-to-configuration switch\n";
     }
 
@@ -89,10 +88,10 @@ public class Nix {
      * Get the nix-store path name of a derivation.
      *
      * @param installable The installable, e.g. {@code .#packages.x86_64-linux.relay-server-system}
-     * @return The nix-store path name, e.g. {@code kzzvpzy4qg13w6iqbxgaj8d0qps547la-nixos-system-nixos-oci-26.05.20260803.531670d.drv}
+     * @return The nix-store path name, e.g. {@code /nix/store/kzzvpzy4qg13w6iqbxgaj8d0qps547la-nixos-system-nixos-oci-26.05.20260803.531670d.drv}
      */
     public String getDerivation(OutputListener log, String installable) throws Exception {
-        return nixJson(log, List.of("path-info", "--json-format", "2", "--derivation", installable)).get("info").propertyNames().iterator().next();
+        return nixJson(log, List.of("path-info", "--json", "--json-format", "1", "--derivation", installable)).propertyNames().iterator().next();
     }
 
     public void uploadCache(OutputListener log, URI cache, String installable, boolean derivation) throws Exception {

@@ -198,7 +198,7 @@ public interface OutputListener {
             Map<String, String> old = MDC.getCopyOfContextMap();
             try {
                 MDC.setContextMap(mdc);
-                logger.makeLoggingEventBuilder(level).log(msg);
+                logger.atLevel(level).log(msg);
             } finally {
                 MDC.setContextMap(old);
             }

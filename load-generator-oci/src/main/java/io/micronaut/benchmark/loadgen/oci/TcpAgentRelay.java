@@ -25,7 +25,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
@@ -33,34 +32,21 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyPair;
-import java.security.cert.CertificateEncodingException;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 public final class TcpAgentRelay implements Closeable {
     static final int PORT = 8443;
     private static final int LOG_PORT = 8444;
 
-    private static final byte[] AGENT_BYTES;
-
     private static final Logger LOG = LoggerFactory.getLogger(TcpAgentRelay.class);
     private final OutputListener log;
 
     private final TcpRelay relay;
     private final SshClient sshClient;
-
-    static {
-        try (InputStream stream = TcpAgentRelay.class.getResourceAsStream("/relay-agent-amd64")) {
-            AGENT_BYTES = stream.readAllBytes();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
 
     private TcpAgentRelay(Builder builder) throws Exception {
         this.log = builder.log;
@@ -140,9 +126,7 @@ public final class TcpAgentRelay implements Closeable {
             if (builder.hasCloudInit) {
                 relay = builder.alreadyDeployed();
             } else {
-                try (CommandRunner bootstrap = agentInstance.connectSsh()) {
-                    relay = builder.deploySsh(bootstrap);
-                }
+                throw new UnsupportedOperationException("SSH deployment not supported anymore");
             }
         }
 
@@ -157,7 +141,6 @@ public final class TcpAgentRelay implements Closeable {
     }
 
     public static class Builder {
-        private static final String AGENT_PATH = "/tmp/relay-agent";
 
         private final Factory factory;
         private final X509Bundle serverCert = new CertificateBuilder()
@@ -198,16 +181,6 @@ public final class TcpAgentRelay implements Closeable {
             return log(new OutputListener.Write(Files.newOutputStream(log)));
         }
 
-        private String agentCommand() throws CertificateEncodingException {
-            return "nohup " + AGENT_PATH +
-                   " -Dkey.algorithm=" + serverCert.getKeyPair().getPrivate().getAlgorithm() +
-                   " -Dkey=" + Base64.getEncoder().encodeToString(serverCert.getKeyPair().getPrivate().getEncoded()) +
-                   " -Dcert=" + Base64.getEncoder().encodeToString(serverCert.getCertificate().getEncoded()) +
-                   " -Dremote-cert=" + Base64.getEncoder().encodeToString(clientCert.getCertificate().getEncoded()) +
-                   " -Dport=" + PORT +
-                   " -Dlog-port=" + LOG_PORT;
-        }
-
         public Builder prepareCloudInit(Compute.Launch relayInstanceBuilder) throws Exception {
             relayInstanceBuilder.systemdCredential(Path.of("/etc/credstore/relay-agent/key-algorithm"), serverCert.getKeyPair().getPrivate().getAlgorithm().getBytes(StandardCharsets.UTF_8));
             relayInstanceBuilder.systemdCredential(Path.of("/etc/credstore/relay-agent/key"), Base64.getEncoder().encodeToString(serverCert.getKeyPair().getPrivate().getEncoded()).getBytes(StandardCharsets.UTF_8));
@@ -219,18 +192,6 @@ public final class TcpAgentRelay implements Closeable {
         }
 
         private TcpAgentRelay alreadyDeployed() throws Exception {
-            return new TcpAgentRelay(this);
-        }
-
-        public TcpAgentRelay deploySsh(CommandRunner bootstrap) throws Exception {
-            bootstrap.upload(AGENT_BYTES, AGENT_PATH,
-                    Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
-
-            String agentCommand = agentCommand();
-            OutputListener.Waiter startWaiter = new OutputListener.Waiter(ByteBuffer.wrap(TcpRelayMessage.TUNNEL_ESTABLISHED.getBytes(StandardCharsets.UTF_8)));
-            bootstrap.run(agentCommand, log, startWaiter);
-            startWaiter.awaitWithNextPattern(null);
-
             return new TcpAgentRelay(this);
         }
 

@@ -41,10 +41,11 @@ in
   ];
 
   benchmark.oci.instance = {
-    shape = "VM.Standard.A1.Flex";
+    # TODO: AARCH64
+    shape = "VM.Standard.E5.Flex";
     ocpus = 2;
     memoryInGb = 4;
-    platform = "aarch64-linux";
+    platform = "x86_64-linux";
     diskPerformanceUnits = 80;
   };
 

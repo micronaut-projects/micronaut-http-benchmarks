@@ -1,6 +1,9 @@
 [oci.client.retry]
 foo="bar"
 
+[oci.clients.objectstorage]
+read-timeout = "5m"
+
 [ssh]
 # DO NOT use a valuable key here. It is uploaded to the hyperfoil controller for agent provisioning. If you don't need
 # this for debugging, simply leave this property unset, and a fresh generated key pair will be used.

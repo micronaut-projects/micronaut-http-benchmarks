@@ -32,8 +32,6 @@
   };
 
   config = {
-    #users.users.root.openssh.authorizedKeys.keys = import ../build/authorized_keys.nix;
-
     programs.vim = {
       enable = true;
       defaultEditor = true;

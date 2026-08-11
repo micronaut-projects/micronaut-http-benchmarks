@@ -46,9 +46,9 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     public void manage() throws Exception {
         setPhase(Phase.Uploading);
         try {
-            derivationPath = context.clients.nix().getDerivation(new OutputListener.Log(LOG, Level.INFO), installable);
+            derivationPath = context.clients.nix().getDerivation(new OutputListener.Log(LOG, Level.TRACE), installable);
             context.clients.nix().uploadCache(
-                    new OutputListener.Log(LOG, Level.INFO),
+                    new OutputListener.Log(LOG, Level.TRACE),
                     buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite),
                     installable,
                     true
@@ -73,7 +73,7 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
                         .build())
                 .build()).getPreauthenticatedRequest();
 
-        return URI.create(context.clients.objectStorage().getEndpoint() + preauthenticatedRequest.getAccessUri());
+        return URI.create(context.clients.objectStorage().getEndpoint() + preauthenticatedRequest.getAccessUri() + path);
     }
 
     public URI buildCacheUri() {

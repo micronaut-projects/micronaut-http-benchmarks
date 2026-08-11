@@ -3,6 +3,9 @@ package io.micronaut.benchmark.loadgen.oci.resource;
 import com.oracle.bmc.model.BmcException;
 import com.oracle.bmc.objectstorage.requests.HeadObjectRequest;
 import com.oracle.bmc.objectstorage.requests.PutObjectRequest;
+import com.oracle.bmc.objectstorage.responses.HeadObjectResponse;
+import com.oracle.bmc.objectstorage.transfer.UploadConfiguration;
+import com.oracle.bmc.objectstorage.transfer.UploadManager;
 import io.micronaut.core.util.functional.ThrowingConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,9 +17,11 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 
 public final class StorageObjectResource extends PhasedResource<StorageObjectResource.Phase> {
     private static final Logger LOG = LoggerFactory.getLogger(StorageObjectResource.class);
+    private static final String SHA256_METADATA_KEY = "sha256";
 
     private final String namespace;
     private final String bucket;
@@ -56,11 +61,13 @@ public final class StorageObjectResource extends PhasedResource<StorageObjectRes
 
             String existingHash;
             try {
-                existingHash = context.clients.objectStorage().headObject(HeadObjectRequest.builder()
+                HeadObjectResponse response = context.clients.objectStorage().headObject(HeadObjectRequest.builder()
                         .namespaceName(namespace)
                         .bucketName(bucket)
                         .objectName(objectName)
-                        .build()).getOpcContentSha256();
+                        .build());
+                Map<String, String> metadata = response.getOpcMeta();
+                existingHash = metadata == null ? null : metadata.get(SHA256_METADATA_KEY);
             } catch (BmcException be) {
                 if (be.getStatusCode() == 404) {
                     existingHash = null;
@@ -72,16 +79,17 @@ public final class StorageObjectResource extends PhasedResource<StorageObjectRes
             if (expectedSha256.equals(existingHash)) {
                 LOG.info("File {}/{} already uploaded ({})", bucket, objectName, existingHash);
             } else {
-                LOG.info("Uploading file {}/{} ({})", bucket, objectName, existingHash);
-                context.clients.objectStorage().putObject(PutObjectRequest.builder()
+                LOG.info("Uploading file {}/{} ({}, {})", bucket, objectName, expectedSha256, existingHash);
+                UploadManager uploadManager = new UploadManager(context.clients.objectStorage(), UploadConfiguration.builder()
+                        .build());
+                PutObjectRequest request = PutObjectRequest.builder()
                         .namespaceName(namespace)
                         .bucketName(bucket)
                         .objectName(objectName)
-                        .opcContentSha256(expectedSha256)
-                        .contentLength(Files.size(path))
-                        .putObjectBody(Files.newInputStream(path))
-                        .build());
-                LOG.info("Uploaded file {}/{} ({})", bucket, objectName, existingHash);
+                        .opcMeta(Map.of(SHA256_METADATA_KEY, expectedSha256))
+                        .build();
+                uploadManager.upload(UploadManager.UploadRequest.builder(path.toFile()).build(request));
+                LOG.info("Uploaded file {}/{} ({})", bucket, objectName, expectedSha256);
             }
 
             hash = expectedSha256;

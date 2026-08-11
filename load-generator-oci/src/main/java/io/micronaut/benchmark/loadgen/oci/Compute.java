@@ -12,6 +12,7 @@ import com.oracle.bmc.core.model.Image;
 import com.oracle.bmc.core.model.ImageSourceDetails;
 import com.oracle.bmc.core.model.ImageSourceViaObjectStorageTupleDetails;
 import com.oracle.bmc.core.model.InstanceAgentPluginConfigDetails;
+import com.oracle.bmc.core.model.InstanceOptions;
 import com.oracle.bmc.core.model.InstanceSourceViaImageDetails;
 import com.oracle.bmc.core.model.LaunchInstanceAgentConfigDetails;
 import com.oracle.bmc.core.model.LaunchInstanceDetails;
@@ -276,7 +277,7 @@ public final class Compute {
         return new NixosCacheResource(
                 context,
                 computeConfiguration.storageBucketNamespace,
-                computeConfiguration.storageBucketBucketName,
+                computeConfiguration.storageBucketName,
                 "nixos-cache",
                 installable
         );
@@ -293,7 +294,7 @@ public final class Compute {
             this.imageResource = new StorageObjectResource(
                     context,
                     computeConfiguration.storageBucketNamespace,
-                    computeConfiguration.storageBucketBucketName,
+                    computeConfiguration.storageBucketName,
                     objectName(platform),
                     upload -> {
                         LOG.info("Building nixos image for {}", platform);
@@ -347,7 +348,7 @@ public final class Compute {
                         .displayName(os + "-" + version)
                         .imageSourceDetails(ImageSourceViaObjectStorageTupleDetails.builder()
                                 .namespaceName(computeConfiguration.storageBucketNamespace)
-                                .bucketName(computeConfiguration.storageBucketBucketName)
+                                .bucketName(computeConfiguration.storageBucketName)
                                 .objectName(objectName(platform))
                                 .operatingSystem(os)
                                 .operatingSystemVersion(version)
@@ -359,9 +360,7 @@ public final class Compute {
                 AbstractInfrastructure.launch(imageResource, () -> imageResource.manageExisting(imageLocation, id));
             }
 
-            List<PhaseLock> imageLock = imageResource.require();
-            dependOn(imageLock);
-            PhaseLock.awaitAll(imageLock);
+            PhaseLock.awaitAll(imageResource.require());
         }
     }
 
@@ -423,12 +422,11 @@ public final class Compute {
                                 Base64.getEncoder().encodeToString(userDataScript.getBytes(StandardCharsets.UTF_8))
                         ))
                         .launchOptions(LaunchOptions.builder()
-                                .bootVolumeType(LaunchOptions.BootVolumeType.Paravirtualized)
-                                .remoteDataVolumeType(LaunchOptions.RemoteDataVolumeType.Paravirtualized)
                                 .firmware(LaunchOptions.Firmware.Uefi64)
-                                .isConsistentVolumeNamingEnabled(true)
-                                .isPvEncryptionInTransitEnabled(true)
                                 .networkType(LaunchOptions.NetworkType.Vfio)
+                                .build())
+                        .instanceOptions(InstanceOptions.builder()
+                                .areLegacyImdsEndpointsDisabled(true)
                                 .build())
                         .agentConfig(LaunchInstanceAgentConfigDetails.builder()
                                 .pluginsConfig(List.of(
@@ -500,7 +498,7 @@ public final class Compute {
             List<String> debugAuthorizedKeys,
             String storageBucketCompartment,
             String storageBucketNamespace,
-            String storageBucketBucketName
+            String storageBucketName
     ) {
 
     }
