@@ -4,7 +4,7 @@ let
 in
 {
   imports = [
-    ../../nix/system/base.nix
+    ../../nix/system/benchmark-bootstrap.nix
   ];
 
   networking.firewall.allowedTCPPorts = [ 8080 8443 ];

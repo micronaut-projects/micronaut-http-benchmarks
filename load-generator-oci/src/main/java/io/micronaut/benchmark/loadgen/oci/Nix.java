@@ -74,8 +74,8 @@ public class Nix {
         return path;
     }
 
-    public byte[] buildFrameworkRuns(OutputListener log) throws Exception {
-        return Files.readAllBytes(build(log, ".#nix-framework-runs"));
+    public byte[] buildBenchmarkMetadata(OutputListener log) throws Exception {
+        return Files.readAllBytes(build(log, ".#benchmark-metadata"));
     }
 
     public static String activate(URI cacheUri, String derivation) {

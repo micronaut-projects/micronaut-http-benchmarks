@@ -232,7 +232,7 @@ public final class SuiteRunner {
             Object parameters,
             LoadVariant load,
             int repetition,
-            Compute.ComputeConfiguration.InstanceType sutSpecs
+        BenchmarkMetadata.InstanceType sutSpecs
     ) {
     }
 }

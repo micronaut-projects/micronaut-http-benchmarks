@@ -302,7 +302,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         BenchmarkBuilder benchmark = BenchmarkBuilder.builder()
                 .name(name)
                 .failurePolicy(Benchmark.FailurePolicy.CANCEL);
-        Compute.ComputeConfiguration.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
+        BenchmarkMetadata.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
         for (int i = 0; i < factory.config.agentCount; i++) {
             String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
             AsyncProfilerHelper.Session asyncProfilerSession = agents.get(i).asyncProfilerSession;

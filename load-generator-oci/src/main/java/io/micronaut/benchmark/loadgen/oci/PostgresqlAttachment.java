@@ -41,7 +41,7 @@ final class PostgresqlAttachment implements Infrastructure.Attachment {
     public void setUp(Infrastructure infrastructure) throws Exception {
         PostgresqlResource resource = new PostgresqlResource(context);
         resource.networkDetails(infrastructure.getPrivateSubnet(), POSTGRES_IP);
-        Compute.ComputeConfiguration.InstanceType instanceType = compute.getInstanceType("postgresql");
+        BenchmarkMetadata.InstanceType instanceType = compute.getInstanceType("postgresql");
         Compute.Instance benchmarkServer = infrastructure.benchmarkServer;
         DbWithSchema dbWithSchema = new DbWithSchema(context, resource, benchmarkServer);
         dbWithSchema.dependOn(benchmarkServer.resource().require());

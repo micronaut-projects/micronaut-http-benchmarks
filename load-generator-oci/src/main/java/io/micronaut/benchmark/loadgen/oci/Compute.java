@@ -33,7 +33,6 @@ import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.benchmark.loadgen.oci.resource.StorageObjectResource;
 import io.micronaut.benchmark.loadgen.oci.resource.SubnetResource;
 import io.micronaut.context.annotation.ConfigurationProperties;
-import io.micronaut.context.annotation.EachProperty;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,7 +64,7 @@ public final class Compute {
 
     private final ResourceContext context;
     private final ComputeConfiguration computeConfiguration;
-    private final Map<String, ComputeConfiguration.InstanceType> instanceTypes;
+    private final BenchmarkMetadata metadata;
     private final ObjectStorageClient objectStorageClient;
     private final RegionalClient<ComputeClient> computeClient;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
@@ -77,14 +76,14 @@ public final class Compute {
 
     public Compute(ResourceContext context,
                    ComputeConfiguration computeConfiguration,
-                   Map<String, ComputeConfiguration.InstanceType> instanceTypes,
+                   BenchmarkMetadata metadata,
                    ObjectStorageClient objectStorageClient,
                    RegionalClient<ComputeClient> computeClient,
                    RegionalClient<VirtualNetworkClient> vcnClient,
                    SshFactory sshFactory, Nix nix) {
         this.context = context;
         this.computeConfiguration = computeConfiguration;
-        this.instanceTypes = instanceTypes;
+        this.metadata = metadata;
         this.objectStorageClient = objectStorageClient;
         this.computeClient = computeClient;
         this.vcnClient = vcnClient;
@@ -107,8 +106,7 @@ public final class Compute {
     /**
      * Builder for a new compute instance.
      *
-     * @param instanceType The instance type. This is used as key for the {@link ComputeConfiguration.InstanceType}
-     *                     config to select
+     * @param instanceType The benchmark metadata instance type key to select
      * @param location     The location where to create the instance
      * @param subnet       Subnet for the instance VNIC
      * @return The instance builder
@@ -123,15 +121,15 @@ public final class Compute {
      * @param instanceType The instance type config key
      * @return The configuration
      */
-    public ComputeConfiguration.InstanceType getInstanceType(String instanceType) {
-        return instanceTypes.get(instanceType);
+    public BenchmarkMetadata.InstanceType getInstanceType(String instanceType) {
+        return metadata.instanceType(instanceType);
     }
 
     public final class Launch {
         private final InstanceResource resource = new InstanceResource(context, this);
         final ComputeResource computeResource = new ComputeResource(context);
         private final String displayName;
-        private final ComputeConfiguration.InstanceType instanceType;
+        private final BenchmarkMetadata.InstanceType instanceType;
         private final OciLocation location;
         private final SubnetResource subnet;
         private String privateIp = null;
@@ -141,7 +139,7 @@ public final class Compute {
 
         private final Map<Path, byte[]> systemdCredentials = new HashMap<>();
 
-        private Launch(String displayName, ComputeConfiguration.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
+        private Launch(String displayName, BenchmarkMetadata.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
             this.displayName = displayName;
             this.instanceType = Objects.requireNonNull(instanceType, "instanceType");
             this.location = location;
@@ -181,7 +179,7 @@ public final class Compute {
         }
 
         private String platform() {
-            return instanceType.shape.startsWith("VM.Standard.A") ? "aarch64-linux" : "x86_64-linux";
+            return instanceType.platform();
         }
 
         public Launch systemdCredential(Path path, byte[] value) {
@@ -272,8 +270,8 @@ public final class Compute {
         }
     }
 
-    NixosCacheResource cacheResource(ComputeConfiguration.InstanceType instanceType, String configuration) {
-        String platform = instanceType.shape.startsWith("VM.Standard.A") ? "aarch64-linux" : "x86_64-linux";
+    NixosCacheResource cacheResource(BenchmarkMetadata.InstanceType instanceType, String configuration) {
+        String platform = instanceType.platform();
         String installable = ".#packages." + platform + "." + configuration + "-system";
         return new NixosCacheResource(
                 context,
@@ -407,13 +405,13 @@ public final class Compute {
                 return LaunchInstanceDetails.builder()
                         .sourceDetails(InstanceSourceViaImageDetails.builder()
                                 .imageId(imageResource.getId())
-                                .bootVolumeVpusPerGB((long) launch.instanceType.diskPerformanceUnits)
+                                .bootVolumeVpusPerGB(launch.instanceType.diskPerformanceUnits().longValue())
                                 .build())
                         .displayName(launch.displayName)
-                        .shape(launch.instanceType.shape)
+                        .shape(launch.instanceType.shape())
                         .shapeConfig(LaunchInstanceShapeConfigDetails.builder()
-                                .ocpus(launch.instanceType.ocpus)
-                                .memoryInGBs(launch.instanceType.memoryInGb)
+                                .ocpus(launch.instanceType.ocpus())
+                                .memoryInGBs(launch.instanceType.memoryInGb())
                                 .build())
                         .createVnicDetails(vnicDetails.build())
                         .imageId(imageResource.getId())
@@ -495,35 +493,16 @@ public final class Compute {
     }
 
     /**
-     * @param instanceTypes       Instance types
      * @param debugAuthorizedKeys Additional SSH keys to add to each instance for debugging
      */
     @ConfigurationProperties("compute")
     public record ComputeConfiguration(
-            List<InstanceType> instanceTypes,
             List<String> debugAuthorizedKeys,
             String storageBucketCompartment,
             String storageBucketNamespace,
             String storageBucketBucketName
     ) {
 
-        /**
-         * An instance type.
-         *
-         * @param shape OCI shape
-         * @param ocpus Number of cores
-         * @param memoryInGb Memory in GB
-         * @param image OS image name
-         */
-        @EachProperty("instance-types")
-        public record InstanceType(
-                String shape,
-                float ocpus,
-                float memoryInGb,
-                String image,
-                int diskPerformanceUnits
-        ) {
-        }
     }
 
     public sealed interface InstanceAccess {

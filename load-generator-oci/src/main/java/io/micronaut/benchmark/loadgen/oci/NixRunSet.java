@@ -1,46 +1,22 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.ProcessBuilder;
 import jakarta.inject.Singleton;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.event.Level;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Set;
 
 @Singleton
 public final class NixRunSet implements FrameworkRunSet {
-    private static final Logger LOG = LoggerFactory.getLogger(NixRunSet.class);
     private final List<NixFrameworkRun> runs;
 
-    public NixRunSet(Nix nix, ObjectMapper objectMapper) throws Exception {
-        runs = parseMetadata(objectMapper, new String(nix.buildFrameworkRuns(new OutputListener.Log(LOG, Level.DEBUG)), StandardCharsets.UTF_8))
-                .stream().map(NixFrameworkRun::new).toList();
-    }
-
-    static List<NixFrameworkMetadata> parseMetadata(ObjectMapper objectMapper, String json) {
-        try {
-            List<NixFrameworkMetadata> metadata = List.copyOf(objectMapper.readValue(json, new TypeReference<List<NixFrameworkMetadata>>() { }));
-            Set<String> names = new java.util.HashSet<>();
-            for (NixFrameworkMetadata run : metadata) {
-                if (!names.add(run.name())) {
-                    throw new IllegalArgumentException("Duplicate Nix framework run name: " + run.name());
-                }
-            }
-            return metadata;
-        } catch (IOException | NullPointerException e) {
-            throw new IllegalArgumentException("Invalid Nix framework run metadata", e);
-        }
+    public NixRunSet(BenchmarkMetadata metadata) {
+        runs = metadata.frameworkRuns().stream().map(NixFrameworkRun::new).toList();
     }
 
     static String parseInvocationId(String output) {

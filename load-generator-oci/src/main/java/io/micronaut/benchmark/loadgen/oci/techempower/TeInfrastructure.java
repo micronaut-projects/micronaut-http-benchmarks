@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.benchmark.loadgen.oci.AbstractInfrastructure;
 import io.micronaut.benchmark.loadgen.oci.AsyncProfilerHelper;
+import io.micronaut.benchmark.loadgen.oci.BenchmarkMetadata;
 import io.micronaut.benchmark.loadgen.oci.Compute;
 import io.micronaut.benchmark.loadgen.oci.HotspotConfiguration;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
@@ -122,7 +123,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
         toolsetCommand.append(" --results-environment '");
         for (DockerServer s : DockerServer.values()) {
             if (s != DockerServer.TOOLSET) {
-                Compute.ComputeConfiguration.InstanceType type = factory.compute.getInstanceType(s.instanceType);
+        BenchmarkMetadata.InstanceType type = factory.compute.getInstanceType(s.instanceType);
                 // all loaded from config, so we don't need to worry about command injection
                 toolsetCommand.append(s.toolsetArg).append(" (").append(type.shape()).append(", ").append(type.ocpus()).append(" cores, ").append(type.memoryInGb()).append("G)").append(' ');
             }

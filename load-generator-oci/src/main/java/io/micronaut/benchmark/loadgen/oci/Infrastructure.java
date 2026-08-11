@@ -48,7 +48,7 @@ public final class Infrastructure extends AbstractInfrastructure {
 
         hyperfoilRunner = factory.hyperfoilRunnerFactory.create(logDirectory, this);
         hyperfoilLock = hyperfoilRunner.require();
-        Compute.ComputeConfiguration.InstanceType instanceType = factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE);
+        BenchmarkMetadata.InstanceType instanceType = factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE);
         Map<String, NixosCacheResource> resources = new LinkedHashMap<>();
         for (String configuration : Objects.requireNonNull(configurations, "configurations")) {
             resources.putIfAbsent(configuration, factory.compute.cacheResource(instanceType, configuration));

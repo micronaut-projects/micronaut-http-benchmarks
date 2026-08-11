@@ -48,6 +48,14 @@ in
     ./base.nix
   ];
 
+  benchmark.oci.instance = {
+    shape = "VM.Standard.E4.Flex";
+    ocpus = 2;
+    memoryInGb = 8;
+    platform = "x86_64-linux";
+    diskPerformanceUnits = 80;
+  };
+
   nix.settings.sandbox = "relaxed";
 
   networking.firewall.allowedTCPPorts = [ 8443 ];

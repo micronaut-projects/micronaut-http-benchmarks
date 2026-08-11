@@ -40,6 +40,14 @@ in
     ./base.nix
   ];
 
+  benchmark.oci.instance = {
+    shape = "VM.Standard.A1.Flex";
+    ocpus = 2;
+    memoryInGb = 4;
+    platform = "aarch64-linux";
+    diskPerformanceUnits = 80;
+  };
+
   users.users.hyperfoil = {
     isNormalUser = true;
     home = "/home/hyperfoil";
