@@ -33,8 +33,10 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @TestInstance(TestInstance.Lifecycle.PER_METHOD)
 class TcpRelayTest {
@@ -69,6 +71,24 @@ class TcpRelayTest {
             assertEquals("foo", mockServer.connection(0).readString());
             mockServer.connection(0).writeString("bar");
             assertEquals("bar", cl.readString());
+        }
+    }
+
+    @Test
+    public void bufferedDataIsDeliveredWhenTunnelConnects() throws Exception {
+        try (TcpRelay delayedClient = new TcpRelay().reestablishDelay(Duration.ZERO);
+             TcpRelay.Binding forward = delayedClient.bindForward(mockServer.address);
+             MockClient cl = new MockClient(forward.address())) {
+            cl.writeString("foo");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (delayedClient.bufferedBytes() < 3 && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+            assertEquals(3, delayedClient.bufferedBytes());
+
+            delayedClient.linkTunnel(server.bindTunnel("127.0.0.1", 0));
+
+            assertNotNull(mockServer.connection(0).read(5, TimeUnit.SECONDS));
         }
     }
 
@@ -181,6 +201,11 @@ class TcpRelayTest {
         @SuppressWarnings("unchecked")
         public <E> E read() throws InterruptedException {
             return (E) inbound.take();
+        }
+
+        @SuppressWarnings("unchecked")
+        public <E> E read(long timeout, TimeUnit unit) throws InterruptedException {
+            return (E) inbound.poll(timeout, unit);
         }
 
         public String readString() throws InterruptedException {

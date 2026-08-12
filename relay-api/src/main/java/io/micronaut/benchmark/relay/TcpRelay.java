@@ -39,7 +39,6 @@ import io.netty.handler.codec.http2.Http2StreamChannel;
 import io.netty.handler.codec.http2.Http2StreamChannelBootstrap;
 import io.netty.handler.codec.http2.Http2StreamFrame;
 import io.netty.handler.codec.http2.Http2UnknownFrame;
-import io.netty.handler.flow.FlowControlHandler;
 import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandshakeCompletionEvent;
@@ -83,6 +82,10 @@ public final class TcpRelay implements Closeable {
     private Tls tls;
 
     public TcpRelay() {
+    }
+
+    long bufferedBytes() {
+        return streams.values().stream().mapToLong(pair -> pair.unreliableOutput.bufferLength).sum();
     }
 
     public TcpRelay reestablishDelay(Duration reestablishDelay) {
@@ -409,7 +412,6 @@ public final class TcpRelay implements Closeable {
         protected void initChannel(Http2StreamChannel ch) {
             ch.config().setAutoRead(false);
             ch.pipeline()
-                    .addLast(new FlowControlHandler())
                     .addLast(new InitialServerStreamHandler());
         }
     }
