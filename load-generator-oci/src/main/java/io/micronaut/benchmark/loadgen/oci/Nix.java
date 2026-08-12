@@ -9,11 +9,17 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 @Singleton
 public class Nix {
+    private static final List<String> NIX_LOCAL = List.of(
+            "/nix/var/nix/profiles/default/bin/nix",
+            "--extra-experimental-features", "nix-command",
+            "--extra-experimental-features", "flakes"
+    );
+    private static final String NIX_REMOTE = "/run/current-system/sw/bin/nix --extra-experimental-features nix-command --extra-experimental-features flakes";
+
     private final JsonMapper jsonMapper;
 
     public Nix(JsonMapper jsonMapper) {
@@ -21,11 +27,7 @@ public class Nix {
     }
 
     private void nix(OutputListener log, List<String> args) throws Exception {
-        List<String> cmd = new ArrayList<>(Arrays.asList(
-                "/nix/var/nix/profiles/default/bin/nix",
-                "--extra-experimental-features", "nix-command",
-                "--extra-experimental-features", "flakes"
-        ));
+        List<String> cmd = new ArrayList<>(NIX_LOCAL);
         cmd.addAll(args);
 
         ProcessBuilder pb = new ProcessBuilder();
@@ -41,11 +43,7 @@ public class Nix {
     }
 
     private JsonNode nixJson(OutputListener log, List<String> args) throws Exception {
-        List<String> cmd = new ArrayList<>(Arrays.asList(
-                "/nix/var/nix/profiles/default/bin/nix",
-                "--extra-experimental-features", "nix-command",
-                "--extra-experimental-features", "flakes"
-        ));
+        List<String> cmd = new ArrayList<>(NIX_LOCAL);
         cmd.addAll(args);
 
         ProcessBuilder pb = new ProcessBuilder();
@@ -79,8 +77,12 @@ public class Nix {
 
     public static String activate(URI cacheUri, String derivation) {
         return "set -e\n"
-                + "/run/current-system/sw/bin/nix copy --no-check-sigs --from " + cacheUri + " " + derivation + "\n"
-                + "profile=$(/run/current-system/sw/bin/nix build --no-link --print-out-paths " + derivation + "^out)\n"
+                + "deadline=$((SECONDS + 840))\n"
+                + "while ! " + NIX_REMOTE + " copy --no-check-sigs --from " + cacheUri + " " + derivation + "; do\n"
+                + "  if [ \"$SECONDS\" -ge \"$deadline\" ]; then exit 1; fi\n"
+                + "  sleep 5\n"
+                + "done\n"
+                + "profile=$(" + NIX_REMOTE + " build --no-link --print-out-paths " + derivation + "^out)\n"
                 + "$profile/bin/switch-to-configuration switch\n";
     }
 
