@@ -19,6 +19,8 @@
     <logger name="com.oracle.bmc.core.model.Image$ListingType" level="ERROR"/>
     <logger name="com.oracle.bmc" level="WARN"/>
     <logger name="com.oracle.bmc.core.VirtualNetworkClient" level="ERROR"/>
+    <logger name="com.oracle.bmc.core.model.InstanceShapeConfig$ResourceManagement" level="ERROR"/>
+    <logger name="com.oracle.bmc.objectstorage.ObjectStorageClient" level="ERROR"/>
 </configuration>
 
 
