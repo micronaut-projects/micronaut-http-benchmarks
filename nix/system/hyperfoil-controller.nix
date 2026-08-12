@@ -57,14 +57,14 @@ in
 
   networking.firewall.allowedTCPPorts = [ 7800 ];
 
+  benchmark.roleUnits = [ "hyperfoil-controller.service" ];
+
   system.build.hyperfoil-controller = hyperfoil;
 
   systemd.services.hyperfoil-controller = {
     description = "Hyperfoil controller";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-    wantedBy = [ "multi-user.target" ];
-
     serviceConfig = {
       Type = "simple";
       ExecStart = controllerService;
@@ -74,10 +74,5 @@ in
       WorkingDirectory = "/home/hyperfoil";
       TimeoutStartSec = 130;
     };
-  };
-
-  systemd.services.sshd = {
-    requires = [ "hyperfoil-controller.service" ];
-    after = [ "hyperfoil-controller.service" ];
   };
 }

@@ -1,33 +1,40 @@
-{ pkgs, lib, ... }:
+{ config, pkgs, lib, ... }:
 {
   imports = [
     ./minimal-base.nix
   ];
 
-  options.benchmark.oci.instance = {
-    shape = lib.mkOption {
-      type = lib.types.str;
+  options.benchmark = {
+    roleUnits = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
     };
 
-    ocpus = lib.mkOption {
-      type = lib.types.number;
-    };
+    oci.instance = {
+      shape = lib.mkOption {
+        type = lib.types.str;
+      };
 
-    memoryInGb = lib.mkOption {
-      type = lib.types.number;
-    };
+      ocpus = lib.mkOption {
+        type = lib.types.number;
+      };
 
-    platform = lib.mkOption {
-      type = lib.types.nullOr (lib.types.enum [
-        "x86_64-linux"
-        "aarch64-linux"
-      ]);
-      default = null;
-    };
+      memoryInGb = lib.mkOption {
+        type = lib.types.number;
+      };
 
-    diskPerformanceUnits = lib.mkOption {
-      type = lib.types.nullOr lib.types.int;
-      default = null;
+      platform = lib.mkOption {
+        type = lib.types.nullOr (lib.types.enum [
+          "x86_64-linux"
+          "aarch64-linux"
+        ]);
+        default = null;
+      };
+
+      diskPerformanceUnits = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+      };
     };
   };
 
@@ -44,5 +51,19 @@
       pkgs.mtr
       pkgs.magic-wormhole
     ];
+
+    systemd.targets.benchmark-role-ready = {
+      description = "Micronaut benchmark role is ready";
+      requires = config.benchmark.roleUnits;
+      after = config.benchmark.roleUnits;
+      wants = [ "sshd.service" ];
+      before = [ "sshd.service" ];
+      wantedBy = [ "multi-user.target" ];
+    };
+
+    systemd.services.sshd = {
+      requires = [ "benchmark-role-ready.target" ];
+      after = [ "benchmark-role-ready.target" ];
+    };
   };
 }

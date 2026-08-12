@@ -50,7 +50,7 @@ in
 
   benchmark.oci.instance = {
     shape = "VM.Standard.E4.Flex";
-    ocpus = 2;
+    ocpus = 4;
     memoryInGb = 8;
     platform = "x86_64-linux";
     diskPerformanceUnits = 80;
@@ -60,13 +60,14 @@ in
 
   networking.firewall.allowedTCPPorts = [ 8443 ];
 
+  benchmark.roleUnits = [ "relay-agent.service" ];
+
   system.build.relay-agent = relayAgent;
 
   systemd.services.relay-agent = {
     description = "Micronaut benchmark relay agent";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-
     serviceConfig = {
       Type = "simple";
       ExecStart = relayAgentService;

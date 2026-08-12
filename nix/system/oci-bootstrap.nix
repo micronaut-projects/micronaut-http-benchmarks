@@ -4,12 +4,6 @@
     ./minimal-base.nix
   ];
 
-  services.cloud-init = {
-    enable = true;
-    network.enable = true;
-    settings.datasource_list = [ "Oracle" ];
-  };
-
   nixpkgs.flake = {
     setFlakeRegistry = false;
     setNixPath = false;
