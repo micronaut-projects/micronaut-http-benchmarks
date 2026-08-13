@@ -12,9 +12,11 @@ import io.micronaut.benchmark.loadgen.oci.Infrastructure;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public final class ComputeResource extends AbstractSimpleResource<Instance.LifecycleState> {
+    private Runnable beforeDelete = () -> { };
     public ComputeResource(ResourceContext context) {
         super(
                 Instance.LifecycleState.Provisioning,
@@ -38,15 +40,26 @@ public final class ComputeResource extends AbstractSimpleResource<Instance.Lifec
 
     @Override
     protected void delete(OciLocation location, String ocid) {
+        beforeDelete.run();
         context.clients.compute().forRegion(location).terminateInstance(TerminateInstanceRequest.builder().instanceId(ocid).build());
     }
 
+    public ComputeResource beforeDelete(Runnable beforeDelete) {
+        this.beforeDelete = beforeDelete;
+        return this;
+    }
+
     public void manageNew(OciLocation location, Supplier<LaunchInstanceDetails.Builder> details) throws Exception {
+        manageNew(location, details, ignored -> { });
+    }
+
+    public void manageNew(OciLocation location, Supplier<LaunchInstanceDetails.Builder> details, Consumer<Instance> created) throws Exception {
         manageNew(location, () -> {
             LaunchInstanceDetails.Builder d = details.get();
             d.compartmentId(location.compartmentId());
             d.availabilityDomain(location.availabilityDomain());
             Instance i = Infrastructure.retry(() -> context.clients.compute().forRegion(location).launchInstance(LaunchInstanceRequest.builder().launchInstanceDetails(d.build()).build()).getInstance());
+            created.accept(i);
             setPhase(i.getLifecycleState());
             return i.getId();
         });

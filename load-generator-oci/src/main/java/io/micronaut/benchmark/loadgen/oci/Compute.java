@@ -74,6 +74,7 @@ public final class Compute {
     private final RegionalClient<VirtualNetworkClient> vcnClient;
     private final SshFactory sshFactory;
     private final Nix nix;
+    private final ComputeConsoleHistoryCollector.Factory consoleHistoryCollectorFactory;
 
     private final Map<String, NixosImageResource> nixosBootstrapByPlatform = new ConcurrentHashMap<>();
 
@@ -82,7 +83,7 @@ public final class Compute {
                    BenchmarkMetadata metadata,
                    RegionalClient<ComputeClient> computeClient,
                    RegionalClient<VirtualNetworkClient> vcnClient,
-                   SshFactory sshFactory, Nix nix) {
+                   SshFactory sshFactory, Nix nix, ComputeConsoleHistoryCollector.Factory consoleHistoryCollectorFactory) {
         this.context = context;
         this.computeConfiguration = computeConfiguration;
         this.metadata = metadata;
@@ -90,10 +91,7 @@ public final class Compute {
         this.vcnClient = vcnClient;
         this.sshFactory = sshFactory;
         this.nix = nix;
-    }
-
-    private List<Image> images(OciLocation location) {
-        return CustomImageResource.list(context, location);
+        this.consoleHistoryCollectorFactory = consoleHistoryCollectorFactory;
     }
 
     private NixosImageResource getNixosBootstrapImage(String platform) {
@@ -133,6 +131,8 @@ public final class Compute {
         private final BenchmarkMetadata.InstanceType instanceType;
         private final OciLocation location;
         private final SubnetResource subnet;
+        private OutputListener consoleHistory;
+        private ComputeConsoleHistoryCollector consoleHistoryCollector;
         private String privateIp = null;
         private InstanceAccess access;
 
@@ -145,6 +145,11 @@ public final class Compute {
             this.instanceType = Objects.requireNonNull(instanceType, "instanceType");
             this.location = location;
             this.subnet = subnet;
+            this.computeResource.beforeDelete(() -> {
+                if (consoleHistoryCollector != null) {
+                    consoleHistoryCollector.captureNow();
+                }
+            });
             this.computeResource.name(displayName);
             computeResource.dependOn(subnet.require());
             resource.dependOn(computeResource.require());
@@ -158,6 +163,11 @@ public final class Compute {
          */
         public Launch privateIp(String privateIp) {
             this.privateIp = privateIp;
+            return this;
+        }
+
+        public Launch consoleHistory(OutputListener listener) {
+            this.consoleHistory = Objects.requireNonNull(listener, "listener");
             return this;
         }
 
@@ -262,7 +272,7 @@ public final class Compute {
             }
         }
 
-        public AbstractDecoratedResource resource() {
+        public InstanceResource resource() {
             return resource;
         }
 
@@ -502,9 +512,7 @@ public final class Compute {
                 if (launch.nixosConfiguration != null) {
                     userDataScript += launch.nixosConfiguration.activation();
                 }
-                userDataScript += "install -d /var/lib/micronaut-benchmark\n";
-                userDataScript += "touch /var/lib/micronaut-benchmark/role-activated\n";
-                userDataScript += "systemctl start sshd.service\n";
+                userDataScript += "systemctl start benchmark-role-ready.target\n";
 
                 return LaunchInstanceDetails.builder()
                         .sourceDetails(InstanceSourceViaImageDetails.builder()
@@ -520,16 +528,16 @@ public final class Compute {
                         .createVnicDetails(vnicDetails.build())
                         .imageId(imageResource.getId())
                         .metadata(Map.of(
-                                "ssh_authorized_keys",
-                                authorizedKeys()
-                                        .collect(Collectors.joining("\n")),
-                                "user_data",
-                                Base64.getEncoder().encodeToString(userDataScript.getBytes(StandardCharsets.UTF_8))
-                        ))
+                                "ssh_authorized_keys", authorizedKeys().collect(Collectors.joining("\n")),
+                                "user_data", Base64.getEncoder().encodeToString(userDataScript.getBytes(StandardCharsets.UTF_8))))
                         .launchOptions(LaunchOptions.builder()
                                 .firmware(LaunchOptions.Firmware.Uefi64)
                                 .networkType(LaunchOptions.NetworkType.Vfio)
+                                .bootVolumeType(LaunchOptions.BootVolumeType.Paravirtualized)
+                                .remoteDataVolumeType(LaunchOptions.RemoteDataVolumeType.Paravirtualized)
+                                .isConsistentVolumeNamingEnabled(true)
                                 .build())
+                        .isPvEncryptionInTransitEnabled(true)
                         .instanceOptions(InstanceOptions.builder()
                                 .areLegacyImdsEndpointsDisabled(true)
                                 .build())
@@ -541,6 +549,11 @@ public final class Compute {
                                                 .build()
                                 ))
                                 .build());
+            }, instance -> {
+                if (launch.consoleHistory != null) {
+                    launch.consoleHistoryCollector = consoleHistoryCollectorFactory.create(
+                            launch.location, instance.getId(), instance.getDisplayName(), launch.consoleHistory);
+                }
             }));
 
             launch.access.launch(launch);
@@ -592,6 +605,10 @@ public final class Compute {
         @Override
         public String toString() {
             return "InstanceResource[" + launch.computeResource + "]";
+        }
+
+        public void awaitTermination() throws InterruptedException {
+            awaitPhase(Phase.Terminated);
         }
     }
 

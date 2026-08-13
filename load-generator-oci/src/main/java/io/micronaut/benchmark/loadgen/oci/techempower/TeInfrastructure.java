@@ -51,7 +51,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
 
     private final Map<DockerServer, DockerServerRuntime> dockerServers = new EnumMap<>(DockerServer.class);
 
-    private TeInfrastructure(Factory factory, OciLocation location, Path logDirectory) {
+    private TeInfrastructure(Factory factory, OciLocation location, Path logDirectory) throws Exception {
         super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
     }
@@ -60,9 +60,11 @@ final class TeInfrastructure extends AbstractInfrastructure {
         setupBase(phaseUpdater);
 
         for (DockerServer dockerServer : DockerServer.values()) {
+            OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve(dockerServer.instanceType + ".log")));
             dockerServers.put(dockerServer, new DockerServerRuntime(computeBuilder(dockerServer.instanceType)
                     .privateIp(dockerServer.ip)
-                    .launch(), new OutputListener.Write(Files.newOutputStream(logDirectory.resolve(dockerServer.instanceType + ".log")))));
+                    .consoleHistory(log)
+                    .launch(), log));
         }
 
         List<Future<?>> setupFutures = new ArrayList<>();
@@ -286,7 +288,6 @@ final class TeInfrastructure extends AbstractInfrastructure {
     @Override
     public void close() throws Exception {
         for (DockerServerRuntime runtime : dockerServers.values()) {
-            runtime.log.close();
             runtime.instance.terminateAsync();
         }
 
@@ -297,6 +298,11 @@ final class TeInfrastructure extends AbstractInfrastructure {
         }
 
         super.close();
+
+        for (DockerServerRuntime runtime : dockerServers.values()) {
+            runtime.instance.resource().awaitTermination();
+            runtime.log.close();
+        }
     }
 
     @Singleton
@@ -311,7 +317,7 @@ final class TeInfrastructure extends AbstractInfrastructure {
             HotspotConfiguration hotspotConfiguration,
             ObjectMapper objectMapper
     ) {
-        TeInfrastructure create(OciLocation location, Path logDirectory) {
+        TeInfrastructure create(OciLocation location, Path logDirectory) throws Exception {
             return new TeInfrastructure(this, location, logDirectory);
         }
     }

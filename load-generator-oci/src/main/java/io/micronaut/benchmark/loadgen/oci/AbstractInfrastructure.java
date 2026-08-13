@@ -14,6 +14,7 @@ import com.oracle.bmc.core.model.TcpOptions;
 import com.oracle.bmc.core.model.UpdateSecurityListDetails;
 import com.oracle.bmc.core.requests.GetSecurityListRequest;
 import com.oracle.bmc.core.requests.UpdateSecurityListRequest;
+import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.InternetGatewayResource;
@@ -95,10 +96,11 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     private final Compute.Launch relayServerBuilder;
     private final BastionResource bastion;
     private final TcpAgentRelay.TcpRelayResource tcpRelayResource;
+    private final OutputListener.Write relayLog;
 
     final List<PhasedResource.PhaseLock> lifecycleLocks = new ArrayList<>();
 
-    protected AbstractInfrastructure(Factory factory, OciLocation location, Path logDirectory) {
+    protected AbstractInfrastructure(Factory factory, OciLocation location, Path logDirectory) throws Exception {
         this.location = location;
         this.logDirectory = logDirectory;
         this.context = factory.resourceContext;
@@ -118,19 +120,18 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
             publicRouteTable = new RouteTableResource(context).vcn(vcn);
             publicRouteTable.dependOn(internet.require());
             publicSubnet = new SubnetResource(context).vcn(vcn).routeTable(publicRouteTable);
+            relayLog = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("relay-server.log")));
             relayServerBuilder = compute.builder("relay-server", location, publicSubnet)
-                    .access(new Compute.PublicIpAccess());
+                    .access(new Compute.PublicIpAccess())
+                    .consoleHistory(relayLog);
             lifecycleLocks.addAll(relayServerBuilder.resource().require());
             if (RELAY_MODE == SshRelayMode.TCP_AGENT) {
-                try {
-                    tcpRelayResource = factory.agentRelayFactory.builder()
-                            .log(logDirectory.resolve("http-agent.log"))
-                            .sshKeyPair(factory.sshFactory.keyPair())
-                            .prepareCloudInit(relayServerBuilder)
-                            .asResource(context, relayServerBuilder.resource());
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
+                tcpRelayResource = factory.agentRelayFactory.builder()
+                        .log(relayLog)
+                        .sshKeyPair(factory.sshFactory.keyPair())
+                        .prepareCloudInit(relayServerBuilder)
+                        .asResource(context, relayServerBuilder.resource());
+                lifecycleLocks.addAll(tcpRelayResource.require());
             } else {
                 tcpRelayResource = null;
             }
@@ -140,6 +141,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
             publicSubnet = null;
             relayServerBuilder = null;
             tcpRelayResource = null;
+            relayLog = null;
         }
         if (RELAY_MODE == SshRelayMode.BASTION) {
             bastion = new BastionResource(context).subnet(privateSubnet);
@@ -292,6 +294,12 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         LOG.info("Terminating network resources");
         for (PhasedResource.PhaseLock lifecycleLock : lifecycleLocks) {
             lifecycleLock.close();
+        }
+        if (relayServerBuilder != null) {
+            relayServerBuilder.resource().awaitTermination();
+        }
+        if (relayLog != null) {
+            relayLog.close();
         }
     }
 

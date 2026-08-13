@@ -122,10 +122,12 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                 .nixosConfiguration("hyperfoil-controller");
         controllerLocks = controllerLaunch.resource().require();
         for (int i = 0; i < factory.config.agentCount; i++) {
+            OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("agent-instance-" + i + ".log")));
             Compute.Launch launch = infrastructure.computeBuilder(AGENT_INSTANCE_TYPE)
                     .privateIp(agentIp(i))
-                    .nixosConfiguration("hyperfoil-agent");
-            AgentResource r = new AgentResource(context, i, launch, new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("agent-instance-" + i + ".log"))));
+                    .nixosConfiguration("hyperfoil-agent")
+                    .consoleHistory(log);
+            AgentResource r = new AgentResource(context, i, launch, log);
             r.name("agent" + i);
             agents.add(r);
             agentLocks.addAll(r.require());
@@ -521,7 +523,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
         @Override
         protected void tearDown() {
-            try {
+            try (log) {
                 if (asyncProfilerSession != null) {
                     Path dir = logDirectory.resolve("agent" + i);
                     try {
@@ -534,8 +536,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                     }
                 }
 
-                log.close();
-            } catch (IOException e) {
+                instance.awaitTermination();
+            } catch (Exception e) {
                 LOG.warn("Failed to close agent", e);
             }
         }

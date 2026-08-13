@@ -1,6 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci.cmd;
 
 import io.micronaut.core.annotation.NonNull;
+import io.micronaut.core.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -12,6 +13,7 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
@@ -110,17 +112,37 @@ public interface OutputListener {
          * @param nextPattern The next pattern to look for, or {@code null} to stop looking
          */
         public void awaitWithNextPattern(ByteBuffer nextPattern) {
+            awaitWithNextPattern(nextPattern, null);
+        }
+
+        public void awaitWithNextPattern(ByteBuffer nextPattern, @Nullable Duration timeout) {
+            boolean interrupt = false;
             lock.lock();
             try {
+                long remainingNanos = timeout == null ? 0 : timeout.toNanos();
                 while (pattern != null) {
                     if (done) {
                         throw new IllegalStateException("Pattern not found");
                     }
-                    foundCondition.awaitUninterruptibly();
+                    if (timeout == null) {
+                        foundCondition.awaitUninterruptibly();
+                    } else {
+                        if (remainingNanos <= 0) {
+                            throw new IllegalStateException("Timed out waiting for pattern");
+                        }
+                        try {
+                            remainingNanos = foundCondition.awaitNanos(remainingNanos);
+                        } catch (InterruptedException e) {
+                            interrupt = true;
+                        }
+                    }
                 }
                 pattern = nextPattern;
             } finally {
                 lock.unlock();
+                if (interrupt) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }

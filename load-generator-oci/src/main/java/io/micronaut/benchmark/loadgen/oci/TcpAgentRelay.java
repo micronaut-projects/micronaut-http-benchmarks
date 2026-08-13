@@ -37,10 +37,13 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public final class TcpAgentRelay implements Closeable {
     static final int PORT = 8443;
     private static final int LOG_PORT = 8444;
+    private static final Duration STARTUP_TIMEOUT = Duration.ofMinutes(16);
 
     private static final Logger LOG = LoggerFactory.getLogger(TcpAgentRelay.class);
     private final OutputListener log;
@@ -49,6 +52,7 @@ public final class TcpAgentRelay implements Closeable {
     private final SshClient sshClient;
 
     private TcpAgentRelay(Builder builder) throws Exception {
+        long deadline = System.nanoTime() + STARTUP_TIMEOUT.toNanos();
         this.log = builder.log;
 
         this.relay = new TcpRelay()
@@ -60,16 +64,20 @@ public final class TcpAgentRelay implements Closeable {
                 .serverKeyVerifier(AcceptAllServerKeyVerifier.INSTANCE)
                 .hostConfigEntryResolver(HostConfigEntryResolver.EMPTY)
                 .build();
+        remainingDuration(deadline);
         CoreModuleProperties.SOCKET_KEEPALIVE.set(sshClient, true);
         CoreModuleProperties.HEARTBEAT_INTERVAL.set(sshClient, Duration.ofSeconds(120));
         CoreModuleProperties.AUTH_TIMEOUT.set(sshClient, Duration.ofSeconds(120));
         sshClient.setKeyIdentityProvider(KeyIdentityProvider.wrapKeyPairs(builder.sshKeyPair));
         sshClient.start();
+        remainingDuration(deadline);
 
         TcpRelay.Binding logBinding = relay.bindForward(new InetSocketAddress("127.0.0.1", LOG_PORT));
+        remainingDuration(deadline);
         @SuppressWarnings("resource")
         Socket socket = new Socket();
-        socket.connect(logBinding.address());
+        socket.connect(logBinding.address(), remainingMillis(deadline));
+        remainingDuration(deadline);
         OutputListener.Waiter tcpLogWaiter = new OutputListener.Waiter(ByteBuffer.wrap(TcpRelayMessage.TCP_LOG_ESTABLISHED.getBytes(StandardCharsets.UTF_8)));
         builder.factory.blocking.execute(() -> {
             try (socket) {
@@ -79,7 +87,19 @@ public final class TcpAgentRelay implements Closeable {
             }
         });
         // wait for TCP log to start
-        tcpLogWaiter.awaitWithNextPattern(null);
+        tcpLogWaiter.awaitWithNextPattern(null, remainingDuration(deadline));
+    }
+
+    private static Duration remainingDuration(long deadline) throws TimeoutException {
+        long remainingNanos = deadline - System.nanoTime();
+        if (remainingNanos <= 0) {
+            throw new TimeoutException("Timed out waiting for relay startup");
+        }
+        return Duration.ofNanos(remainingNanos);
+    }
+
+    private static int remainingMillis(long deadline) throws TimeoutException {
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(1, TimeUnit.NANOSECONDS.toMillis(remainingDuration(deadline).toNanos())));
     }
 
     public CommandRunner openSession(String host) throws IOException {

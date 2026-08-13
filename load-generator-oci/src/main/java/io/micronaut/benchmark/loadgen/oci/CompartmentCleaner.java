@@ -19,6 +19,7 @@ import com.oracle.bmc.requests.BmcRequest;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractSimpleResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionResource;
 import io.micronaut.benchmark.loadgen.oci.resource.CompartmentResource;
+import io.micronaut.benchmark.loadgen.oci.resource.ComputeImageCapabilitySchemaResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
 import io.micronaut.benchmark.loadgen.oci.resource.InternetGatewayResource;
 import io.micronaut.benchmark.loadgen.oci.resource.NatGatewayResource;
@@ -147,6 +148,14 @@ public record CompartmentCleaner(
                 resource.dependOn(subnet.require());
             }
             delete(location, instance.getId(), resource);
+        }
+        for (var schema : ComputeImageCapabilitySchemaResource.list(context, location, null)) {
+            if (schema.getLifecycleState() != com.oracle.bmc.core.model.ComputeImageCapabilitySchema.LifecycleState.Deleted) {
+                ComputeImageCapabilitySchemaResource resource = new ComputeImageCapabilitySchemaResource(context);
+                resource.setPhase(schema.getLifecycleState());
+                resource.dependOn(compartmentResource.require());
+                delete(location, schema.getId(), resource);
+            }
         }
         if (anyVcns) {
             for (DbSystemSummary dbSystemSummary : PostgresqlResource.list(context, location)) {
