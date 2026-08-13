@@ -16,7 +16,7 @@ maven.buildMavenPackage {
     ];
   };
 
-  mvnHash = "sha256-2jKGVkBY06bKKOK6zbERQc8gXSB0OF/OSmfZB+lzzQw=";
+  mvnHash = "sha256-JOXrtGDOPFLJ2WXaaEdcavo9H2r6OJAlgvDcduV45Tk=";
 
   mvnJdk = jdk25_headless;
 
