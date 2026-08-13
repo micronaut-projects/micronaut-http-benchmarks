@@ -6,9 +6,15 @@ import com.oracle.bmc.bastion.model.CreateSessionDetails;
 import com.oracle.bmc.bastion.model.PublicKeyDetails;
 import com.oracle.bmc.core.ComputeClient;
 import com.oracle.bmc.core.VirtualNetworkClient;
+import com.oracle.bmc.core.model.BooleanImageCapabilitySchemaDescriptor;
+import com.oracle.bmc.core.model.ComputeGlobalImageCapabilitySchemaSummary;
+import com.oracle.bmc.core.model.ComputeImageCapabilitySchema;
+import com.oracle.bmc.core.model.CreateComputeImageCapabilitySchemaDetails;
 import com.oracle.bmc.core.model.CreateImageDetails;
 import com.oracle.bmc.core.model.CreateVnicDetails;
+import com.oracle.bmc.core.model.EnumStringImageCapabilitySchemaDescriptor;
 import com.oracle.bmc.core.model.Image;
+import com.oracle.bmc.core.model.ImageCapabilitySchemaDescriptor;
 import com.oracle.bmc.core.model.ImageSourceDetails;
 import com.oracle.bmc.core.model.ImageSourceViaObjectStorageTupleDetails;
 import com.oracle.bmc.core.model.InstanceAgentPluginConfigDetails;
@@ -20,12 +26,13 @@ import com.oracle.bmc.core.model.LaunchInstanceShapeConfigDetails;
 import com.oracle.bmc.core.model.LaunchOptions;
 import com.oracle.bmc.core.requests.DeleteImageRequest;
 import com.oracle.bmc.core.requests.GetVnicRequest;
+import com.oracle.bmc.core.requests.ListComputeGlobalImageCapabilitySchemasRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
-import com.oracle.bmc.objectstorage.ObjectStorageClient;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.BastionSessionResource;
+import io.micronaut.benchmark.loadgen.oci.resource.ComputeImageCapabilitySchemaResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ComputeResource;
 import io.micronaut.benchmark.loadgen.oci.resource.CustomImageResource;
 import io.micronaut.benchmark.loadgen.oci.resource.NixosCacheResource;
@@ -48,7 +55,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -59,33 +65,27 @@ import java.util.stream.Stream;
 public final class Compute {
     private static final Logger LOG = LoggerFactory.getLogger(Compute.class);
     private static final String BASTION_PLUGIN_NAME = "Bastion";
-
-    private static final Pattern BASE_IMAGE_AMD64 = Pattern.compile("Canonical-Ubuntu-[\\d.]+-Minimal-[\\d.-]+");
-    private static final Pattern BASE_IMAGE_AARCH64 = Pattern.compile("Canonical-Ubuntu-[\\d.]+-Minimal-aarch64-[\\d.-]+");
+    private static final String GLOBAL_CAPABILITY_SCHEMA_DISPLAY_NAME = "OCI.ComputeGlobalImageCapabilitySchema";
 
     private final ResourceContext context;
     private final ComputeConfiguration computeConfiguration;
     private final BenchmarkMetadata metadata;
-    private final ObjectStorageClient objectStorageClient;
     private final RegionalClient<ComputeClient> computeClient;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
     private final SshFactory sshFactory;
     private final Nix nix;
 
-    private final Map<OciLocation, List<Image>> imagesByCompartment = new ConcurrentHashMap<>();
     private final Map<String, NixosImageResource> nixosBootstrapByPlatform = new ConcurrentHashMap<>();
 
     public Compute(ResourceContext context,
                    ComputeConfiguration computeConfiguration,
                    BenchmarkMetadata metadata,
-                   ObjectStorageClient objectStorageClient,
                    RegionalClient<ComputeClient> computeClient,
                    RegionalClient<VirtualNetworkClient> vcnClient,
                    SshFactory sshFactory, Nix nix) {
         this.context = context;
         this.computeConfiguration = computeConfiguration;
         this.metadata = metadata;
-        this.objectStorageClient = objectStorageClient;
         this.computeClient = computeClient;
         this.vcnClient = vcnClient;
         this.sshFactory = sshFactory;
@@ -287,6 +287,9 @@ public final class Compute {
         private final StorageObjectResource imageResource;
         private final String platform;
         private String id;
+        private ComputeImageCapabilitySchemaResource capabilitySchemaResource;
+        private List<PhaseLock> capabilitySchemaLocks;
+        private boolean capabilitySchemaReady;
 
         NixosImageResource(ResourceContext context, String platform) {
             super(context);
@@ -330,10 +333,12 @@ public final class Compute {
             Image match = null;
             for (Image image : CustomImageResource.list(context, imageLocation)) {
                 if (image.getOperatingSystem().equals(os)) {
-                    if (image.getOperatingSystemVersion().equals(version)) {
+                    if (image.getOperatingSystemVersion().equals(version)
+                            && image.getLaunchMode() == Image.LaunchMode.Paravirtualized) {
                         match = image;
                     } else {
                         LOG.info("Deleting stale nixos image {} ({})", image.getDisplayName(), image.getId());
+                        deleteCapabilitySchemas(imageLocation, image.getId());
                         computeClient.forRegion(imageLocation).deleteImage(DeleteImageRequest.builder()
                                 .imageId(image.getId())
                                 .build());
@@ -354,13 +359,113 @@ public final class Compute {
                                 .operatingSystemVersion(version)
                                 .sourceImageType(ImageSourceDetails.SourceImageType.Qcow2)
                                 .build())
-                        .launchMode(CreateImageDetails.LaunchMode.Native)));
+                        .launchMode(CreateImageDetails.LaunchMode.Paravirtualized)));
             } else {
-                id = match.getId();
-                AbstractInfrastructure.launch(imageResource, () -> imageResource.manageExisting(imageLocation, id));
+                String existingImageId = match.getId();
+                AbstractInfrastructure.launch(imageResource, () -> imageResource.manageExisting(imageLocation, existingImageId));
             }
 
             PhaseLock.awaitAll(imageResource.require());
+            String imageId = imageResource.ocid();
+            reconcileCapabilitySchema(imageLocation, imageId);
+            id = imageId;
+            capabilitySchemaReady = true;
+        }
+
+        private void reconcileCapabilitySchema(OciLocation location, String imageId) throws Exception {
+            String globalSchemaVersion = currentGlobalSchemaVersion(computeClient.forRegion(location));
+            List<ComputeImageCapabilitySchema> schemas = ComputeImageCapabilitySchemaResource.list(context, location, imageId).stream()
+                    .filter(schema -> schema.getLifecycleState() != ComputeImageCapabilitySchema.LifecycleState.Deleted)
+                    .toList();
+            if (schemas.size() == 1 && isDesiredCapabilitySchema(schemas.getFirst(), globalSchemaVersion)) {
+                capabilitySchemaResource = new ComputeImageCapabilitySchemaResource(context);
+                capabilitySchemaLocks = capabilitySchemaResource.require();
+                AbstractInfrastructure.launch(capabilitySchemaResource,
+                        () -> capabilitySchemaResource.manageExisting(location, schemas.getFirst().getId()));
+                PhaseLock.awaitAll(capabilitySchemaLocks);
+                return;
+            }
+
+            deleteCapabilitySchemas(location, schemas);
+            capabilitySchemaResource = new ComputeImageCapabilitySchemaResource(context);
+            capabilitySchemaLocks = capabilitySchemaResource.require();
+            AbstractInfrastructure.launch(capabilitySchemaResource, () -> capabilitySchemaResource.manageNew(location,
+                    CreateComputeImageCapabilitySchemaDetails.builder()
+                            .imageId(imageId)
+                            .displayName("nixos-" + platform)
+                             .computeGlobalImageCapabilitySchemaVersionName(globalSchemaVersion)
+                             .schemaData(desiredCapabilitySchemaData())));
+            PhaseLock.awaitAll(capabilitySchemaLocks);
+        }
+
+        private String currentGlobalSchemaVersion(ComputeClient client) {
+            List<ComputeGlobalImageCapabilitySchemaSummary> schemas = client.listComputeGlobalImageCapabilitySchemas(
+                    ListComputeGlobalImageCapabilitySchemasRequest.builder()
+                            .displayName(GLOBAL_CAPABILITY_SCHEMA_DISPLAY_NAME)
+                            .build())
+                    .getItems();
+            if (schemas.size() != 1) {
+                throw new IllegalStateException("Expected exactly one global image capability schema named "
+                        + GLOBAL_CAPABILITY_SCHEMA_DISPLAY_NAME + ", found " + schemas.size());
+            }
+            return schemas.getFirst().getCurrentVersionName();
+        }
+
+        private void deleteCapabilitySchemas(OciLocation location, String imageId) throws Exception {
+            deleteCapabilitySchemas(location, ComputeImageCapabilitySchemaResource.list(context, location, imageId));
+        }
+
+        private void deleteCapabilitySchemas(OciLocation location, List<ComputeImageCapabilitySchema> schemas) throws Exception {
+            for (ComputeImageCapabilitySchema schema : schemas) {
+                if (schema.getLifecycleState() != ComputeImageCapabilitySchema.LifecycleState.Deleted) {
+                    new ComputeImageCapabilitySchemaResource(context).manageExisting(location, schema.getId());
+                }
+            }
+        }
+
+        private static boolean isDesiredCapabilitySchema(ComputeImageCapabilitySchema schema, String globalSchemaVersion) {
+            return schema.getLifecycleState() == ComputeImageCapabilitySchema.LifecycleState.Active
+                    && globalSchemaVersion.equals(schema.getComputeGlobalImageCapabilitySchemaVersionName())
+                    && hasDesiredCapabilitySchemaData(schema.getSchemaData());
+        }
+
+        private static boolean hasDesiredCapabilitySchemaData(Map<String, ImageCapabilitySchemaDescriptor> schemaData) {
+            Map<String, ImageCapabilitySchemaDescriptor> desired = desiredCapabilitySchemaData();
+            return desired.entrySet().stream().allMatch(entry -> entry.getValue().equals(schemaData.get(entry.getKey())));
+        }
+
+        private static Map<String, ImageCapabilitySchemaDescriptor> desiredCapabilitySchemaData() {
+            ImageCapabilitySchemaDescriptor.Source source = ImageCapabilitySchemaDescriptor.Source.Image;
+            return Map.of(
+                    "Compute.Firmware", enumDescriptor(source, List.of("UEFI_64"), "UEFI_64"),
+                    "Compute.LaunchMode", enumDescriptor(source, List.of("PARAVIRTUALIZED"), "PARAVIRTUALIZED"),
+                    "Network.AttachmentType", enumDescriptor(source, List.of("VFIO", "PARAVIRTUALIZED"), "VFIO"),
+                    "Storage.BootVolumeType", enumDescriptor(source, List.of("PARAVIRTUALIZED"), "PARAVIRTUALIZED"),
+                    "Storage.LocalDataVolumeType", enumDescriptor(source, List.of("PARAVIRTUALIZED"), "PARAVIRTUALIZED"),
+                    "Storage.RemoteDataVolumeType", enumDescriptor(source, List.of("PARAVIRTUALIZED"), "PARAVIRTUALIZED"),
+                    "Storage.ConsistentVolumeNaming", BooleanImageCapabilitySchemaDescriptor.builder().source(source).defaultValue(true).build(),
+                    "Storage.ParaVirtualization.EncryptionInTransit", BooleanImageCapabilitySchemaDescriptor.builder().source(source).defaultValue(true).build()
+            );
+        }
+
+        private static EnumStringImageCapabilitySchemaDescriptor enumDescriptor(
+                ImageCapabilitySchemaDescriptor.Source source,
+                List<String> values,
+                String defaultValue) {
+            return EnumStringImageCapabilitySchemaDescriptor.builder()
+                    .source(source)
+                    .values(values)
+                    .defaultValue(defaultValue)
+                    .build();
+        }
+
+        @Override
+        protected void unlock() {
+            if (!capabilitySchemaReady && capabilitySchemaLocks != null) {
+                for (PhaseLock capabilitySchemaLock : capabilitySchemaLocks) {
+                    capabilitySchemaLock.close();
+                }
+            }
         }
     }
 
