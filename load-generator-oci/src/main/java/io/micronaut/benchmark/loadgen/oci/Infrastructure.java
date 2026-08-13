@@ -89,19 +89,17 @@ public final class Infrastructure extends AbstractInfrastructure {
         started = true;
     }
 
+    @SuppressWarnings("EmptyTryBlock")
     @Override
     public void close() throws Exception {
         stopped = true;
-
-        hyperfoilLock.close();
-        for (PhasedResource.PhaseLock lock : nixosConfigurationLocks.values()) {
-            lock.close();
+        // Safely close everything
+        try (hyperfoilLock;
+             PhasedResource.PhaseLock _ = PhasedResource.PhaseLock.combine(nixosConfigurationLocks.values().stream().toList());
+             Compute.Instance _ = benchmarkServer;
+             AutoCloseable _ = super::close
+        ) {
         }
-        if (benchmarkServer != null) {
-            benchmarkServer.close();
-        }
-
-        super.close();
     }
 
     /**
