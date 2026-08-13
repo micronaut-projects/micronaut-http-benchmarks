@@ -39,6 +39,10 @@
   };
 
   config = {
+    networking.firewall.extraInputRules = ''
+      ip saddr 10.0.0.0/18 accept comment "benchmark private network"
+    '';
+
     programs.vim = {
       enable = true;
       defaultEditor = true;

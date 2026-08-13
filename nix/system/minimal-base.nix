@@ -14,6 +14,13 @@ in
     settings.datasource_list = [ "Oracle" ];
   };
 
+  services.journald = {
+    storage = "persistent";
+    console = serialDevice;
+    rateLimitInterval = "0";
+    rateLimitBurst = 0;
+  };
+
   systemd.services = {
     cloud-final = {
       serviceConfig.TimeoutSec = lib.mkForce "15min";
@@ -65,7 +72,8 @@ in
   };
 
   boot.loader = {
-    systemd-boot.enable = true;
+    systemd-boot.enable = false;
+    grub.enable = true;
     efi.canTouchEfiVariables = false;
   };
 
