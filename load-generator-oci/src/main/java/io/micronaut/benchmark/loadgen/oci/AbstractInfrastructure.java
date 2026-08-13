@@ -305,7 +305,8 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
 
     static <T, E extends Exception> T retry(ThrowingSupplier<T, E> callable, Runnable onFailure, int n) throws E {
         E err = null;
-        for (int i = 0; i < n; i++) {
+        int i = 0;
+        while (true) {
             try {
                 return callable.get();
             } catch (Exception e) {
@@ -319,6 +320,10 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                     err.addSuppressed(e);
                 }
             }
+            i++;
+            if (i >= n) {
+                throw err;
+            }
             onFailure.run();
             try {
                 TimeUnit.SECONDS.sleep(10);
@@ -326,7 +331,6 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                 PlatformDependent.throwException(e);
             }
         }
-        throw err;
     }
 
     private enum SshRelayMode {
