@@ -47,8 +47,7 @@ public final class InternetGatewayResource extends AbstractSimpleResource<Intern
             details.compartmentId(location.compartmentId());
             details.vcnId(vcn.ocid());
             InternetGateway gw = context.clients.vcn().forRegion(location).createInternetGateway(CreateInternetGatewayRequest.builder().createInternetGatewayDetails(details.build()).build()).getInternetGateway();
-            setPhase(gw.getLifecycleState());
-            return gw.getId();
+            return new CreationResult<>(gw.getId(), gw.getLifecycleState());
         });
     }
 

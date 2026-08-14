@@ -46,8 +46,7 @@ public final class NatGatewayResource extends AbstractSimpleResource<NatGateway.
             details.compartmentId(location.compartmentId());
             details.vcnId(vcn.ocid());
             NatGateway gw = context.clients.vcn().forRegion(location).createNatGateway(CreateNatGatewayRequest.builder().createNatGatewayDetails(details.build()).build()).getNatGateway();
-            setPhase(gw.getLifecycleState());
-            return gw.getId();
+            return new CreationResult<>(gw.getId(), gw.getLifecycleState());
         });
     }
 

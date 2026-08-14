@@ -60,8 +60,7 @@ public final class ComputeResource extends AbstractSimpleResource<Instance.Lifec
             d.availabilityDomain(location.availabilityDomain());
             Instance i = Infrastructure.retry(() -> context.clients.compute().forRegion(location).launchInstance(LaunchInstanceRequest.builder().launchInstanceDetails(d.build()).build()).getInstance());
             created.accept(i);
-            setPhase(i.getLifecycleState());
-            return i.getId();
+            return new CreationResult<>(i.getId(), i.getLifecycleState());
         });
     }
 

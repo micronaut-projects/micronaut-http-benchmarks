@@ -48,8 +48,7 @@ public final class VcnResource extends AbstractSimpleResource<Vcn.LifecycleState
             details.compartmentId(location.compartmentId());
             Vcn vcn = context.clients.vcn().forRegion(location).createVcn(CreateVcnRequest.builder().createVcnDetails(details.build()).build()).getVcn();
             this.defaultSecurityListId = vcn.getDefaultSecurityListId();
-            setPhase(vcn.getLifecycleState());
-            return vcn.getId();
+            return new CreationResult<>(vcn.getId(), vcn.getLifecycleState());
         });
     }
 

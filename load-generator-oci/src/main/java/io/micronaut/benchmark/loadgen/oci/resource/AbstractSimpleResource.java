@@ -60,12 +60,15 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
         PhaseLock.awaitAll(locks);
     }
 
-    protected final void manageNew(OciLocation location, ThrowingSupplier<String, Exception> create) throws Exception {
+    protected final void manageNew(OciLocation location, ThrowingSupplier<CreationResult<P>, Exception> create) throws Exception {
         String ocid = null;
         try {
             awaitLocks();
 
-            ocid = create.get();
+            CreationResult<P> result = create.get();
+            ocid = result.ocid();
+            this.ocid = ocid;
+            setPhase(result.phase());
         } finally {
             if (ocid == null) {
                 for (PhaseLock lock : locks) {
@@ -118,6 +121,9 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
     protected abstract void delete(OciLocation location, String ocid);
 
     protected abstract PhasePoller<String, P> getPoller(OciLocation location);
+
+    protected record CreationResult<P>(String ocid, P phase) {
+    }
 
     public record DependencyEvent(
             UUID resource,

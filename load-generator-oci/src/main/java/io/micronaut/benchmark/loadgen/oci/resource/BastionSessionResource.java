@@ -47,7 +47,7 @@ public final class BastionSessionResource extends AbstractSimpleResource<Session
         manageNew(location, () -> {
             details.bastionId(bastion.ocid());
             session = context.clients.bastion().forRegion(location).createSession(CreateSessionRequest.builder().createSessionDetails(details.build()).build()).getSession();
-            return session.getId();
+            return new CreationResult<>(session.getId(), session.getLifecycleState());
         });
     }
 

@@ -55,8 +55,7 @@ public final class RouteTableResource extends AbstractSimpleResource<RouteTable.
             d.compartmentId(location.compartmentId());
             d.vcnId(vcn.ocid());
             RouteTable rt = context.clients.vcn().forRegion(location).createRouteTable(CreateRouteTableRequest.builder().createRouteTableDetails(d.build()).build()).getRouteTable();
-            setPhase(rt.getLifecycleState());
-            return rt.getId();
+            return new CreationResult<>(rt.getId(), rt.getLifecycleState());
         });
     }
 

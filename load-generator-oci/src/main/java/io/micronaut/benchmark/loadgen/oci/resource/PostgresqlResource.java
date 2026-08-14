@@ -59,8 +59,7 @@ public final class PostgresqlResource extends AbstractSimpleResource<DbSystem.Li
                     .build());
 
             DbSystem dbSystem = context.clients.postgres().forRegion(location).createDbSystem(CreateDbSystemRequest.builder().createDbSystemDetails(details.build()).build()).getDbSystem();
-            setPhase(dbSystem.getLifecycleState());
-            return dbSystem.getId();
+            return new CreationResult<>(dbSystem.getId(), dbSystem.getLifecycleState());
         });
     }
 

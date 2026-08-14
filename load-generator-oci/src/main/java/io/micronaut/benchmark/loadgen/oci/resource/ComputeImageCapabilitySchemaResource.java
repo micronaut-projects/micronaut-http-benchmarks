@@ -41,8 +41,7 @@ public final class ComputeImageCapabilitySchemaResource extends AbstractSimpleRe
                             .createComputeImageCapabilitySchemaDetails(details.build())
                             .build())
                     .getComputeImageCapabilitySchema();
-            setPhase(schema.getLifecycleState());
-            return schema.getId();
+            return new CreationResult<>(schema.getId(), schema.getLifecycleState());
         });
     }
 

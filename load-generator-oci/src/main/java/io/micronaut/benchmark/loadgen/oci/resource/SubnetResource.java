@@ -55,8 +55,7 @@ public final class SubnetResource extends AbstractSimpleResource<Subnet.Lifecycl
             details.vcnId(vcn.ocid());
             details.routeTableId(routeTable.ocid());
             Subnet sn = context.clients.vcn().forRegion(location).createSubnet(CreateSubnetRequest.builder().createSubnetDetails(details.build()).build()).getSubnet();
-            setPhase(sn.getLifecycleState());
-            return sn.getId();
+            return new CreationResult<>(sn.getId(), sn.getLifecycleState());
         });
     }
 

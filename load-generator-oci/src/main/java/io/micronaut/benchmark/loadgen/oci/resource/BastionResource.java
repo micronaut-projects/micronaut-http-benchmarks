@@ -48,8 +48,7 @@ public final class BastionResource extends AbstractSimpleResource<BastionLifecyc
             details.compartmentId(location.compartmentId());
             details.targetSubnetId(subnet.ocid());
             Bastion gw = context.clients.bastion().forRegion(location).createBastion(CreateBastionRequest.builder().createBastionDetails(details.build()).build()).getBastion();
-            setPhase(gw.getLifecycleState());
-            return gw.getId();
+            return new CreationResult<>(gw.getId(), gw.getLifecycleState());
         });
     }
 

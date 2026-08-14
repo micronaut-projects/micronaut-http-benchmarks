@@ -30,8 +30,7 @@ public final class CustomImageResource extends AbstractSimpleResource<Image.Life
         manageNew(location, () -> {
             details.compartmentId(location.compartmentId());
             Image image = context.clients.compute().forRegion(location).createImage(CreateImageRequest.builder().createImageDetails(details.build()).build()).getImage();
-            setPhase(image.getLifecycleState());
-            return image.getId();
+            return new CreationResult<>(image.getId(), image.getLifecycleState());
         });
     }
 
