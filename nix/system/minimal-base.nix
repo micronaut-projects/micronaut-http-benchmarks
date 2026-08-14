@@ -1,6 +1,7 @@
 { pkgs, lib, modulesPath, ... }:
 let
-  serialDevice = if pkgs.stdenv.hostPlatform.isAarch64 then "/dev/ttyAMA0" else "/dev/ttyS0";
+  serialTty = if pkgs.stdenv.hostPlatform.isAarch64 then "ttyAMA0" else "ttyS0";
+  serialDevice = "/dev/${serialTty}";
 in
 {
   imports = [
@@ -20,6 +21,8 @@ in
     rateLimitInterval = "0";
     rateLimitBurst = 0;
   };
+
+  boot.kernelParams = [ "console=${serialTty},115200n8" ];
 
   systemd.services = {
     cloud-final = {
