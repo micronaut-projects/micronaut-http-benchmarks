@@ -2,6 +2,7 @@ package io.micronaut.benchmark.loadgen.oci;
 
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
+import io.micronaut.benchmark.loadgen.oci.cmd.TokenRoutingOutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.NixosCacheResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
@@ -13,6 +14,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     static final String SERVER_IP = "10.0.0.2";
     static final String BENCHMARK_SERVER_INSTANCE_TYPE = "benchmark-server";
     public static final String BENCHMARK_BOOTSTRAP = "benchmark-bootstrap";
+    private static final Duration CONSOLE_STOP_TIMEOUT = Duration.ofMinutes(5);
 
     private final Factory factory;
 
@@ -38,6 +41,8 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final PhasedResource.PhaseLock hyperfoilLock;
     private final Map<String, NixosCacheResource> nixosConfigurations;
     private final Map<String, PhasedResource.PhaseLock> nixosConfigurationLocks;
+    private final OutputListener.Write benchmarkServerLog;
+    private final TokenRoutingOutputListener benchmarkServerConsoleHistory;
 
     private boolean started;
     private boolean stopped;
@@ -45,6 +50,9 @@ public final class Infrastructure extends AbstractInfrastructure {
     private Infrastructure(Factory factory, OciLocation location, Path logDirectory, Set<String> configurations) throws Exception {
         super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
+        Files.createDirectories(logDirectory);
+        benchmarkServerLog = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("benchmark-server.log")));
+        benchmarkServerConsoleHistory = new TokenRoutingOutputListener(benchmarkServerLog);
 
         hyperfoilRunner = factory.hyperfoilRunnerFactory.create(logDirectory, this);
         hyperfoilLock = hyperfoilRunner.require();
@@ -76,7 +84,8 @@ public final class Infrastructure extends AbstractInfrastructure {
 
         Compute.Launch benchmarkServerLaunch = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE)
                 .privateIp(SERVER_IP)
-                .nixosConfiguration(nixosConfigurations.get(BENCHMARK_BOOTSTRAP));
+                .nixosConfiguration(nixosConfigurations.get(BENCHMARK_BOOTSTRAP))
+                .consoleHistory(benchmarkServerConsoleHistory);
         benchmarkServer = benchmarkServerLaunch.launch();
 
         for (Attachment attachment : factory.attachments) {
@@ -96,6 +105,7 @@ public final class Infrastructure extends AbstractInfrastructure {
         // Safely close everything
         try (hyperfoilLock;
              PhasedResource.PhaseLock _ = PhasedResource.PhaseLock.combine(nixosConfigurationLocks.values().stream().toList());
+             OutputListener.Write _ = benchmarkServerLog;
              Compute.Instance _ = benchmarkServer;
              AutoCloseable _ = super::close
         ) {
@@ -123,8 +133,10 @@ public final class Infrastructure extends AbstractInfrastructure {
             Files.createDirectories(outputDirectory);
             try (OutputListener.Write log = new OutputListener.Write(
                     Files.newOutputStream(outputDirectory.resolve("server.log")))) {
-                Exception failure = null;
+                boolean benchmarkLogActive = false;
                 try {
+                    switchOutput(marker("START"), log);
+                    benchmarkLogActive = true;
                     activate(log, configuration(run), progress);
                     retry(() -> {
                         try {
@@ -135,19 +147,19 @@ public final class Infrastructure extends AbstractInfrastructure {
                         }
                         return null;
                     });
-                } catch (Exception e) {
-                    failure = e;
-                    throw e;
                 } finally {
+                    if (benchmarkLogActive) {
+                        try {
+                            switchOutput(marker("STOP"), benchmarkServerLog);
+                        } catch (Exception e) {
+                            LOG.warn("Failed to switch benchmark server output back to the central log", e);
+                        }
+                    }
                     try {
                         activate(log, BENCHMARK_BOOTSTRAP, progress);
-                    } catch (Exception restorationFailure) {
+                    } catch (Exception e) {
                         stopped = true;
-                        if (failure != null) {
-                            failure.addSuppressed(restorationFailure);
-                        } else {
-                            throw restorationFailure;
-                        }
+                        LOG.warn("Failed to restore benchmark server bootstrap configuration", e);
                     }
                 }
             }
@@ -161,6 +173,32 @@ public final class Infrastructure extends AbstractInfrastructure {
     private String configuration(FrameworkRun run) {
         String configuration = run.nixosConfiguration();
         return configuration == null ? BENCHMARK_BOOTSTRAP : configuration;
+    }
+
+    private void switchOutput(String marker, OutputListener target) {
+        TokenRoutingOutputListener.Switch outputSwitch = benchmarkServerConsoleHistory.switchOn(marker, target);
+        try {
+            emitConsoleMarker(marker);
+        } catch (Exception e) {
+            LOG.debug("Marker command failed; waiting for console output", e);
+        }
+        try {
+            outputSwitch.await(CONSOLE_STOP_TIMEOUT);
+        } catch (Exception e) {
+            outputSwitch.cancel(benchmarkServerLog);
+            throw e;
+        }
+    }
+
+    private static String marker(String state) {
+        return "MICRONAUT_BENCHMARK_CONSOLE_" + state + "_" + java.util.UUID.randomUUID();
+    }
+
+    private void emitConsoleMarker(String marker) throws Exception {
+        String quotedMarker = "'" + marker.replace("'", "'\"'\"'") + "'";
+        try (CommandRunner client = benchmarkServer.connectSsh()) {
+            client.runAndCheck("printf '%s\\n' " + quotedMarker + " | systemd-cat");
+        }
     }
 
     private void activate(OutputListener.Write log, String configuration, PhaseTracker.PhaseUpdater progress) throws Exception {
