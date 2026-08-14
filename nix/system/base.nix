@@ -57,7 +57,7 @@
     ];
 
     systemd.targets.benchmark-role-ready = {
-      description = "Micronaut benchmark role is ready";
+      description = "Micronaut Framework benchmark role is ready";
       requires = config.benchmark.roleUnits;
       after = config.benchmark.roleUnits;
       wants = [ "sshd.service" ];

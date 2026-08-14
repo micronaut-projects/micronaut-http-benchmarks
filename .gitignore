@@ -1,5 +1,6 @@
 .gradle
 build/
+target/
 !nix/build/
 !gradle/wrapper/gradle-wrapper.jar
 **/.omo/run-continuation/
@@ -18,3 +19,5 @@ test-body-*.json
 /output-*/
 /techempower-output/
 /phases.png
+/result
+result

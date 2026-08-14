@@ -65,7 +65,7 @@ in
   system.build.relay-agent = relayAgent;
 
   systemd.services.relay-agent = {
-    description = "Micronaut benchmark relay agent";
+    description = "Micronaut Framework benchmark relay agent";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     serviceConfig = {

@@ -1,13 +1,13 @@
 pluginManagement {
     includeBuild("build-logic")
+    plugins {
+        id("io.micronaut.library") version "5.0.2"
+        id("org.graalvm.buildtools.native") version "0.11.3"
+    }
     repositories {
         gradlePluginPortal()
         mavenCentral()
     }
-}
-
-plugins {
-    id("io.micronaut.bench.variants")
 }
 
 rootProject.name = "micronaut-benchmark"
@@ -16,38 +16,3 @@ include("load-generator-oci")
 include("plot")
 include("relay-agent")
 include("relay-api")
-include("test-case-helidon-nima")
-include("test-case-spring-boot")
-include("test-case-vertx")
-
-configure<io.micronaut.bench.AppVariants> {
-    combinations {
-        dimension("tcnative") {
-            variant("off")
-            variant("on")
-        }
-        dimension("transport") {
-            variant("nio")
-            variant("epoll")
-            variant("iouring")
-        }
-        dimension("json") {
-            variant("jackson")
-            variant("serde")
-        }
-        dimension("micronaut") {
-            variant("latest")
-        }
-        dimension("loom") {
-            variant("off")
-            variant("on")
-            variant("carried")
-        }
-        dimension("affinity") {
-            variant("off")
-            variant("preferred")
-            variant("enforced")
-            variant("jdkclient")
-        }
-    }
-}

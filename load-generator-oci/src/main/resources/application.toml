@@ -95,16 +95,9 @@ storage-bucket-compartment = "ocid1.compartment.oc1..aaaaaaaaqpsmu5vcjf75ejqwvhh
 storage-bucket-namespace = "oraclelabs"
 storage-bucket-name = "benchmark-storage"
 
-#[variants.hotspot]
-#version="26-loom"
-#uri="https://builds.shipilev.net/openjdk-jdk-loom/openjdk-jdk-loom-linux-x86_64-server.tar.xz"
-#common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192" # -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions
-#option-choices={ "vthread-pollers"="-Djdk.pollerMode=2", "poller-per-carrier"="-Djdk.pollerMode=3" }
-
 [variants.hotspot]
 version=24
-common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192" # -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions
-# "loom-on-netty"="--add-opens=java.base/java.lang=ALL-UNNAMED -Dmicronaut.netty.event-loops.default.loom-carrier=true -Dmicronaut.http.client.event-loop-group=default"
+common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192"
 option-choices={ ""="" }
 
 [variants.hotspot.async-profiler]
@@ -126,40 +119,3 @@ args="-r --output html"
 input="profile.jfr"
 output="heatmap.html"
 args="--output heatmap"
-
-[variants.native-image]
-version=23
-# these are native-image options that are benchmarked against each other
-option-choices={ ""="--gc=G1" }
-# these are framework-specific options that are just required to get the build to work :)
-prefix-options.mn="-J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.configure=ALL-UNNAMED -J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk=ALL-UNNAMED -J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jni=ALL-UNNAMED -J--add-exports=org.graalvm.sdk/org.graalvm.nativeimage.impl=ALL-UNNAMED"
-
-# micronaut variant configuration
-[variants.micronaut.compile-variants]
-tcnative=[
-    "on",
-    #"off"
-]
-transport=[
-    #"nio",
-    #"epoll",
-    "iouring"
-]
-json=[
-    "jackson",
-    #"serde"
-]
-micronaut=[
-    "latest",
-]
-loom=[
-    "off",
-    "on",
-    "carried"
-]
-affinity=[
-    #"off",
-    #"preferred",
-    "enforced",
-    #"jdkclient"
-]

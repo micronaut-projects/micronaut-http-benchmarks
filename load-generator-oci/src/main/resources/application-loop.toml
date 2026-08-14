@@ -11,11 +11,8 @@ uri="/status"
 
 [suite]
 enabled-run-types=[
-    "mn-hotspot",
+    "micronaut-framework-hotspot",
 ]
-
-[variants.hotspot]
-common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192 -Dmicronaut.environments=loom,affinity --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UnlockExperimentalVMOptions -XX:-DoJVMTIVirtualThreadTransitions"
 
 [load.protocols.http1]
 enabled=true
@@ -24,14 +21,3 @@ ops=[2000, 8000, 16000, 32000, 48000, 64000, 96000, 128000, 160000, 192000, 2560
 [load.protocols.https1]
 #enabled=true
 ops=[1000, 4000, 8000, 16000, 24000, 32000, 48000, 64000, 80000]
-
-[variants.hotspot.async-profiler]
-enabled=true
-
-[variants.micronaut.compile-variants]
-affinity=[
-    #"off",
-    #"preferred",
-    "enforced",
-    #"jdkclient"
-]

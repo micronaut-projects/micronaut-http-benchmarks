@@ -1,5 +1,5 @@
 {
-  description = "Micronaut benchmark infra";
+  description = "Micronaut Framework benchmark infra";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -11,7 +11,13 @@
   let
     lib = nixpkgs.lib;
     supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
-    suts = [ (import ../sut/pure-netty) ];
+    suts = [
+      (import ../sut/pure-netty)
+      (import ../sut/micronaut-framework)
+      (import ../sut/helidon-nima)
+      (import ../sut/spring-boot)
+      (import ../sut/vertx)
+    ];
     frameworkRunMetadata = map (sut: sut.metadata // {
       nixosConfiguration = sut.name;
     }) suts;

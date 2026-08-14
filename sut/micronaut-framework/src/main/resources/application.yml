@@ -1,0 +1,30 @@
+micronaut:
+  server:
+    http-version: 2.0
+    date-header: false
+    idle-timeout: 5m
+    ssl:
+      enabled: true
+      ciphers: [TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, TLS_AES_128_GCM_SHA256]
+      build-self-signed: true
+      handshake-timeout: 1m
+    netty:
+      listeners:
+        - port: 8080
+          ssl: false
+        - port: 8443
+          ssl: true
+      parent:
+        event-loop-group: default
+  http:
+    client:
+      event-loop-group: default
+      pool:
+        connection-locality: ignore
+        max-concurrent-http1-connections: 300
+  netty:
+    event-loops:
+      default:
+        prefer-native-transport: true
+
+loop-remote: http://10.0.0.10
