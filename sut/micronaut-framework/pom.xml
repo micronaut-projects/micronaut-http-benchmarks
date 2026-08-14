@@ -46,11 +46,6 @@
             <artifactId>micronaut-http-client</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.micronaut.serde</groupId>
-            <artifactId>micronaut-serde-jackson</artifactId>
-            <version>${micronaut.serde.version}</version>
-        </dependency>
-        <dependency>
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-core</artifactId>
         </dependency>
@@ -98,11 +93,6 @@
                             <artifactId>micronaut-inject-java</artifactId>
                             <version>${micronaut.framework.version}</version>
                         </path>
-                        <path>
-                            <groupId>io.micronaut.serde</groupId>
-                            <artifactId>micronaut-serde-processor</artifactId>
-                            <version>3.1.0</version>
-                        </path>
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
@@ -145,4 +135,47 @@
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <profile>
+            <id>jackson-databind</id>
+            <dependencies>
+                <dependency>
+                    <groupId>io.micronaut</groupId>
+                    <artifactId>micronaut-jackson-databind</artifactId>
+                </dependency>
+                <dependency>
+                    <groupId>io.micronaut.serde</groupId>
+                    <artifactId>micronaut-serde-api</artifactId>
+                    <version>${micronaut.serde.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>micronaut-serialization</id>
+            <dependencies>
+                <dependency>
+                    <groupId>io.micronaut.serde</groupId>
+                    <artifactId>micronaut-serde-jackson</artifactId>
+                    <version>${micronaut.serde.version}</version>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <annotationProcessorPaths combine.children="append">
+                                <path>
+                                    <groupId>io.micronaut.serde</groupId>
+                                    <artifactId>micronaut-serde-processor</artifactId>
+                                    <version>${micronaut.serde.version}</version>
+                                </path>
+                            </annotationProcessorPaths>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

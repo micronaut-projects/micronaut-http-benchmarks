@@ -3,9 +3,10 @@
 , makeWrapper
 , jdk25_headless
 , systemd
+, codec
 }:
 maven.buildMavenPackage {
-  pname = "micronaut-framework";
+  pname = "micronaut-framework-${codec}";
   version = "1.0.0";
 
   src = lib.fileset.toSource {
@@ -16,7 +17,12 @@ maven.buildMavenPackage {
     ];
   };
 
-  mvnHash = "sha256-eU0CIT/WDGiJoDksI/u1wuuwBjy4GvYXPRAjeGHpAaY=";
+  mvnHash = {
+    jackson-databind = "sha256-Uz4G1WjHln/KuG1atYqWkNw0n4WJ6/hKOtcfw6pMxY4=";
+    micronaut-serialization = "sha256-eU0CIT/WDGiJoDksI/u1wuuwBjy4GvYXPRAjeGHpAaY=";
+  }.${codec};
+
+  mvnParameters = "-P${codec}";
 
   mvnJdk = jdk25_headless;
 

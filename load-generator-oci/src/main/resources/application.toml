@@ -10,6 +10,7 @@ read-timeout = "5m"
 #private-key-location="/home/yawkat/.ssh/id_rsa"
 
 [suite]
+name="standard"
 # independent repetitions of each benchmark
 repetitions=1
 max-concurrent-runs=25 # only respected for infrastructure-per-run
@@ -47,28 +48,6 @@ capture-timeout="60s"
 state-poll-interval="1s"
 max-bytes="1MB"
 max-concurrent-captures=4
-
-# protocols to test
-[load.protocols.http1]
-protocol="HTTP1"
-compile-ops=1000
-shared-connections=16000
-pipelining-limit=1
-sla={"0.99"="200ms"}
-
-[load.protocols.https1]
-protocol="HTTPS1"
-compile-ops=1000
-shared-connections=20000
-pipelining-limit=1
-sla={"0.99"="200ms"}
-
-[load.protocols.https2]
-protocol="HTTPS2"
-compile-ops=25
-shared-connections=265
-max-http2-streams=100
-sla={"0.99"="200ms"}
 
 # configuration for the hyperfoil cluster
 [hyperfoil]

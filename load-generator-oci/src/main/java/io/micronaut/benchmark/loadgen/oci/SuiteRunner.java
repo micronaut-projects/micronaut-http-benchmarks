@@ -34,7 +34,7 @@ public final class SuiteRunner {
     private final List<OciLocation> locations;
     private final Infrastructure.Factory infraFactory;
     private final LoadManager loadManager;
-    private final List<FrameworkRunSet> frameworks;
+    private final List<FrameworkRun> runs;
     private final ExecutorService executor;
     private final SuiteConfiguration suiteConfiguration;
     private final ObjectMapper objectMapper;
@@ -43,7 +43,7 @@ public final class SuiteRunner {
                        List<OciLocation> locations,
                        Infrastructure.Factory infraFactory,
                        LoadManager loadManager,
-                       List<FrameworkRunSet> frameworks,
+                       NixRunSet runSet,
                        @Named(TaskExecutors.IO) ExecutorService executor,
                        SuiteConfiguration suiteConfiguration,
                        ObjectMapper objectMapper,
@@ -52,7 +52,7 @@ public final class SuiteRunner {
         this.locations = locations;
         this.infraFactory = infraFactory;
         this.loadManager = loadManager;
-        this.frameworks = frameworks;
+        this.runs = runSet.getRuns().stream().map(FrameworkRun.class::cast).toList();
         this.executor = executor;
         this.suiteConfiguration = suiteConfiguration;
         this.objectMapper = objectMapper;
@@ -73,10 +73,7 @@ public final class SuiteRunner {
         clean();
 
         List<LoadVariant> loadVariants = loadManager.getLoadVariants();
-        List<FrameworkRun> enabledRuns = frameworks.stream()
-                .flatMap(framework -> framework.getRuns().stream().map(FrameworkRun.class::cast))
-                .filter(run -> suiteConfiguration.enabledRunTypes.contains(run.type()))
-                .toList();
+        List<FrameworkRun> enabledRuns = runs;
         Set<String> enabledConfigurations = enabledRuns.stream()
                 .map(this::configuration)
                 .collect(Collectors.toUnmodifiableSet());
@@ -197,7 +194,7 @@ public final class SuiteRunner {
     /**
      * Configuration for the benchmark suite.
      *
-     * @param enabledRunTypes    {@link FrameworkRun#type()} run types to enable in this suite
+     * @param name               Name of the Nix-defined benchmark suite
      * @param repetitions        Number of repetitions for each run. If you define multiple {@link OciLocation}s, each
      *                           repetition will run on a different location, if possible
      * @param maxConcurrentRuns  Maximum number of concurrent runs, to avoid running into resource limits (only for
@@ -206,7 +203,7 @@ public final class SuiteRunner {
      */
     @ConfigurationProperties("suite")
     public record SuiteConfiguration(
-            List<String> enabledRunTypes,
+            String name,
             int repetitions,
             int maxConcurrentRuns,
             InfrastructureMode infrastructureMode

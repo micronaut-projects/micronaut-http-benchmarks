@@ -10,10 +10,12 @@ import java.util.List;
 
 @Singleton
 public final class NixRunSet implements FrameworkRunSet {
+    private static final String SUT_SERVICE = "sut.service";
+
     private final List<NixFrameworkRun> runs;
 
     public NixRunSet(BenchmarkMetadata metadata) {
-        runs = metadata.frameworkRuns().stream().map(NixFrameworkRun::new).toList();
+        runs = metadata.suite().runs().stream().map(NixFrameworkRun::new).toList();
     }
 
     @Override
@@ -45,7 +47,7 @@ public final class NixRunSet implements FrameworkRunSet {
         @Override
         public void setupAndRun(CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log,
                                 BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
-            NixRunSet.setupAndRun(metadata.serviceName() + ".service", benchmarkServerClient, log, benchmarkClosure, progress);
+            NixRunSet.setupAndRun(SUT_SERVICE, benchmarkServerClient, log, benchmarkClosure, progress);
         }
     }
 
@@ -59,5 +61,5 @@ public final class NixRunSet implements FrameworkRunSet {
 }
 
 record NixFrameworkMetadata(String type, String name, JsonNode parameters,
-                            String nixosConfiguration, String serviceName) {
+                            String nixosConfiguration) {
 }

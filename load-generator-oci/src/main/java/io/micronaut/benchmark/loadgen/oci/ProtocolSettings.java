@@ -1,13 +1,9 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.context.annotation.EachProperty;
-import io.micronaut.core.annotation.Nullable;
-import io.micronaut.core.bind.annotation.Bindable;
-import io.micronaut.core.util.Toggleable;
-
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Different HTTP settings to test
@@ -20,22 +16,18 @@ import java.util.Map;
  * @param compileOps        Ops/s to use during JVM warmup, and during PGO runs
  * @param ops               Ops/s ramp for main benchmarking runs
  */
-@EachProperty(value = "load.protocols")
 public record ProtocolSettings(
-        @Bindable(defaultValue = "false")
-        boolean enabled,
         Protocol protocol,
         int sharedConnections,
-        @Bindable(defaultValue = "1")
         int pipeliningLimit,
-        @Bindable(defaultValue = "1")
         int maxHttp2Streams,
         int compileOps,
-        @Nullable List<Integer> ops,
-        @Nullable Map<Double, Duration> sla
-) implements Toggleable {
-    @Override
-    public boolean isEnabled() {
-        return enabled;
+        List<Integer> ops,
+        Map<Double, Duration> sla
+) {
+    public ProtocolSettings {
+        protocol = Objects.requireNonNull(protocol);
+        ops = List.copyOf(Objects.requireNonNull(ops));
+        sla = Map.copyOf(Objects.requireNonNull(sla));
     }
 }

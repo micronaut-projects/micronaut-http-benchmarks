@@ -1,0 +1,19 @@
+{ ... }:
+{
+  imports = [ ./common.nix ./jvm-defaults.nix ];
+
+  benchmark.suite = {
+    documents = [{
+      name = "loop";
+      method = "GET";
+      uri = "/loop";
+      responseBody = "Hello World";
+      responseMatchingMode = "EQUAL";
+    }];
+    protocols.https1.enable = true;
+    runs.micronaut = {
+      imports = [ ../../sut/micronaut-framework ];
+      micronaut-framework.codec = "micronaut-serialization";
+    };
+  };
+}

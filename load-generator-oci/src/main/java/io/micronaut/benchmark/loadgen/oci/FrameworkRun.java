@@ -12,8 +12,7 @@ import java.nio.file.Path;
  */
 public interface FrameworkRun {
     /**
-     * The type name of this run. This is used to toggle benchmarks
-     * ({@link SuiteRunner.SuiteConfiguration#enabledRunTypes()}).
+     * The type name of this run, stored in the benchmark result index.
      *
      * @return The type name
      */

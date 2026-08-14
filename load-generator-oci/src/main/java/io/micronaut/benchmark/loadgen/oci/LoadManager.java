@@ -1,9 +1,8 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.context.annotation.ConfigurationProperties;
-import io.micronaut.context.annotation.EachProperty;
 import jakarta.inject.Singleton;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -13,28 +12,25 @@ import java.util.Locale;
  */
 @Singleton
 public final class LoadManager {
-    private final LoadConfiguration loadConfiguration;
+    private final BenchmarkMetadata metadata;
 
-    LoadManager(LoadConfiguration loadConfiguration) {
-        this.loadConfiguration = loadConfiguration;
+    LoadManager(BenchmarkMetadata metadata) {
+        this.metadata = metadata;
     }
 
     public List<LoadVariant> getLoadVariants() {
-        return loadConfiguration.documents.stream()
-                .flatMap(doc -> loadConfiguration.protocols.stream()
-                        .filter(ProtocolSettings::isEnabled)
+        BenchmarkMetadata.Suite suite = metadata.suite();
+        List<ProtocolSettings> protocols = suite.protocols().values().stream()
+                .sorted(Comparator.comparing(ProtocolSettings::protocol))
+                .toList();
+        return suite.documents().stream()
+                .flatMap(doc -> protocols.stream()
                         .map(prot -> new LoadVariant(loadName(prot.protocol(), doc), prot, doc)))
                 .toList();
     }
 
-    private static String loadName(Protocol protocol, LoadConfiguration.DocumentConfiguration doc) {
+    private static String loadName(Protocol protocol, SuiteRequest doc) {
         return protocol.name().toLowerCase(Locale.ROOT) + "-" + doc.getName();
     }
 
-    @ConfigurationProperties("load")
-    record LoadConfiguration(List<ProtocolSettings> protocols, List<DocumentConfiguration> documents) {
-        @EachProperty(value = "documents", list = true)
-        interface DocumentConfiguration extends RequestDefinition.SampleRequestDefinition {
-        }
-    }
 }

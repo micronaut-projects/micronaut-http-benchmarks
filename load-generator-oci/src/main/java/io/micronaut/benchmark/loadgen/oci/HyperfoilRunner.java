@@ -25,13 +25,10 @@ import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.context.BeanProvider;
 import io.micronaut.context.annotation.ConfigurationProperties;
-import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.http.ssl.CertificateProvider;
 import io.micronaut.inject.qualifiers.Qualifiers;
-import io.micronaut.scheduling.TaskExecutors;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
-import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.slf4j.Logger;
@@ -61,7 +58,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
@@ -274,14 +270,13 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         io.hyperfoil.http.config.Protocol prot = protocol.protocol() == Protocol.HTTP1 ? io.hyperfoil.http.config.Protocol.HTTP : io.hyperfoil.http.config.Protocol.HTTPS;
 
         String socketUri = prot.scheme + "://" + ip + ":" + port;
-        for (HyperfoilConfiguration.StatusRequest status : factory.config.status) {
-            Infrastructure.retry(() -> {
-                try (OutputListener.Write write = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve(status.getName() + ".http")))) {
-                    SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), status, socketUri, true), write);
-                }
-                return null;
-            }, controllerPortForward::disconnect);
-        }
+        SuiteRequest statusRequest = factory.statusRequest;
+        Infrastructure.retry(() -> {
+            try (OutputListener.Write write = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve(statusRequest.getName() + ".http")))) {
+                SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), statusRequest, socketUri, true), write);
+            }
+            return null;
+        }, controllerPortForward::disconnect);
         Infrastructure.retry(() -> {
             ByteArrayOutputStream resp = new ByteArrayOutputStream();
             try (OutputListener.Write write = new OutputListener.Write(resp)) {
@@ -548,20 +543,20 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final ResourceContext context;
         private final Compute compute;
         private final SshFactory sshFactory;
-        private final ExecutorService executor;
         private final HyperfoilConfiguration config;
+        private final SuiteRequest statusRequest;
         private final AsyncProfilerHelper asyncProfilerHelper;
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
         private final BeanProvider<CertificateProvider> certificateProviders;
 
-        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, @Named(TaskExecutors.IO) ExecutorService executor, HyperfoilConfiguration config, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, BeanProvider<CertificateProvider> certificateProviders) {
+        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, HyperfoilConfiguration config, BenchmarkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, BeanProvider<CertificateProvider> certificateProviders) {
             this.context = context;
             this.compute = compute;
             this.sshFactory = sshFactory;
-            this.executor = executor;
             this.config = config;
+            this.statusRequest = metadata.suite().statusRequest();
             this.asyncProfilerHelper = asyncProfilerHelper;
             this.objectMapper = objectMapper.rebuild()
                     .registerSubtypes(HttpStats.class)
@@ -584,9 +579,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
      * @param pgoDuration        Duration of the PGO run
      * @param sessionLimitFactor Factor of the hyperfoil session limit. If a particular run is 1000 ops/s, and this
      *                           factor is 2, the maximum number of hyperfoil sessions is 2000.
-     * @param status             Optional requests to do before the benchmark run to get metadata from the SUT. This
-     *                           metadata will be saved in the result directory. Can be used to verify that the SUT has
-     *                           started with the correct settings.
      */
     @ConfigurationProperties("hyperfoil")
     public record HyperfoilConfiguration(
@@ -595,13 +587,9 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             Duration benchmarkDuration,
             Duration pgoDuration,
             double sessionLimitFactor,
-            List<StatusRequest> status,
             @Nullable String mtls,
             boolean agentAsyncProfiler
     ) {
-        @EachProperty(value = "status", list = true)
-        interface StatusRequest extends RequestDefinition, io.micronaut.core.naming.Named {
-        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

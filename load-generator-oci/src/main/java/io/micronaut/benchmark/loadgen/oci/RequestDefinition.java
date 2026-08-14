@@ -98,8 +98,7 @@ public interface RequestDefinition {
     class Deser extends ValueDeserializer<RequestDefinition> {
         private static final Set<Class<?>> INTERFACES = Set.of(
                 RequestDefinition.class,
-                SampleRequestDefinition.class,
-                HyperfoilRunner.HyperfoilConfiguration.StatusRequest.class
+                SampleRequestDefinition.class
         );
 
         @Override

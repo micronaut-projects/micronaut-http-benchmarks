@@ -1,12 +1,15 @@
+{ pkgs, ... }:
 {
-  name = "pure-netty";
-  system = ./system.nix;
-  metadata = {
-    type = "pure-netty-hotspot";
-    name = "pure-netty-hotspot";
-    parameters = {
-      runtime = "Nix-packaged JDK 25";
+  benchmark = {
+    jvm.enable = true;
+    sut = {
+      package = pkgs.callPackage ./package.nix { };
+      executable = "pure-netty";
+      description = "Pure Netty benchmark server";
+      metadata = {
+        type = "pure-netty-hotspot";
+        parameters.runtime = "Nix-packaged JDK 25";
+      };
     };
-    serviceName = "pure-netty";
   };
 }
