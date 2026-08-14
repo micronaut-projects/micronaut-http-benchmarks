@@ -4,6 +4,7 @@ import io.hyperfoil.http.api.HttpMethod;
 import io.micronaut.core.annotation.Nullable;
 
 import java.util.Map;
+import java.util.Objects;
 
 public record SuiteRequest(
         String name,
@@ -13,24 +14,22 @@ public record SuiteRequest(
         String requestType,
         Map<String, String> requestHeaders,
         @Nullable String requestBody,
-        String responseBody,
-        RequestDefinition.SampleRequestDefinition.MatchingMode responseMatchingMode
-) implements RequestDefinition.SampleRequestDefinition {
+        @Nullable String responseBody,
+        MatchingMode responseMatchingMode
+) {
     public SuiteRequest {
+        name = Objects.requireNonNull(name);
         method = method == null ? HttpMethod.GET : method;
+        uri = Objects.requireNonNull(uri);
         host = host == null ? "example.com" : host;
         requestType = requestType == null ? "application/json" : requestType;
         requestHeaders = requestHeaders == null ? Map.of() : Map.copyOf(requestHeaders);
         responseMatchingMode = responseMatchingMode == null ? MatchingMode.JSON : responseMatchingMode;
     }
 
-    @Override public HttpMethod getMethod() { return method; }
-    @Override public String getUri() { return uri; }
-    @Override public String getHost() { return host; }
-    @Override public String getRequestType() { return requestType; }
-    @Override public Map<String, String> getRequestHeaders() { return requestHeaders; }
-    @Override public String getRequestBody() { return requestBody; }
-    @Override public String getResponseBody() { return responseBody; }
-    @Override public MatchingMode getResponseMatchingMode() { return responseMatchingMode; }
-    @Override public String getName() { return name; }
+    public enum MatchingMode {
+        EQUAL,
+        JSON,
+        REGEX
+    }
 }

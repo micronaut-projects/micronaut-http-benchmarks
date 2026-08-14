@@ -217,7 +217,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
      * @param body            The HTTP request
      * @return The benchmark closure
      */
-    public FrameworkRun.BenchmarkClosure benchmarkClosure(Path outputDirectory, ProtocolSettings protocol, RequestDefinition.SampleRequestDefinition body) {
+    public FrameworkRun.BenchmarkClosure benchmarkClosure(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body) {
         return new FrameworkRun.BenchmarkClosure() {
             @Override
             public void benchmark(PhaseTracker.PhaseUpdater progress) throws Exception {
@@ -231,7 +231,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         };
     }
 
-    private String createCurlCommand(Protocol protocol, RequestDefinition definition, String socketUri, boolean verbose) throws CertificateEncodingException {
+    private String createCurlCommand(Protocol protocol, SuiteRequest definition, String socketUri, boolean verbose) throws CertificateEncodingException {
         StringBuilder builder = new StringBuilder("curl");
         builder.append(protocol == Protocol.HTTP1 ? " --http1.1" : " --http2");
         builder.append(" --insecure");
@@ -247,19 +247,19 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             builder.append("' | base64 -d)");
         }
         builder.append(verbose ? " -v" : " --silent");
-        builder.append(" -X ").append(definition.getMethod().name());
-        builder.append(" --request-target '").append(definition.getUri()).append("'");
-        builder.append(" -H 'host: ").append(definition.getHost()).append("'");
-        if (definition.getRequestBody() != null) {
-            builder.append(" -H 'content-type: ").append(definition.getRequestType()).append("'");
-            builder.append(" -d '").append(definition.getRequestBody()).append("'");
+        builder.append(" -X ").append(definition.method().name());
+        builder.append(" --request-target '").append(definition.uri()).append("'");
+        builder.append(" -H 'host: ").append(definition.host()).append("'");
+        if (definition.requestBody() != null) {
+            builder.append(" -H 'content-type: ").append(definition.requestType()).append("'");
+            builder.append(" -d '").append(definition.requestBody()).append("'");
         }
-        definition.getRequestHeaders().forEach((key, value) -> builder.append(" -H '").append(key).append(": ").append(value).append("'"));
+        definition.requestHeaders().forEach((key, value) -> builder.append(" -H '").append(key).append(": ").append(value).append("'"));
         builder.append(' ').append(socketUri);
         return builder.toString();
     }
 
-    private void benchmark(Path outputDirectory, ProtocolSettings protocol, RequestDefinition.SampleRequestDefinition body, PhaseTracker.PhaseUpdater progress, boolean forPgo) throws Exception {
+    private void benchmark(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body, PhaseTracker.PhaseUpdater progress, boolean forPgo) throws Exception {
         awaitPhase(HyperfoilPhase.READY);
 
         BenchmarkPhase benchmarkPhase = forPgo ? BenchmarkPhase.PGO : BenchmarkPhase.BENCHMARKING;
@@ -272,7 +272,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         String socketUri = prot.scheme + "://" + ip + ":" + port;
         SuiteRequest statusRequest = factory.statusRequest;
         Infrastructure.retry(() -> {
-            try (OutputListener.Write write = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve(statusRequest.getName() + ".http")))) {
+            try (OutputListener.Write write = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve(statusRequest.name() + ".http")))) {
                 SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), statusRequest, socketUri, true), write);
             }
             return null;
@@ -284,10 +284,10 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             } catch (Exception e) {
                 throw new RuntimeException("Failed to query benchmark output. Body: '" + resp.toString(StandardCharsets.UTF_8) + "'", e);
             }
-            boolean matches = switch (body.getResponseMatchingMode()) {
-                case EQUAL -> Arrays.equals(resp.toByteArray(), body.getResponseBody().getBytes(StandardCharsets.UTF_8));
-                case JSON -> factory.objectMapper.readTree(resp.toByteArray()).equals(factory.objectMapper.readTree(body.getResponseBody()));
-                case REGEX -> Pattern.compile(body.getResponseBody()).matcher(resp.toString(StandardCharsets.UTF_8)).matches();
+            boolean matches = switch (body.responseMatchingMode()) {
+                case EQUAL -> Arrays.equals(resp.toByteArray(), body.responseBody().getBytes(StandardCharsets.UTF_8));
+                case JSON -> factory.objectMapper.readTree(resp.toByteArray()).equals(factory.objectMapper.readTree(body.responseBody()));
+                case REGEX -> Pattern.compile(body.responseBody()).matcher(resp.toString(StandardCharsets.UTF_8)).matches();
             };
             if (!matches) {
                 throw new InvalidatesBenchmarkException("Response to test request was incorrect: " + resp.toString(StandardCharsets.UTF_8));
@@ -467,17 +467,17 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         }
     }
 
-    private static HttpRequestStepBuilder prepareScenario(RequestDefinition sampleRequest, String ip, int port, ScenarioBuilder warmup) {
+    private static HttpRequestStepBuilder prepareScenario(SuiteRequest sampleRequest, String ip, int port, ScenarioBuilder warmup) {
         HttpRequestStepBuilder builder = warmup.initialSequence("test")
                 .step(HttpStepCatalog.class)
-                .httpRequest(sampleRequest.getMethod())
+                .httpRequest(sampleRequest.method())
                 .authority(ip + ":" + port)
-                .path(sampleRequest.getUri())
-                .body(sampleRequest.getRequestBody() == null ? null : new ConstantBytesGenerator(sampleRequest.getRequestBody().getBytes(StandardCharsets.UTF_8)));
+                .path(sampleRequest.uri())
+                .body(sampleRequest.requestBody() == null ? null : new ConstantBytesGenerator(sampleRequest.requestBody().getBytes(StandardCharsets.UTF_8)));
         HttpRequestStepBuilder.HeadersBuilder headers = builder.headers();
         // MUST be lowercase for HTTP/2
-        headers.header("content-type", sampleRequest.getRequestType());
-        sampleRequest.getRequestHeaders().forEach((header, value) -> headers.header(header.toLowerCase(Locale.ROOT), value));
+        headers.header("content-type", sampleRequest.requestType());
+        sampleRequest.requestHeaders().forEach((header, value) -> headers.header(header.toLowerCase(Locale.ROOT), value));
         return builder;
     }
 

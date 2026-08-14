@@ -2,7 +2,10 @@
 let
   inherit (lib) mkDefault mkOption optionalAttrs types;
   positive = types.addCheck types.int (value: value > 0);
-  duration = types.addCheck types.str (value: builtins.match "[0-9]+(ns|us|ms|s|m|h|d)" value != null);
+  duration = types.addCheck types.str (value:
+    builtins.match "^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?)?$" value != null
+    && builtins.match ".*[0-9].*" value != null
+  );
   nonEmpty = type: types.addCheck type (value: value != [ ] && value != { });
   cfg = config.benchmark.suite.protocols;
   http1Ops = [ 2000 8000 16000 32000 48000 64000 96000 128000 160000 192000 256000 ];
@@ -27,7 +30,7 @@ in {
       maxHttp2Streams = 1;
       compileOps = 1000;
       ops = http1Ops;
-      sla = { "0.99" = "200ms"; };
+      sla = { "0.99" = "PT0.2S"; };
     };
     https1 = protocolControls {
       enable = false;
@@ -37,7 +40,7 @@ in {
       maxHttp2Streams = 1;
       compileOps = 1000;
       ops = https1Ops;
-      sla = { "0.99" = "200ms"; };
+      sla = { "0.99" = "PT0.2S"; };
     };
     https2 = protocolControls {
       enable = false;
@@ -47,7 +50,7 @@ in {
       maxHttp2Streams = 100;
       compileOps = 25;
       ops = https1Ops;
-      sla = { "0.99" = "200ms"; };
+      sla = { "0.99" = "PT0.2S"; };
     };
   };
 

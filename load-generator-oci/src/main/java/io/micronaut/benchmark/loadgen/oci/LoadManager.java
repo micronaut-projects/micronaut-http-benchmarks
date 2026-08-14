@@ -30,7 +30,7 @@ public final class LoadManager {
     }
 
     private static String loadName(Protocol protocol, SuiteRequest doc) {
-        return protocol.name().toLowerCase(Locale.ROOT) + "-" + doc.getName();
+        return protocol.name().toLowerCase(Locale.ROOT) + "-" + doc.name();
     }
 
 }

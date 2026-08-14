@@ -3,7 +3,10 @@ let
   inherit (lib) mkOption types;
   positive = types.addCheck types.int (value: value > 0);
   nonEmpty = type: types.addCheck type (value: value != [ ] && value != { });
-  duration = types.addCheck types.str (value: builtins.match "[0-9]+(ns|us|ms|s|m|h|d)" value != null);
+  duration = types.addCheck types.str (value:
+    builtins.match "^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?)?$" value != null
+    && builtins.match ".*[0-9].*" value != null
+  );
   protocolRecord = types.submodule {
     options = {
       protocol = mkOption { type = types.enum [ "HTTP1" "HTTPS1" "HTTPS2" ]; };
