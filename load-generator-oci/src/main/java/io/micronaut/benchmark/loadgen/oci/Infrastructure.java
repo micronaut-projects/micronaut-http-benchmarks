@@ -43,7 +43,6 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final Map<String, PhasedResource.PhaseLock> nixosConfigurationLocks;
     private final OutputListener.Write benchmarkServerLog;
     private final TokenRoutingOutputListener benchmarkServerConsoleHistory;
-
     private boolean started;
     private boolean stopped;
 
@@ -82,10 +81,17 @@ public final class Infrastructure extends AbstractInfrastructure {
 
         launch(hyperfoilRunner, hyperfoilRunner::manage);
 
+        List<NixosCacheResource> prefetchResources = prefetchResources();
         Compute.Launch benchmarkServerLaunch = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE)
                 .privateIp(SERVER_IP)
                 .nixosConfiguration(nixosConfigurations.get(BENCHMARK_BOOTSTRAP))
                 .consoleHistory(benchmarkServerConsoleHistory);
+        if (!prefetchResources.isEmpty()) {
+            benchmarkServerLaunch.systemdCredential(
+                    Path.of("/etc/credstore/benchmark-prefetch/script"),
+                    Nix.prefetch(prefetchResources).getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            );
+        }
         benchmarkServer = benchmarkServerLaunch.launch();
 
         for (Attachment attachment : factory.attachments) {
@@ -93,9 +99,32 @@ public final class Infrastructure extends AbstractInfrastructure {
         }
 
         benchmarkServer.awaitStartup();
-        PhasedResource.PhaseLock.awaitAll(lifecycleLocks);
+        try {
+            PhasedResource.PhaseLock.awaitAll(lifecycleLocks);
+        } finally {
+            stopPrefetch();
+        }
 
         started = true;
+    }
+
+    private List<NixosCacheResource> prefetchResources() throws Exception {
+        List<NixosCacheResource> resources = new java.util.ArrayList<>();
+        for (Map.Entry<String, NixosCacheResource> entry : nixosConfigurations.entrySet()) {
+            if (!entry.getKey().equals(BENCHMARK_BOOTSTRAP)) {
+                nixosConfigurationLocks.get(entry.getKey()).await();
+                resources.add(entry.getValue());
+            }
+        }
+        return List.copyOf(resources);
+    }
+
+    private void stopPrefetch() throws Exception {
+        if (benchmarkServer != null) {
+            try (CommandRunner client = benchmarkServer.connectSsh()) {
+                client.runAndCheck("systemctl stop -- " + "benchmark-prefetch.service", benchmarkServerLog);
+            }
+        }
     }
 
     @SuppressWarnings("EmptyTryBlock")
@@ -202,6 +231,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     }
 
     private void activate(OutputListener.Write log, String configuration, PhaseTracker.PhaseUpdater progress) throws Exception {
+        stopPrefetch();
         NixosCacheResource resource = nixosConfigurations.get(configuration);
         if (resource == null) {
             throw new IllegalArgumentException("NixOS configuration was not prepared: " + configuration);

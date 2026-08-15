@@ -25,6 +25,7 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     private final String path;
     private final String installable;
     private String derivationPath;
+    private URI cacheUri;
 
     public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable) {
         super(context);
@@ -53,6 +54,7 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
                     installable,
                     true
             );
+            cacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
             setPhase(Phase.Available);
         } catch (Exception e) {
             setPhase(Phase.Failed);
@@ -76,15 +78,22 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
         return URI.create(context.clients.objectStorage().getEndpoint() + preauthenticatedRequest.getAccessUri() + path);
     }
 
-    public URI buildCacheUri() {
+    public URI cacheUri() {
         if (getCurrentPhase() != Phase.Available) {
             throw new IllegalStateException("Cache not yet available");
         }
-        return buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
+        return cacheUri;
+    }
+
+    public String derivationPath() {
+        if (getCurrentPhase() != Phase.Available) {
+            throw new IllegalStateException("Cache not yet available");
+        }
+        return derivationPath;
     }
 
     public String activation() {
-        return Nix.activate(buildCacheUri(), derivationPath);
+        return Nix.activate(cacheUri(), derivationPath());
     }
 
     public enum Phase {

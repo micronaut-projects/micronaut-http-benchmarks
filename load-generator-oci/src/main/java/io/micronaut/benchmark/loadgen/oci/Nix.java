@@ -1,6 +1,7 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
+import io.micronaut.benchmark.loadgen.oci.resource.NixosCacheResource;
 import jakarta.inject.Singleton;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -76,14 +77,52 @@ public class Nix {
     }
 
     public static String activate(URI cacheUri, String derivation) {
+        String cache = shellQuote(cacheUri.toString());
+        String quotedDerivation = shellQuote(derivation);
+        String output = shellQuote(derivation + "^out");
         return "set -e\n"
                 + "deadline=$((SECONDS + 840))\n"
-                + "while ! " + NIX_REMOTE + " copy --no-check-sigs --from " + cacheUri + " " + derivation + "; do\n"
+                + "activation_start=$SECONDS\n"
+                + "printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix cache copy start'\n"
+                + "while ! " + NIX_REMOTE + " copy --no-check-sigs --from " + cache + " " + quotedDerivation + "; do\n"
                 + "  if [ \"$SECONDS\" -ge \"$deadline\" ]; then exit 1; fi\n"
+                + "  printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix cache copy retry'\n"
                 + "  sleep 5\n"
                 + "done\n"
-                + "profile=$(" + NIX_REMOTE + " build --no-link --print-out-paths " + derivation + "^out)\n"
-                + "$profile/bin/switch-to-configuration switch\n";
+                + "printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - activation_start))\" 'nix cache copy complete'\n"
+                + "profile_start=$SECONDS\n"
+                + "printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix profile realization start'\n"
+                + "profile=$(" + NIX_REMOTE + " build --no-link --print-out-paths " + output + ")\n"
+                + "printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - profile_start))\" 'nix profile realization complete'\n"
+                + "switch_start=$SECONDS\n"
+                + "printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix activation start'\n"
+                + "$profile/bin/switch-to-configuration switch\n"
+                + "printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - switch_start))\" 'nix activation complete'\n";
+    }
+
+    public static String prefetch(List<NixosCacheResource> resources) {
+        StringBuilder command = new StringBuilder("set -e\n")
+                .append("prefetch_start=$SECONDS\n")
+                .append("printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix prefetch start'\n");
+        for (NixosCacheResource resource : resources) {
+            String derivation = shellQuote(resource.derivationPath());
+            command.append("closure_start=$SECONDS\n")
+                    .append("deadline=$((SECONDS + 840))\n")
+                    .append("printf '%s %ss %s %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix prefetch closure start' ").append(derivation).append("\n")
+                    .append("while ! ").append(NIX_REMOTE).append(" copy --no-check-sigs --from ")
+                    .append(shellQuote(resource.cacheUri().toString())).append(' ').append(derivation).append("; do\n")
+                    .append("  if [ \"$SECONDS\" -ge \"$deadline\" ]; then exit 1; fi\n")
+                    .append("  printf '%s %ss %s %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix prefetch closure retry' ").append(derivation).append("\n")
+                    .append("  sleep 5\n")
+                    .append("done\n")
+                    .append("printf '%s %ss %ss %s %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - closure_start))\" 'nix prefetch closure complete' ").append(derivation).append("\n");
+        }
+        return command.append("printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - prefetch_start))\" 'nix prefetch complete'\n")
+                .toString();
+    }
+
+    static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     /**
