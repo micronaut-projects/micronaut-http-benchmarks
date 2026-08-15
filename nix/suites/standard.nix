@@ -11,8 +11,8 @@
       responseBody = ''{"listIndex":3,"stringIndex":2}'';
     }];
     protocols = {
-      http1.ops = [ 2000 8000 16000 32000 64000 96000 128000 160000 192000 256000 ];
-      https1.enable = true;
+      http1.enable = true;
+      https2.enable = true;
     };
     runs = {
       micronaut.imports = [ ../../sut/micronaut-framework ];

@@ -8,8 +8,6 @@ let
   );
   nonEmpty = type: types.addCheck type (value: value != [ ] && value != { });
   cfg = config.benchmark.suite.protocols;
-  http1Ops = [ 2000 8000 16000 32000 48000 64000 96000 128000 160000 192000 256000 ];
-  https1Ops = [ 1000 4000 8000 16000 24000 32000 48000 64000 80000 ];
   protocolControls = defaults: {
     enable = mkOption { type = types.bool; default = defaults.enable; };
     protocol = mkOption { type = types.enum [ "HTTP1" "HTTPS1" "HTTPS2" ]; default = defaults.protocol; };
@@ -23,23 +21,23 @@ let
 in {
   options.benchmark.suite.protocols = {
     http1 = protocolControls {
-      enable = true;
+      enable = false;
       protocol = "HTTP1";
-      sharedConnections = 16000;
+      sharedConnections = 8000;
       pipeliningLimit = 1;
       maxHttp2Streams = 1;
-      compileOps = 1000;
-      ops = http1Ops;
+      compileOps = 100;
+      ops = [ 2000 16000 64000 96000 128000 160000 192000 256000 ];
       sla = { "0.99" = "PT0.2S"; };
     };
     https1 = protocolControls {
       enable = false;
       protocol = "HTTPS1";
-      sharedConnections = 20000;
+      sharedConnections = 8000;
       pipeliningLimit = 1;
       maxHttp2Streams = 1;
-      compileOps = 1000;
-      ops = https1Ops;
+      compileOps = 25;
+      ops = [ 1000 4000 8000 16000 32000 64000 80000 ];
       sla = { "0.99" = "PT0.2S"; };
     };
     https2 = protocolControls {
@@ -49,7 +47,7 @@ in {
       pipeliningLimit = 1;
       maxHttp2Streams = 100;
       compileOps = 25;
-      ops = https1Ops;
+      ops = [ 1000 4000 8000 16000 32000 64000 80000 ];
       sla = { "0.99" = "PT0.2S"; };
     };
   };

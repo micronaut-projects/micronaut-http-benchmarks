@@ -10,6 +10,7 @@
       responseBody = "Hello World";
       responseMatchingMode = "EQUAL";
     }];
+    protocols.http1.enable = true;
     protocols.https1.enable = true;
     runs.micronaut = {
       imports = [ ../../sut/micronaut-framework ];

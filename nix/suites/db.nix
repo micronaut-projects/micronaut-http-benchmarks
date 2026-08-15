@@ -10,6 +10,7 @@
       responseBody = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
       responseMatchingMode = "REGEX";
     }];
+    protocols.http1.enable = true;
     runs.micronaut = {
       imports = [ ../../sut/micronaut-framework ];
       micronaut-framework.codec = "micronaut-serialization";
