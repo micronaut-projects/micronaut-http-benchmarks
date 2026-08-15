@@ -9,6 +9,13 @@ in
     (modulesPath + "/virtualisation/oci-image.nix")
   ];
 
+  # Benchmark servers are ephemeral; batch background metadata and writeback I/O.
+  nix.settings.fsync-metadata = false;
+  boot.kernel.sysctl = {
+    "vm.dirty_writeback_centisecs" = 1500;
+    "vm.dirty_expire_centisecs" = 3000;
+  };
+
   services.cloud-init = {
     enable = true;
     network.enable = true;
