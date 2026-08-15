@@ -18,8 +18,11 @@
       micronaut.imports = [ ../../sut/micronaut-framework ];
       pure-netty.imports = [ ../../sut/pure-netty ];
       helidon-nima.imports = [ ../../sut/helidon-nima ];
-      spring-boot.imports = [ ../../sut/spring-boot ];
+      #spring-boot.imports = [ ../../sut/spring-boot ];
       vertx.imports = [ ../../sut/vertx ];
+    };
+    asyncProfiler = {
+      enable = true;
     };
   };
 }

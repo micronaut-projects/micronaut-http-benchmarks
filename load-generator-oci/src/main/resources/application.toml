@@ -58,7 +58,6 @@ pgo-duration="2m"
 session-limit-factor=2
 # duration per ops/s benchmark
 benchmark-duration="2m"
-agent-async-profiler=false
 
 [perf-stat]
 enabled=false
@@ -79,22 +78,15 @@ version=24
 common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192"
 option-choices={ ""="" }
 
-[variants.hotspot.async-profiler]
-enabled=false
-args="start,event=cpu,cstack=vm"
-jfr-config="jdk.ObjectAllocationSample#enabled=false jdk.OldObjectSample#enabled=false"
-output="profile.jfr"
-directory="/var/tmp/async-profiler"
-
-[[variants.hotspot.async-profiler.conversion]]
+[[async-profiler.conversion]]
 input="profile.jfr"
 output="flamegraph.html"
 args="--output html"
-[[variants.hotspot.async-profiler.conversion]]
+[[async-profiler.conversion]]
 input="profile.jfr"
 output="flamegraph-reverse.html"
 args="-r --output html"
-[[variants.hotspot.async-profiler.conversion]]
+[[async-profiler.conversion]]
 input="profile.jfr"
 output="heatmap.html"
 args="--output heatmap"

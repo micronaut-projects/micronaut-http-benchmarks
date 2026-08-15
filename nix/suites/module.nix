@@ -1,6 +1,6 @@
-{ lib, ... }:
+{ config, lib, ... }:
 let
-  inherit (lib) mkOption types;
+  inherit (lib) mkIf mkOption types;
   positive = types.addCheck types.int (value: value > 0);
   nonEmpty = type: types.addCheck type (value: value != [ ] && value != { });
   duration = types.addCheck types.str (value:
@@ -37,6 +37,19 @@ let
       };
     };
   };
+  asyncProfiler = types.submodule {
+    options = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+      };
+
+      args = mkOption {
+        type = types.str;
+        default = "start,event=cpu,cstack=vm,jfrsync=default";
+      };
+    };
+  };
 in {
   options.benchmark.suite = {
     documents = mkOption {
@@ -64,6 +77,18 @@ in {
       default = [ ];
       description = "Reusable aspects composed into every run in this suite.";
     };
+
+    asyncProfiler = mkOption {
+      type = asyncProfiler;
+      default = { };
+      description = "Configure async-profiler for JVM SUT runs in this suite.";
+    };
   };
 
+  config.benchmark.suite.runModules = mkIf config.benchmark.suite.asyncProfiler.enable [{
+    benchmark.asyncProfiler = {
+      enable = true;
+      args = config.benchmark.suite.asyncProfiler.args;
+    };
+  }];
 }

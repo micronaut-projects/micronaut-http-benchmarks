@@ -31,8 +31,6 @@ dependencies {
     api(libs.hyperfoil.api)
     api(libs.hyperfoil.core)
     api(libs.hyperfoil.clustering)
-    runtimeOnly(variantOf(libs.async.profiler) { classifier("linux-x64") })
-    runtimeOnly(variantOf(libs.async.profiler) { classifier("linux-arm64") })
     api(libs.async.profiler.jfr.converter)
     implementation(libs.mina.sshd.core)
     implementation(libs.mina.sshd.scp)

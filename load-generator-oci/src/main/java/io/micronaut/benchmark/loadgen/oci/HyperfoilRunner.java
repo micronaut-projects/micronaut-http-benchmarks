@@ -302,10 +302,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         BenchmarkMetadata.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
         for (int i = 0; i < factory.config.agentCount; i++) {
             String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
-            AsyncProfilerHelper.Session asyncProfilerSession = agents.get(i).asyncProfilerSession;
-            if (asyncProfilerSession != null) {
-                extras += " " + asyncProfilerSession.getJvmArgument();
-            }
             benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
                     "threads", String.valueOf((int) agentInstanceType.ocpus() - 1),
                     "extras", extras,
@@ -490,7 +486,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final Compute.Launch launch;
         private Compute.InstanceResource instance;
         private final OutputListener.Write log;
-        private AsyncProfilerHelper.Session asyncProfilerSession;
 
         public AgentResource(ResourceContext context, int i, Compute.Launch launch, OutputListener.Write log) {
             super(context);
@@ -506,31 +501,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         }
 
         @Override
-        protected void setUp() throws Exception {
-            if (factory.config.agentAsyncProfiler) {
-                try (CommandRunner agentSession = instance.connectSsh()) {
-                    AsyncProfilerHelper.Session session = factory.asyncProfilerHelper.createSession(log);
-                    session.initAgent(agentSession);
-                    asyncProfilerSession = session;
-                }
-            }
-        }
-
-        @Override
         protected void tearDown() {
             try (log) {
-                if (asyncProfilerSession != null) {
-                    Path dir = logDirectory.resolve("agent" + i);
-                    try {
-                        Files.createDirectories(dir);
-                    } catch (FileAlreadyExistsException ignored) {}
-                    try (CommandRunner agentSession = instance.connectSsh()) {
-                        asyncProfilerSession.finish(agentSession, dir);
-                    } catch (Exception e) {
-                        LOG.error("Failed to download agent profiler results", e);
-                    }
-                }
-
                 instance.awaitTermination();
             } catch (Exception e) {
                 LOG.warn("Failed to close agent", e);
@@ -545,19 +517,17 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final SshFactory sshFactory;
         private final HyperfoilConfiguration config;
         private final SuiteRequest statusRequest;
-        private final AsyncProfilerHelper asyncProfilerHelper;
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
         private final BeanProvider<CertificateProvider> certificateProviders;
 
-        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, HyperfoilConfiguration config, BenchmarkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, BeanProvider<CertificateProvider> certificateProviders) {
+        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, HyperfoilConfiguration config, BenchmarkMetadata metadata, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, BeanProvider<CertificateProvider> certificateProviders) {
             this.context = context;
             this.compute = compute;
             this.sshFactory = sshFactory;
             this.config = config;
             this.statusRequest = metadata.suite().statusRequest();
-            this.asyncProfilerHelper = asyncProfilerHelper;
             this.objectMapper = objectMapper.rebuild()
                     .registerSubtypes(HttpStats.class)
                     .build();
@@ -587,8 +557,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             Duration benchmarkDuration,
             Duration pgoDuration,
             double sessionLimitFactor,
-            @Nullable String mtls,
-            boolean agentAsyncProfiler
+            @Nullable String mtls
     ) {
     }
 

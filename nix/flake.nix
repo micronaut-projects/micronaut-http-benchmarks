@@ -61,6 +61,7 @@
         documents = map requestMetadata suiteConfig.documents;
         statusRequest = requestMetadata suiteConfig.statusRequest;
         protocols = lib.mapAttrs (_: protocolMetadata) suiteConfig.resolvedProtocols;
+        asyncProfiler = suiteConfig.asyncProfiler.enable;
       }
     ) evaluatedSuites;
 

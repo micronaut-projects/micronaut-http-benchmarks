@@ -2,11 +2,31 @@
 let
   inherit (lib) mkIf mkOption types;
   cfg = config.benchmark;
+  asyncProfilerArgs = cfg.asyncProfiler.args;
+  jvmArgs = cfg.jvm.args ++ cfg.jvm.extraArgs ++ lib.optional cfg.asyncProfiler.enable "-agentpath:${pkgs.async-profiler}/lib/libasyncProfiler.so=${asyncProfilerArgs},file=/var/lib/sut/profile.jfr";
 in {
   options.benchmark = {
     run.name = mkOption {
       type = types.str;
       description = "The suite-local identity of this benchmark run.";
+    };
+
+    asyncProfiler = mkOption {
+      type = types.submodule {
+        options = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Enable the Nix-provided async-profiler JVM agent for this run.";
+          };
+
+          args = mkOption {
+            type = types.str;
+            default = "start,event=cpu,cstack=vm,jfrsync=default";
+          };
+        };
+      };
+      default = { };
     };
 
     sut = {
@@ -91,20 +111,28 @@ in {
         description = cfg.sut.description;
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
+        environment.JAVA_TOOL_OPTIONS = builtins.concatStringsSep " " jvmArgs;
 
         serviceConfig = {
           Type = "notify";
           NotifyAccess = "all";
           ExecStart = "${cfg.sut.package}/bin/${cfg.sut.executable}";
-          Environment = cfg.sut.environment ++ [
-            "JAVA_TOOL_OPTIONS=${builtins.concatStringsSep " " (cfg.jvm.args ++ cfg.jvm.extraArgs)}"
-          ];
+          Environment = cfg.sut.environment;
           DynamicUser = true;
+          StateDirectory = lib.optional cfg.asyncProfiler.enable "sut";
+          StateDirectoryMode = "0750";
+          ExecStartPre = lib.optional cfg.asyncProfiler.enable "${pkgs.coreutils}/bin/rm -f /var/lib/sut/profile.jfr";
           Restart = "no";
           StandardOutput = "journal";
           StandardError = "journal";
           TimeoutStartSec = 130;
         };
+        path = lib.optional cfg.asyncProfiler.enable pkgs.async-profiler;
       };
+  }) (mkIf cfg.asyncProfiler.enable {
+    boot.kernel.sysctl = {
+      "kernel.perf_event_paranoid" = 1;
+      "kernel.kptr_restrict" = 0;
+    };
   })];
 }
