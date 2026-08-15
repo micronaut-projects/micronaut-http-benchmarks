@@ -108,7 +108,7 @@ public final class SuiteRunner {
                                 infraFactory.compute().getInstanceType(Infrastructure.BENCHMARK_SERVER_INSTANCE_TYPE)
                         ));
                         PhaseTracker.PhaseUpdater phaseUpdater = phaseTracker.updater(name);
-                        phaseUpdater.update(BenchmarkPhase.BEFORE);
+                        phaseUpdater.update(BenchmarkPhase.QUEUED);
                         Path out = outputDir.resolve(name);
                         allTasks.add(() -> {
                             MdcTracker.withMdc(name, () -> {

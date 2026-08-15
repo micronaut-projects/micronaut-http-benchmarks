@@ -53,7 +53,7 @@ public final class NixRunSet implements FrameworkRunSet {
 
     static void setupAndRun(String service, boolean asyncProfiler, AsyncProfilerHelper asyncProfilerHelper, CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log,
                             FrameworkRun.BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
-        progress.update(BenchmarkPhase.DEPLOYING_SERVER);
+        progress.update(BenchmarkPhase.STARTING_SERVER);
         benchmarkServerClient.runAndCheck("systemctl restart -- " + service, log);
         benchmarkClosure.benchmark(progress);
         if (asyncProfiler) {

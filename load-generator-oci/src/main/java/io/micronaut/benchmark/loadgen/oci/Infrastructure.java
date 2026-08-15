@@ -241,7 +241,9 @@ public final class Infrastructure extends AbstractInfrastructure {
             throw new IllegalArgumentException("NixOS configuration lock was not prepared: " + configuration);
         }
         lock.await();
-        progress.update(BenchmarkPhase.DEPLOYING_OS);
+        progress.update(configuration.equals(BENCHMARK_BOOTSTRAP)
+                ? BenchmarkPhase.RESTORING_BOOTSTRAP
+                : BenchmarkPhase.ACTIVATING_CONFIGURATION);
         log.println("----------------- NixOS deployment target: " + configuration);
         retry(() -> {
             try (CommandRunner client = benchmarkServer.connectSsh()) {
