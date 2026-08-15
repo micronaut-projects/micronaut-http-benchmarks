@@ -18,8 +18,8 @@ maven.buildMavenPackage {
   };
 
   mvnHash = {
-    jackson-databind = "sha256-Uz4G1WjHln/KuG1atYqWkNw0n4WJ6/hKOtcfw6pMxY4=";
-    micronaut-serialization = "sha256-eU0CIT/WDGiJoDksI/u1wuuwBjy4GvYXPRAjeGHpAaY=";
+    jackson-databind = "sha256-BD+X6PKbj1IDWImDJDiMF2E/mDYKAB4ey/B4wPnXcOw=";
+    micronaut-serialization = "sha256-g5TX32Gp88iZDJC9Y6+GMzpxCjABl9jCfkHul1JH64o=";
   }.${codec};
 
   mvnParameters = "-P${codec}";
