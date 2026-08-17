@@ -10,10 +10,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -44,14 +42,14 @@ public abstract class PhasePoller<K, P> implements ResourceContext.Poller {
         synchronized (this) {
             copy = new HashMap<>(subscriptions);
         }
-        Set<K> done = new HashSet<>();
+        Map<K, Subscription> done = new HashMap<>();
         if (copy.size() > listThreshold) {
             listStates(copy.keySet()).forEach((k, p) -> {
                 Subscription subscription = copy.get(k);
                 if (subscription != null) {
                     subscription.resource.setPhase(p);
                     if (subscription.isComplete(p)) {
-                        done.add(k);
+                        done.put(k, subscription);
                     }
                 }
             });
@@ -60,13 +58,13 @@ public abstract class PhasePoller<K, P> implements ResourceContext.Poller {
                 P p = getState(k);
                 s.resource.setPhase(p);
                 if (s.isComplete(p)) {
-                    done.add(k);
+                    done.put(k, s);
                 }
             });
         }
         if (!done.isEmpty()) {
             synchronized (this) {
-                subscriptions.keySet().removeAll(done);
+                done.forEach(subscriptions::remove);
             }
         }
     }

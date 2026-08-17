@@ -180,13 +180,13 @@ public record CompartmentCleaner(
             for (NatGateway natGateway : NatGatewayResource.list(context, location)) {
                 NatGatewayResource resource = new NatGatewayResource(context);
                 resource.setPhase(natGateway.getLifecycleState());
-                resource.dependOn(resources.get(natGateway.getVcnId()).require());
+                resource.dependOn(((VcnResource) resources.get(natGateway.getVcnId())).requireVcnOnly());
                 resources.put(natGateway.getId(), resource);
             }
             for (InternetGateway internetGateway : InternetGatewayResource.list(context, location)) {
                 InternetGatewayResource resource = new InternetGatewayResource(context);
                 resource.setPhase(internetGateway.getLifecycleState());
-                resource.dependOn(resources.get(internetGateway.getVcnId()).require());
+                resource.dependOn(((VcnResource) resources.get(internetGateway.getVcnId())).requireVcnOnly());
                 resources.put(internetGateway.getId(), resource);
             }
             for (RouteTable routeTable : RouteTableResource.list(context, location)) {

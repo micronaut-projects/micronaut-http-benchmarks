@@ -123,7 +123,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                     .privateIp(agentIp(i))
                     .nixosConfiguration("hyperfoil-agent")
                     .consoleHistory(log);
-            AgentResource r = new AgentResource(context, i, launch, log);
+            AgentResource r = new AgentResource(context, launch, log);
             r.name("agent" + i);
             agents.add(r);
             agentLocks.addAll(r.require());
@@ -482,27 +482,30 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     }
 
     private final class AgentResource extends AbstractDecoratedResource {
-        private final int i;
         private final Compute.Launch launch;
+        private final List<PhaseLock> instanceLocks;
         private Compute.InstanceResource instance;
         private final OutputListener.Write log;
 
-        public AgentResource(ResourceContext context, int i, Compute.Launch launch, OutputListener.Write log) {
+        public AgentResource(ResourceContext context, Compute.Launch launch, OutputListener.Write log) {
             super(context);
-            this.i = i;
             this.launch = launch;
             this.log = log;
-            dependOn(launch.resource().require());
+            instanceLocks = launch.resource().require();
+            dependOn(instanceLocks);
         }
 
         @Override
-        protected void launchDependencies() throws Exception {
+        protected void launchDependencies() {
             instance = launch.launchAsResource();
         }
 
         @Override
         protected void tearDown() {
             try (log) {
+                for (PhaseLock instanceLock : instanceLocks) {
+                    instanceLock.close();
+                }
                 instance.awaitTermination();
             } catch (Exception e) {
                 LOG.warn("Failed to close agent", e);

@@ -172,9 +172,8 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         } catch (FileAlreadyExistsException ignored) {
         }
 
-        progress.update(BenchmarkPhase.CREATING_VCN);
+        progress.update(BenchmarkPhase.PREPARING_INFRASTRUCTURE);
         launch(vcn, () -> vcn.manageNew(location, CreateVcnDetails.builder().displayName("Benchmark network").cidrBlock(NETWORK)));
-        progress.update(BenchmarkPhase.SETTING_UP_NETWORK);
 
         launch(nat, () -> nat.manageNew(location, CreateNatGatewayDetails.builder().displayName("NAT Gateway")));
         if (internet != null) {
@@ -261,7 +260,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                     .clientCidrBlockAllowList(List.of("0.0.0.0/0"))));
         }
 
-        progress.update(BenchmarkPhase.SETTING_UP_INSTANCES);
+        progress.update(BenchmarkPhase.STARTING_INSTANCES);
     }
 
     public final SubnetResource getPrivateSubnet() {
@@ -284,9 +283,6 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
 
     public void addLifecycleDependency(List<PhasedResource.PhaseLock> locks) {
         lifecycleLocks.addAll(locks);
-    }
-
-    protected final void terminateRelayAsync() throws Exception {
     }
 
     @Override

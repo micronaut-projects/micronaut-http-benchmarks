@@ -131,12 +131,11 @@ public final class Infrastructure extends AbstractInfrastructure {
     @Override
     public void close() throws Exception {
         stopped = true;
-        // Safely close everything
-        try (hyperfoilLock;
-             PhasedResource.PhaseLock _ = PhasedResource.PhaseLock.combine(nixosConfigurationLocks.values().stream().toList());
-             OutputListener.Write _ = benchmarkServerLog;
-             Compute.Instance _ = benchmarkServer;
-             AutoCloseable _ = super::close
+        try (AutoCloseable _ = super::close;
+             AutoCloseable _ = benchmarkServer;
+             benchmarkServerLog;
+             AutoCloseable _ = PhasedResource.PhaseLock.combine(nixosConfigurationLocks.values().stream().toList());
+             hyperfoilLock
         ) {
         }
     }
