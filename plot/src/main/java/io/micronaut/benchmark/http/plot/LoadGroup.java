@@ -1,6 +1,6 @@
 package io.micronaut.benchmark.http.plot;
 
-import io.micronaut.benchmark.loadgen.oci.Compute;
+import io.micronaut.benchmark.loadgen.oci.BenchmarkMetadata;
 import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
 import io.micronaut.benchmark.loadgen.oci.ProtocolSettings;
 import io.micronaut.benchmark.loadgen.oci.SuiteRunner;
@@ -86,6 +86,20 @@ final class LoadGroup {
         } else {
             return d + "";
         }
+    }
+
+    static String formatSut(BenchmarkMetadata.InstanceType sut) {
+        StringBuilder html = new StringBuilder()
+                .append(sut.shape()).append(" ")
+                .append(roundIfWhole(sut.ocpus())).append("CPU&nbsp;")
+                .append(roundIfWhole(sut.memoryInGb())).append("G");
+        if (sut.platform() != null && !sut.platform().isEmpty()) {
+            html.append(" ").append(sut.platform());
+        }
+        if (sut.diskPerformanceUnits() != null) {
+            html.append(" (").append(sut.diskPerformanceUnits()).append(" DPU)");
+        }
+        return html.toString();
     }
 
     private void selectColors() {
@@ -219,12 +233,9 @@ final class LoadGroup {
             }
         }
         if (children == null) {
-            Compute.ComputeConfiguration.InstanceType sut = index.getFirst().parameters.sutSpecs();
+            BenchmarkMetadata.InstanceType sut = index.getFirst().parameters.sutSpecs();
             html.append("<dt").append(htmlAttr()).append(">SUT</dt><dd").append(htmlAttr()).append(">")
-                    .append(sut.shape()).append(" ")
-                    .append(roundIfWhole(sut.ocpus())).append("CPU&nbsp;")
-                    .append(roundIfWhole(sut.memoryInGb())).append("G ")
-                    .append(sut.image())
+                    .append(formatSut(sut))
                     .append("</dd>");
             if (index.stream().anyMatch(e -> e.jfrSummary != null)) {
                 html.append("<dt").append(htmlAttr()).append(">async-profiler</dt><dd class='warning ").append(htmlClass()).append("'>enabled</dd>");

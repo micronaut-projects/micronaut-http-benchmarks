@@ -60,7 +60,7 @@ public class Main {
                 }
                 return version;
             }),
-            new Discriminator("Request", p -> p.load().protocol().protocol().name() + " " + p.load().definition().getMethod() + " " + p.load().definition().getUri())
+            new Discriminator("Request", p -> p.load().protocol().protocol().name() + " " + p.load().definition().method() + " " + p.load().definition().uri())
                     .selectWithDropdown(true),
             new Discriminator("Micronaut version", p -> compileConfiguration(p, "micronaut")),
             new Discriminator("JSON implementation", p -> compileConfiguration(p, "json")),
