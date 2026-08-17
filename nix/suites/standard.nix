@@ -19,6 +19,7 @@
       pure-netty.imports = [ ../../sut/pure-netty ];
       helidon-nima.imports = [ ../../sut/helidon-nima ];
       #spring-boot.imports = [ ../../sut/spring-boot ];
+      quarkus.imports = [ ../../sut/quarkus ];
       vertx.imports = [ ../../sut/vertx ];
     };
     asyncProfiler = {
