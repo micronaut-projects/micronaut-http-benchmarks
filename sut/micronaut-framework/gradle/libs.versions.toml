@@ -1,0 +1,10 @@
+[plugins]
+micronaut-application = { id = "io.micronaut.application", version.ref = "micronaut-gradle-plugin" }
+
+[libraries]
+agroal = { group = "io.agroal", name = "agroal-pool", version.ref = "agroal" }
+
+[versions]
+micronaut = "5.1.0"
+micronaut-gradle-plugin = "5.0.2"
+agroal = "2.7.1"

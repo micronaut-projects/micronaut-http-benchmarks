@@ -1,44 +1,57 @@
 { lib
-, maven
+, stdenvNoCC
+, gradle_9
 , makeWrapper
 , jdk25_headless
 , systemd
 , codec
 }:
-maven.buildMavenPackage {
+let
+  gradle = gradle_9.override {
+    javaToolchains = [ jdk25_headless ];
+  };
+in
+stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "micronaut-framework-${codec}";
   version = "1.0.0";
 
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [
-      ./pom.xml
+      ./settings.gradle.kts
+      ./build.gradle.kts
+      ./gradle
       ./src
     ];
   };
 
-  mvnHash = {
-    jackson-databind = "sha256-BD+X6PKbj1IDWImDJDiMF2E/mDYKAB4ey/B4wPnXcOw=";
-    micronaut-serialization = "sha256-g5TX32Gp88iZDJC9Y6+GMzpxCjABl9jCfkHul1JH64o=";
-  }.${codec};
-
-  mvnParameters = "-P${codec}";
-
-  mvnJdk = jdk25_headless;
-
   nativeBuildInputs = [
+    gradle
     makeWrapper
   ];
+
+  mitmCache = gradle.fetchDeps {
+    pkg = finalAttrs.finalPackage;
+    data = ./deps.json;
+    useBwrap = false;
+  };
+
+  gradleBuildTask = "jar";
+  gradleUpdateScript = ''
+    gradle ${finalAttrs.gradleBuildTask} -Pcodec=jackson-databind
+    gradle ${finalAttrs.gradleBuildTask} -Pcodec=micronaut-serialization
+  '';
+  gradleFlags = [ "-Pcodec=${codec}" ];
 
   doCheck = false;
 
   installPhase = ''
     runHook preInstall
-    install -Dm444 target/micronaut-framework.jar "$out/share/micronaut-framework/micronaut-framework.jar"
-    cp -r target/libs "$out/share/micronaut-framework/libs"
+    install -Dm444 build/libs/micronaut-framework.jar "$out/share/micronaut-framework/micronaut-framework.jar"
+    cp -r build/libs/libs "$out/share/micronaut-framework/libs"
     makeWrapper ${jdk25_headless}/bin/java "$out/bin/micronaut-framework" \
       --prefix PATH : ${lib.makeBinPath [ systemd ]} \
       --add-flags "-jar $out/share/micronaut-framework/micronaut-framework.jar"
     runHook postInstall
   '';
-}
+})
