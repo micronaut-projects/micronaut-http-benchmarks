@@ -2,6 +2,7 @@ package org.example;
 
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.core.annotation.Introspected;
+import io.micronaut.core.annotation.ReflectiveAccess;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Body;
@@ -46,10 +47,12 @@ public class SearchController {
     }
 
     @Introspected
+    @ReflectiveAccess
     @Serdeable
     record Input(List<String> haystack, String needle) {}
 
     @Introspected
+    @ReflectiveAccess
     @Serdeable
     record Result(int listIndex, int stringIndex) {}
 }

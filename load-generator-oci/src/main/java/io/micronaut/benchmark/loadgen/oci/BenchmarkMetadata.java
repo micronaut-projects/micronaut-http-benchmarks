@@ -64,8 +64,7 @@ public final class BenchmarkMetadata {
             List<NixFrameworkMetadata> runs,
             List<SuiteRequest> documents,
             Map<String, ProtocolSettings> protocols,
-            SuiteRequest statusRequest,
-            boolean asyncProfiler
+            SuiteRequest statusRequest
     ) {
         public Suite {
             runs = List.copyOf(Objects.requireNonNull(runs));

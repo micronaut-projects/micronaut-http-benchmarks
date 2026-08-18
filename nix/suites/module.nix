@@ -87,7 +87,7 @@ in {
 
   config.benchmark.suite.runModules = mkIf config.benchmark.suite.asyncProfiler.enable [{
     benchmark.asyncProfiler = {
-      enable = true;
+      enable = lib.mkDefault true;
       args = config.benchmark.suite.asyncProfiler.args;
     };
   }];

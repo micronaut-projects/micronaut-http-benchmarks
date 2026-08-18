@@ -2,6 +2,19 @@
 let
   inherit (lib) mkIf mkOption types;
   cfg = config.benchmark;
+  runtimeProjection =
+    let
+      runtime = cfg.sut.runtime;
+      isJvm = runtime == "hotspot";
+      isPgo = runtime == "native-pgo-instrument" || runtime == "native-pgo";
+      toolchain = if isJvm then cfg.toolchains.java else cfg.toolchains.graalvm;
+    in {
+      buildPackage = toolchain.package;
+      inherit isJvm isPgo;
+      isNative = !isJvm;
+      label = if isPgo then "${toolchain.metadataLabel}-pgo" else toolchain.metadataLabel;
+      displayName = "${toolchain.displayName}${lib.optionalString (!isJvm) " native image"}${lib.optionalString isPgo " PGO"}";
+    };
   asyncProfilerArgs = cfg.asyncProfiler.args;
   jvmArgs = cfg.jvm.args ++ cfg.jvm.extraArgs ++ lib.optional cfg.asyncProfiler.enable "-agentpath:${pkgs.async-profiler}/lib/libasyncProfiler.so=${asyncProfilerArgs},file=/var/lib/sut/profile.jfr";
 in {
@@ -29,10 +42,75 @@ in {
       default = { };
     };
 
+    toolchains = {
+      java = {
+        package = mkOption {
+          type = types.package;
+          default = pkgs.jdk25_headless;
+          description = "Java package used to build and run HotSpot benchmark SUTs.";
+        };
+        displayName = mkOption {
+          type = types.str;
+          default = "Nix-packaged JDK 25";
+          description = "Display name for the Java runtime in benchmark metadata.";
+        };
+        metadataLabel = mkOption {
+          type = types.str;
+          default = "hotspot";
+          description = "Metadata type label for Java benchmark runs.";
+        };
+      };
+      graalvm = {
+        package = mkOption {
+          type = types.package;
+          default = pkgs.graalvmPackages.graalvm-oracle_25.overrideAttrs (previous: {
+            postFixup = (previous.postFixup or "") + ''
+              sed -i 's| -H:CLibraryPath=[^ ]*-glibc-[^ ]*-static/lib||' "$out/bin/.native-image-wrapped_"
+            '';
+          });
+          description = "Patched Oracle GraalVM package used to build native benchmark SUTs.";
+        };
+        displayName = mkOption {
+          type = types.str;
+          default = "GraalVM Oracle 25";
+          description = "Display name for the GraalVM runtime in benchmark metadata.";
+        };
+        metadataLabel = mkOption {
+          type = types.str;
+          default = "native";
+          description = "Metadata type label for GraalVM native-image benchmark runs.";
+        };
+      };
+    };
+
     sut = {
+      runtime = mkOption {
+        type = types.enum [ "hotspot" "native" "native-pgo-instrument" "native-pgo" ];
+        default = "hotspot";
+      };
+      runtimeInfo = mkOption {
+        type = types.submodule {
+          options = {
+            buildPackage = mkOption { type = types.package; };
+            isJvm = mkOption { type = types.bool; };
+            isNative = mkOption { type = types.bool; };
+            isPgo = mkOption { type = types.bool; };
+            label = mkOption { type = types.str; };
+            displayName = mkOption { type = types.str; };
+          };
+        };
+        default = runtimeProjection;
+        readOnly = true;
+        description = "Derived build package, runtime flags, and metadata for the selected SUT runtime.";
+      };
       package = mkOption {
         type = types.nullOr types.package;
         default = null;
+      };
+
+      pgoDirectory = mkOption {
+        type = types.str;
+        default = "/var/lib/sut/pgo";
       };
 
       executable = mkOption {
@@ -51,6 +129,18 @@ in {
       };
 
       metadata = {
+        typePrefix = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Required SUT-specific prefix for the composed benchmark metadata type.";
+        };
+
+        typeSuffix = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Optional SUT-specific suffix for the composed benchmark metadata type.";
+        };
+
         type = mkOption {
           type = types.nullOr types.str;
           default = null;
@@ -59,6 +149,20 @@ in {
         parameters = mkOption {
           type = types.attrsOf types.str;
           default = { };
+        };
+
+        pgo = mkOption {
+          type = types.nullOr (types.submodule {
+            options = {
+              optimizedConfiguration = mkOption { type = types.str; };
+            };
+          });
+          default = null;
+        };
+
+        enabled = mkOption {
+          type = types.bool;
+          default = true;
         };
       };
     };
@@ -87,52 +191,77 @@ in {
   config = lib.mkMerge [{
     assertions = [
       {
+        assertion = cfg.sut.metadata.typePrefix != null;
+        message = "A benchmark run must declare benchmark.sut.metadata.typePrefix.";
+      }
+      {
         assertion = cfg.sut.metadata.type != null;
         message = "A benchmark run must declare benchmark.sut.metadata.type.";
       }
-    ] ++ lib.optionals cfg.jvm.enable [
+    ] ++ [
       {
         assertion = cfg.sut.package != null;
-        message = "A JVM benchmark run must declare benchmark.sut.package.";
+        message = "A benchmark service run must declare benchmark.sut.package.";
       }
       {
         assertion = cfg.sut.executable != null;
-        message = "A JVM benchmark run must declare benchmark.sut.executable.";
+        message = "A benchmark service run must declare benchmark.sut.executable.";
       }
       {
         assertion = cfg.sut.description != null;
-        message = "A JVM benchmark run must declare benchmark.sut.description.";
+        message = "A benchmark service run must declare benchmark.sut.description.";
       }
     ];
-  } (mkIf cfg.jvm.enable {
-      networking.firewall.allowedTCPPorts = [ 8080 8443 ];
-
-      systemd.services.sut = {
-        description = cfg.sut.description;
-        after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
-        environment.JAVA_TOOL_OPTIONS = builtins.concatStringsSep " " jvmArgs;
-
-        serviceConfig = {
-          Type = "notify";
-          NotifyAccess = "all";
-          ExecStart = "${cfg.sut.package}/bin/${cfg.sut.executable}";
-          Environment = cfg.sut.environment;
-          DynamicUser = true;
-          StateDirectory = lib.optional cfg.asyncProfiler.enable "sut";
-          StateDirectoryMode = "0750";
-          ExecStartPre = lib.optional cfg.asyncProfiler.enable "${pkgs.coreutils}/bin/rm -f /var/lib/sut/profile.jfr";
-          Restart = "no";
-          StandardOutput = "journal";
-          StandardError = "journal";
-          TimeoutStartSec = 130;
-        };
-        path = lib.optional cfg.asyncProfiler.enable pkgs.async-profiler;
-      };
-  }) (mkIf cfg.asyncProfiler.enable {
-    boot.kernel.sysctl = {
-      "kernel.perf_event_paranoid" = 1;
-      "kernel.kptr_restrict" = 0;
+    users.groups.sut = { };
+    benchmark.sut.metadata = {
+      type = builtins.concatStringsSep "-" ([ cfg.sut.metadata.typePrefix cfg.sut.runtimeInfo.label ] ++ lib.optional (cfg.sut.metadata.typeSuffix != null) cfg.sut.metadata.typeSuffix);
+      parameters.runtime = cfg.sut.runtimeInfo.displayName;
     };
+    users.users.sut = {
+      isSystemUser = true;
+      group = "sut";
+    };
+    system.activationScripts.sutStateDirectory = ''
+      if [ -L /var/lib/sut ]; then
+        rm /var/lib/sut
+      fi
+      rm -rf /var/lib/private/sut
+      install -d -o sut -g sut -m 0755 /var/lib/sut
+    '';
+    networking.firewall.allowedTCPPorts = [ 8080 8443 ];
+    systemd.services.sut = {
+      description = cfg.sut.description;
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      environment = lib.optionalAttrs cfg.jvm.enable {
+        JAVA_TOOL_OPTIONS = builtins.concatStringsSep " " jvmArgs;
+      };
+      path = lib.optional cfg.asyncProfiler.enable pkgs.async-profiler;
+      serviceConfig = {
+        Type = "notify";
+        NotifyAccess = "all";
+        ExecStart = "${cfg.sut.package}/bin/${cfg.sut.executable}";
+        Environment = cfg.sut.environment;
+        User = "sut";
+        StateDirectory = "sut";
+        StateDirectoryMode = "0755";
+        ExecStartPre = lib.optional cfg.asyncProfiler.enable "${pkgs.coreutils}/bin/rm -f /var/lib/sut/profile.jfr"
+          ++ lib.optionals (cfg.sut.runtime == "native-pgo-instrument") [
+            "${pkgs.coreutils}/bin/mkdir -p /var/lib/sut/pgo"
+            "${pkgs.findutils}/bin/find /var/lib/sut/pgo -mindepth 1 -delete"
+            "${pkgs.coreutils}/bin/rm -f /var/lib/sut/default.iprof"
+          ];
+        ExecStopPost = lib.optionals (cfg.sut.runtime == "native-pgo-instrument") [
+          "${pkgs.coreutils}/bin/install -m 0644 /var/lib/sut/default.iprof /var/lib/sut/pgo/default.iprof"
+        ];
+        WorkingDirectory = lib.optional (cfg.sut.runtime == "native-pgo-instrument") "/var/lib/sut";
+        Restart = "no";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutStartSec = 130;
+      };
+    };
+  } (mkIf (cfg.sut.runtime != "hotspot") {
+    benchmark.asyncProfiler.enable = lib.mkForce false;
   })];
 }

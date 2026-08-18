@@ -6,11 +6,13 @@ import jakarta.inject.Singleton;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Singleton
 public class Nix {
@@ -51,9 +53,20 @@ public class Nix {
         pb.directory(Path.of("nix").toFile());
         pb.command(cmd);
         Process process = pb.start();
-        process.getErrorStream().transferTo(new OutputListener.Stream(List.of(log)));
+        AtomicReference<IOException> stderrFailure = new AtomicReference<>();
+        Thread stderrThread = Thread.ofVirtual().start(() -> {
+            try {
+                process.getErrorStream().transferTo(new OutputListener.Stream(List.of(log)));
+            } catch (IOException e) {
+                stderrFailure.set(e);
+            }
+        });
         byte[] bytes = process.getInputStream().readAllBytes();
         int exit = process.waitFor();
+        stderrThread.join();
+        if (stderrFailure.get() != null) {
+            throw stderrFailure.get();
+        }
         if (exit != 0) {
             throw new IllegalStateException("Nix exit with next output: " + exit);
         }
@@ -61,10 +74,16 @@ public class Nix {
     }
 
     public Path build(OutputListener log, String installable) throws Exception {
-        JsonNode answer = nixJson(log, List.of(
-                "build", installable,
-                "--json", "--no-link"
-        ));
+        return build(log, installable, List.of());
+    }
+
+    public Path build(OutputListener log, String installable, List<String> extraArgs) throws Exception {
+        List<String> args = new ArrayList<>();
+        args.add("build");
+        args.add(installable);
+        args.addAll(extraArgs);
+        args.addAll(List.of("--json", "--no-link"));
+        JsonNode answer = nixJson(log, args);
         Path path = Path.of(answer.get(0).get("outputs").get("out").stringValue());
         if (!path.startsWith(Path.of("/nix/store"))) {
             throw new IllegalStateException("Weird result path");
@@ -76,28 +95,44 @@ public class Nix {
         return Files.readAllBytes(build(log, ".#benchmark-metadata"));
     }
 
-    public static String activate(URI cacheUri, String derivation) {
+    public static String activate(URI cacheUri, String derivation, List<String> cleanupOutputs) {
         String cache = shellQuote(cacheUri.toString());
         String quotedDerivation = shellQuote(derivation);
         String output = shellQuote(derivation + "^out");
-        return "set -e\n"
-                + "deadline=$((SECONDS + 840))\n"
-                + "activation_start=$SECONDS\n"
-                + "printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix cache copy start'\n"
-                + "while ! " + NIX_REMOTE + " copy --no-check-sigs --from " + cache + " " + quotedDerivation + "; do\n"
-                + "  if [ \"$SECONDS\" -ge \"$deadline\" ]; then exit 1; fi\n"
-                + "  printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix cache copy retry'\n"
-                + "  sleep 5\n"
-                + "done\n"
-                + "printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - activation_start))\" 'nix cache copy complete'\n"
-                + "profile_start=$SECONDS\n"
-                + "printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix profile realization start'\n"
-                + "profile=$(" + NIX_REMOTE + " build --no-link --print-out-paths " + output + ")\n"
-                + "printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - profile_start))\" 'nix profile realization complete'\n"
-                + "switch_start=$SECONDS\n"
-                + "printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix activation start'\n"
-                + "$profile/bin/switch-to-configuration switch\n"
-                + "printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - switch_start))\" 'nix activation complete'\n";
+        StringBuilder command = new StringBuilder("set -e\n")
+                .append("deadline=$((SECONDS + 840))\n")
+                .append("activation_start=$SECONDS\n")
+                .append("printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix cache copy start'\n")
+                .append("while ! ").append(NIX_REMOTE).append(" copy --no-check-sigs --from ").append(cache).append(' ').append(quotedDerivation).append("; do\n")
+                .append("  if [ \"$SECONDS\" -ge \"$deadline\" ]; then exit 1; fi\n")
+                .append("  printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix cache copy retry'\n")
+                .append("  sleep 5\n")
+                .append("done\n")
+                .append("printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - activation_start))\" 'nix cache copy complete'\n");
+        if (!cleanupOutputs.isEmpty()) {
+            command.append("valid_cleanup_outputs=\n")
+                    .append("for cleanup_output in");
+            for (String cleanupOutput : cleanupOutputs) {
+                command.append(' ').append(shellQuote(cleanupOutput));
+            }
+            command.append("; do\n")
+                    .append("  if test -e \"$cleanup_output\"; then valid_cleanup_outputs=\"$valid_cleanup_outputs $cleanup_output\"; fi\n")
+                    .append("done\n")
+                    .append("if [ -n \"$valid_cleanup_outputs\" ]; then /run/current-system/sw/bin/nix-store --delete $valid_cleanup_outputs; fi\n");
+        }
+        command.append("profile_start=$SECONDS\n")
+                .append("printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix profile realization start'\n")
+                .append("profile=$(").append(NIX_REMOTE).append(" build --no-link --print-out-paths");
+        if (!cleanupOutputs.isEmpty()) {
+            command.append(" --no-substitute");
+        }
+        return command.append(' ').append(output).append(")\n")
+                .append("printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - profile_start))\" 'nix profile realization complete'\n")
+                .append("switch_start=$SECONDS\n")
+                .append("printf '%s %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" 'nix activation start'\n")
+                .append("$profile/bin/switch-to-configuration switch\n")
+                .append("printf '%s %ss %ss %s\\n' \"$(date -Is)\" \"$SECONDS\" \"$((SECONDS - switch_start))\" 'nix activation complete'\n")
+                .toString();
     }
 
     public static String prefetch(List<NixosCacheResource> resources) {
@@ -133,6 +168,10 @@ public class Nix {
      */
     public String getDerivation(OutputListener log, String installable) throws Exception {
         return nixJson(log, List.of("path-info", "--json", "--json-format", "1", "--derivation", installable)).propertyNames().iterator().next();
+    }
+
+    public List<String> profileDependentOutputs(OutputListener log, String installable) throws Exception {
+        return NixDerivationGraph.profileDependentOutputs(nixJson(log, List.of("derivation", "show", "--recursive", installable)));
     }
 
     public void uploadCache(OutputListener log, URI cache, String installable, boolean derivation) throws Exception {

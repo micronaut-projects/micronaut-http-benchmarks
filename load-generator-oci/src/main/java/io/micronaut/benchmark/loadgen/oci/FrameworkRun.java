@@ -5,6 +5,7 @@ import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.core.annotation.Nullable;
 
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * This interface represents a particular choice of framework and framework options that a HTTP benchmark can run
@@ -34,9 +35,9 @@ public interface FrameworkRun {
     @Nullable
     Object parameters();
 
-    @Nullable
-    default String nixosConfiguration() {
-        return null;
+    List<NixosConfiguration> nixosConfigurations();
+
+    record NixosConfiguration(String name, boolean profileDependent) {
     }
 
     /**
@@ -54,7 +55,13 @@ public interface FrameworkRun {
             Path outputDirectory,
             OutputListener.Write log,
             BenchmarkClosure benchmarkClosure,
+            ConfigurationActivator configurationActivator,
             PhaseTracker.PhaseUpdater progress) throws Exception;
+
+    @FunctionalInterface
+    interface ConfigurationActivator {
+        void activate(String configuration, PhaseTracker.PhaseUpdater progress) throws Exception;
+    }
 
     /**
      * Called by {@link #setupAndRun} once the server has been set up, to run the benchmark load.

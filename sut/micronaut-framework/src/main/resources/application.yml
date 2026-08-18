@@ -7,6 +7,8 @@ micronaut:
       enabled: true
       port: 8443
       key-name: benchmark
+      key:
+        password: password
       ciphers: [TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, TLS_AES_128_GCM_SHA256]
       handshake-timeout: 1m
     dual-protocol: true
@@ -24,8 +26,10 @@ micronaut:
       default:
         prefer-native-transport: true
   certificate:
-    self-signed:
+    resource:
       benchmark:
-        subject: CN=localhost
+        resource: classpath:server.p12
+        password: password
+        format: PKCS12
 
 loop-remote: http://10.0.0.10

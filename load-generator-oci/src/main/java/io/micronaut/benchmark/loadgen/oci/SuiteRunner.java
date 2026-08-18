@@ -74,8 +74,8 @@ public final class SuiteRunner {
 
         List<LoadVariant> loadVariants = loadManager.getLoadVariants();
         List<FrameworkRun> enabledRuns = runs;
-        Set<String> enabledConfigurations = enabledRuns.stream()
-                .map(this::configuration)
+        Set<FrameworkRun.NixosConfiguration> enabledConfigurations = enabledRuns.stream()
+                .flatMap(run -> run.nixosConfigurations().stream())
                 .collect(Collectors.toUnmodifiableSet());
         // all benchmark tasks (all FrameworkRuns * all LoadVariants * number of reps)
         List<Callable<Void>> allTasks = new ArrayList<>();
@@ -123,7 +123,7 @@ public final class SuiteRunner {
                                     } else {
                                         semaphore.acquire();
                                         // create a new infra just for us.
-                                        try (Infrastructure infra = infraFactory.create(location, out, Set.of(configuration(run)))) {
+                                        try (Infrastructure infra = infraFactory.create(location, out, Set.copyOf(run.nixosConfigurations()))) {
                                             infra.run(out, run, loadVariant, phaseUpdater);
                                             phaseUpdater.update(BenchmarkPhase.SHUTTING_DOWN);
                                         }
@@ -184,11 +184,6 @@ public final class SuiteRunner {
         Files.move(newIndex, outputDir.resolve("index.json"), StandardCopyOption.REPLACE_EXISTING);
         LOG.info("All benchmarks complete");
         System.exit(0);
-    }
-
-    private String configuration(FrameworkRun run) {
-        String configuration = run.nixosConfiguration();
-        return configuration == null ? Infrastructure.BENCHMARK_BOOTSTRAP : configuration;
     }
 
     /**

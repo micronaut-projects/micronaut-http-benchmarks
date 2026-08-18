@@ -23,6 +23,21 @@ application {
     mainClass.set("org.example.Main")
 }
 
+val nativeBuild = providers.gradleProperty("nativeBuild").isPresent
+val nativeImageArgs = providers.gradleProperty("nativeImageArgs").orNull
+if (nativeBuild) {
+    graalvmNative {
+        binaries {
+            named("main") {
+                buildArgs.add("--initialize-at-run-time=io.netty")
+                if (nativeImageArgs != null) {
+                    buildArgs.addAll(nativeImageArgs.split(","))
+                }
+            }
+        }
+    }
+}
+
 val codec = providers.gradleProperty("codec").orElse("jackson-databind").get()
 require(codec in setOf("jackson-databind", "micronaut-serialization")) {
     "codec must be one of: jackson-databind, micronaut-serialization"
@@ -34,7 +49,6 @@ dependencies {
     implementation(libs.agroal)
     implementation(mn.postgresql)
 
-    runtimeOnly(mn.netty.pkitesting)
     runtimeOnly(mn.snakeyaml)
     runtimeOnly(mn.logback.classic)
 

@@ -24,15 +24,19 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     private final String bucket;
     private final String path;
     private final String installable;
+    private final boolean profileDependent;
     private String derivationPath;
+    private List<String> cleanupOutputs;
     private URI cacheUri;
 
-    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable) {
+    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable,
+                              boolean profileDependent) {
         super(context);
         this.namespace = namespace;
         this.bucket = bucket;
         this.path = path;
         this.installable = installable;
+        this.profileDependent = profileDependent;
     }
 
     @Override
@@ -48,8 +52,11 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
         setPhase(Phase.Uploading);
         try {
             derivationPath = context.clients.nix().getDerivation(new OutputListener.Log(LOG, Level.TRACE), installable);
+            cleanupOutputs = profileDependent
+                    ? context.clients.nix().profileDependentOutputs(new OutputListener.Log(LOG, Level.TRACE), installable)
+                    : List.of();
             context.clients.nix().uploadCache(
-                    new OutputListener.Log(LOG, Level.TRACE),
+                    new OutputListener.Log(LOG, Level.INFO),
                     buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite),
                     installable,
                     true
@@ -93,7 +100,7 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     }
 
     public String activation() {
-        return Nix.activate(cacheUri(), derivationPath());
+        return Nix.activate(cacheUri(), derivationPath(), cleanupOutputs);
     }
 
     public enum Phase {

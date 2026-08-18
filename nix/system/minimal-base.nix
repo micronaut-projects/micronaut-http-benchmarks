@@ -4,6 +4,8 @@ let
   serialDevice = "/dev/${serialTty}";
 in
 {
+  nixpkgs.config.allowUnfree = true;
+
   imports = [
     (modulesPath + "/profiles/minimal.nix")
     (modulesPath + "/virtualisation/oci-image.nix")
@@ -14,6 +16,9 @@ in
   boot.kernel.sysctl = {
     "vm.dirty_writeback_centisecs" = 1500;
     "vm.dirty_expire_centisecs" = 3000;
+    # for profiling
+    "kernel.perf_event_paranoid" = 1;
+    "kernel.kptr_restrict" = 0;
   };
 
   services.cloud-init = {

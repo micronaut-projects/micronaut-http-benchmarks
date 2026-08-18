@@ -7,6 +7,9 @@
       name = "6-6";
       method = "POST";
       uri = "/search/find";
+      requestHeaders = {
+        Content-Type = "application/json";
+      };
       requestBody = ''{"haystack":["ssxvnj","hpdqdx","vcrast","vybcwv","mgnykr","xvzxkg"],"needle":"bcw"}'';
       responseBody = ''{"listIndex":3,"stringIndex":2}'';
     }];

@@ -13,8 +13,8 @@
         <compiler-plugin.version>3.14.1</compiler-plugin.version>
         <maven.compiler.release>25</maven.compiler.release>
         <maven-surefire-plugin.version>3.5.4</maven-surefire-plugin.version>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <netty.iouring.version>0.0.25.Final</netty.iouring.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>3.38.2</quarkus.platform.version>
@@ -103,4 +103,13 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>native</id>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
 </project>

@@ -18,6 +18,8 @@ package org.example;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Get;
+import io.micronaut.core.annotation.Introspected;
+import io.micronaut.core.annotation.ReflectiveAccess;
 import io.micronaut.http.netty.channel.loom.PrivateLoomSupport;
 import io.micronaut.http.server.netty.NettyHttpRequest;
 import io.micronaut.json.JsonMapper;
@@ -52,6 +54,8 @@ public class StatusController {
     }
 
     @Serdeable
+    @Introspected
+    @ReflectiveAccess
     record Status(String serverSocketChannelImplementation,
                   SslProvider sslProvider,
                   String jsonMapperImplementation,

@@ -2,7 +2,7 @@
   description = "Micronaut Framework benchmark infra";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
   };
@@ -16,7 +16,6 @@
       ./system/benchmark-bootstrap.nix
       ./system/run.nix
     ];
-
     evalSuite = suiteModule: lib.evalModules {
       modules = [ ./suites/module.nix suiteModule ];
     };
@@ -28,7 +27,7 @@
     };
     protocolMetadata = protocol: protocol;
 
-    evaluateRun = suiteName: suite: runName: runModule:
+    evaluateRun = suiteName: suite: runName: runModule: extraModules: metadataOverrides:
       let
         configurationName = "${suiteName}-${runName}";
         system = lib.nixosSystem {
@@ -37,31 +36,56 @@
             { imports = suite.config.benchmark.suite.runModules; }
             { benchmark.run.name = runName; }
             runModule
-          ];
+          ] ++ extraModules;
         };
         cfg = system.config.benchmark;
       in {
-        inherit configurationName system;
+        inherit configurationName runModule system;
         metadata = {
           name = "${suiteName}-${cfg.run.name}";
           type = cfg.sut.metadata.type;
           parameters = cfg.sut.metadata.parameters;
           nixosConfiguration = configurationName;
+          asyncProfiler = cfg.asyncProfiler.enable;
+          pgo = cfg.sut.metadata.pgo;
+        } // metadataOverrides;
+      };
+    pgoStage = runtime: enabled: pgo: {
+      benchmark.sut = {
+        runtime = lib.mkForce runtime;
+        metadata.enabled = lib.mkForce enabled;
+        metadata.pgo = lib.mkForce pgo;
+      };
+    };
+    expandRun = suiteName: suite: runName: runModule:
+      let
+        probe = evaluateRun suiteName suite runName runModule [ ] { };
+        collectorConfiguration = "${suiteName}-${runName}-collector";
+        optimizedConfiguration = "${suiteName}-${runName}-optimized";
+        pgo = {
+          inherit optimizedConfiguration;
         };
+      in if probe.system.config.benchmark.sut.runtime == "native-pgo" then {
+        "${runName}-collector" = evaluateRun suiteName suite "${runName}-collector" runModule [ (pgoStage "native-pgo-instrument" true pgo) ] {
+          name = "${suiteName}-${runName}";
+        };
+        "${runName}-optimized" = evaluateRun suiteName suite "${runName}-optimized" runModule [ (pgoStage "native-pgo" false null) ] { };
+      } else {
+        "${runName}" = probe;
       };
     evaluatedSuiteRuns = lib.mapAttrs (suiteName: suite:
-      lib.mapAttrs (runName: runModule: evaluateRun suiteName suite runName runModule) suite.config.benchmark.suite.runs
+      lib.foldl' (runs: runName: runs // expandRun suiteName suite runName suite.config.benchmark.suite.runs.${runName}) { }
+        (lib.attrNames suite.config.benchmark.suite.runs)
     ) evaluatedSuites;
     suiteRuns = lib.concatMap lib.attrValues (lib.attrValues evaluatedSuiteRuns);
     metadataSuites = lib.mapAttrs (suiteName: suite:
       let
         suiteConfig = suite.config.benchmark.suite;
       in {
-        runs = map (run: run.metadata) (lib.attrValues evaluatedSuiteRuns.${suiteName});
+        runs = map (run: run.metadata) (lib.filter (run: run.system.config.benchmark.sut.metadata.enabled) (lib.attrValues evaluatedSuiteRuns.${suiteName}));
         documents = map requestMetadata suiteConfig.documents;
         statusRequest = requestMetadata suiteConfig.statusRequest;
         protocols = lib.mapAttrs (_: protocolMetadata) suiteConfig.resolvedProtocols;
-        asyncProfiler = suiteConfig.asyncProfiler.enable;
       }
     ) evaluatedSuites;
 
@@ -118,6 +142,9 @@
       inherit name;
       text = builtins.toJSON value;
     };
+    localSmokeTests = import ./smoke-tests.nix {
+      inherit nixpkgs lib evaluatedSuites evaluatedSuiteRuns pgoStage;
+    };
     rolePackage = role: lib.nameValuePair "${role.packageName or role.name}-system" (mkHost {
       system = role.instance.platform;
       definition = role.definition;
@@ -139,6 +166,6 @@
     packages = lib.genAttrs supportedSystems packagesFor;
     checks = lib.genAttrs supportedSystems (system: {
       benchmark-suite-shape = metadataPackage system "benchmark-suite-shape.json" benchmarkMetadata;
-    });
+    } // lib.optionalAttrs (system == "x86_64-linux") (localSmokeTests system));
   };
 }

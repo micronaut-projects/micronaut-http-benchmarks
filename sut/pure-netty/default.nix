@@ -1,14 +1,48 @@
-{ pkgs, ... }:
+{ config, lib, pkgs, ... }:
+let
+  runtimeInfo = config.benchmark.sut.runtimeInfo;
+  package = pkgs.maven.buildMavenPackage {
+    pname = "pure-netty";
+    version = "1.0.0";
+
+    src = pkgs.lib.fileset.toSource {
+      root = ./.;
+      fileset = pkgs.lib.fileset.unions [
+        ./pom.xml
+        ./src
+      ];
+    };
+
+    mvnHash = "sha256-JOXrtGDOPFLJ2WXaaEdcavo9H2r6OJAlgvDcduV45Tk=";
+
+    mvnJdk = runtimeInfo.buildPackage;
+
+    nativeBuildInputs = [
+      pkgs.makeWrapper
+    ];
+
+    doCheck = false;
+
+    installPhase = ''
+      runHook preInstall
+      install -Dm444 target/pure-netty.jar "$out/share/pure-netty/pure-netty.jar"
+      makeWrapper ${runtimeInfo.buildPackage}/bin/java "$out/bin/pure-netty" \
+        --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.systemd ]} \
+        --add-flags "-jar $out/share/pure-netty/pure-netty.jar"
+      runHook postInstall
+    '';
+  };
+in
 {
   benchmark = {
+    sut.runtime = lib.mkForce "hotspot";
     jvm.enable = true;
     sut = {
-      package = pkgs.callPackage ./package.nix { };
+      inherit package;
       executable = "pure-netty";
       description = "Pure Netty benchmark server";
       metadata = {
-        type = "pure-netty-hotspot";
-        parameters.runtime = "Nix-packaged JDK 25";
+        typePrefix = "pure-netty";
       };
     };
   };

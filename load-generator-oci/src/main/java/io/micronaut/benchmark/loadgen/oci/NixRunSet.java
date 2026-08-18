@@ -15,7 +15,7 @@ public final class NixRunSet implements FrameworkRunSet {
     private final List<NixFrameworkRun> runs;
 
     public NixRunSet(BenchmarkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper) {
-        runs = metadata.suite().runs().stream().map(run -> new NixFrameworkRun(run, metadata.suite().asyncProfiler(), asyncProfilerHelper)).toList();
+        runs = metadata.suite().runs().stream().map(run -> new NixFrameworkRun(run, asyncProfilerHelper)).toList();
     }
 
     @Override
@@ -23,7 +23,7 @@ public final class NixRunSet implements FrameworkRunSet {
         return runs;
     }
 
-    private record NixFrameworkRun(NixFrameworkMetadata metadata, boolean asyncProfiler, AsyncProfilerHelper asyncProfilerHelper) implements FrameworkRun {
+    private record NixFrameworkRun(NixFrameworkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper) implements FrameworkRun {
         @Override
         public String type() {
             return metadata.type();
@@ -31,7 +31,7 @@ public final class NixRunSet implements FrameworkRunSet {
 
         @Override
         public String name() {
-            return metadata.name() + (asyncProfiler ? "-async-profiler" : "");
+            return metadata.name() + (metadata.asyncProfiler() ? "-async-profiler" : "");
         }
 
         @Override
@@ -40,33 +40,48 @@ public final class NixRunSet implements FrameworkRunSet {
         }
 
         @Override
-        public String nixosConfiguration() {
-            return metadata.nixosConfiguration();
+        public List<NixosConfiguration> nixosConfigurations() {
+            NixFrameworkMetadata.PgoMetadata pgo = metadata.pgo();
+            return pgo == null
+                    ? List.of(new NixosConfiguration(metadata.nixosConfiguration(), false))
+                    : List.of(
+                            new NixosConfiguration(metadata.nixosConfiguration(), false),
+                            new NixosConfiguration(pgo.optimizedConfiguration(), true)
+                    );
         }
 
         @Override
         public void setupAndRun(CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log,
-                                BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
-            NixRunSet.setupAndRun(SUT_SERVICE, asyncProfiler, asyncProfilerHelper, benchmarkServerClient, outputDirectory, log, benchmarkClosure, progress);
+                                BenchmarkClosure benchmarkClosure, ConfigurationActivator configurationActivator,
+                                PhaseTracker.PhaseUpdater progress) throws Exception {
+            progress.update(BenchmarkPhase.STARTING_SERVER);
+            NixFrameworkMetadata.PgoMetadata pgo = metadata.pgo();
+            if (pgo != null) {
+                benchmarkServerClient.runAndCheck("systemctl restart -- " + SUT_SERVICE, log);
+                try {
+                    progress.update(BenchmarkPhase.PGO);
+                    benchmarkClosure.pgoLoad(progress);
+                } finally {
+                    benchmarkServerClient.runAndCheck("systemctl stop -- " + SUT_SERVICE, log);
+                }
+                configurationActivator.activate(pgo.optimizedConfiguration(), progress);
+                progress.update(BenchmarkPhase.STARTING_SERVER);
+            }
+            benchmarkServerClient.runAndCheck("systemctl restart -- " + SUT_SERVICE, log);
+            benchmarkClosure.benchmark(progress);
+            if (metadata.asyncProfiler()) {
+                benchmarkServerClient.runAndCheck("systemctl stop -- " + SUT_SERVICE, log);
+                benchmarkServerClient.download(AsyncProfilerHelper.REMOTE_PROFILE_PATH, outputDirectory.resolve(AsyncProfilerHelper.PROFILE_FILE_NAME));
+                asyncProfilerHelper.convert(outputDirectory);
+            } else {
+                benchmarkServerClient.runAndCheck("systemctl --quiet is-active -- " + SUT_SERVICE, log);
+            }
         }
     }
-
-    static void setupAndRun(String service, boolean asyncProfiler, AsyncProfilerHelper asyncProfilerHelper, CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log,
-                            FrameworkRun.BenchmarkClosure benchmarkClosure, PhaseTracker.PhaseUpdater progress) throws Exception {
-        progress.update(BenchmarkPhase.STARTING_SERVER);
-        benchmarkServerClient.runAndCheck("systemctl restart -- " + service, log);
-        benchmarkClosure.benchmark(progress);
-        if (asyncProfiler) {
-            benchmarkServerClient.runAndCheck("systemctl stop -- " + service, log);
-            benchmarkServerClient.download(AsyncProfilerHelper.REMOTE_PROFILE_PATH, outputDirectory.resolve(AsyncProfilerHelper.PROFILE_FILE_NAME));
-            asyncProfilerHelper.convert(outputDirectory);
-        } else {
-            benchmarkServerClient.runAndCheck("systemctl --quiet is-active -- " + service, log);
-        }
-    }
-
 }
 
-record NixFrameworkMetadata(String type, String name, JsonNode parameters,
-                            String nixosConfiguration) {
+record NixFrameworkMetadata(String type, String name, JsonNode parameters, String nixosConfiguration,
+                            boolean asyncProfiler, PgoMetadata pgo) {
+    record PgoMetadata(String optimizedConfiguration) {
+    }
 }

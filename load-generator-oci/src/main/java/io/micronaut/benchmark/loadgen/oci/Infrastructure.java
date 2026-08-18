@@ -46,7 +46,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private boolean started;
     private boolean stopped;
 
-    private Infrastructure(Factory factory, OciLocation location, Path logDirectory, Set<String> configurations) throws Exception {
+    private Infrastructure(Factory factory, OciLocation location, Path logDirectory, Set<FrameworkRun.NixosConfiguration> configurations) throws Exception {
         super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
         Files.createDirectories(logDirectory);
@@ -57,12 +57,12 @@ public final class Infrastructure extends AbstractInfrastructure {
         hyperfoilLock = hyperfoilRunner.require();
         BenchmarkMetadata.InstanceType instanceType = factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE);
         Map<String, NixosCacheResource> resources = new LinkedHashMap<>();
-        for (String configuration : Objects.requireNonNull(configurations, "configurations")) {
-            resources.putIfAbsent(configuration, factory.compute.cacheResource(instanceType, configuration));
+        for (FrameworkRun.NixosConfiguration configuration : Objects.requireNonNull(configurations, "configurations")) {
+            resources.putIfAbsent(configuration.name(), factory.compute.cacheResource(instanceType, configuration));
         }
         resources.computeIfAbsent(BENCHMARK_BOOTSTRAP, name -> {
             try {
-                return factory.compute.cacheResource(instanceType, name);
+                return factory.compute.cacheResource(instanceType, new FrameworkRun.NixosConfiguration(name, false));
             } catch (Exception e) {
                 throw new IllegalStateException("Failed to prepare benchmark bootstrap", e);
             }
@@ -199,8 +199,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     }
 
     private String configuration(FrameworkRun run) {
-        String configuration = run.nixosConfiguration();
-        return configuration == null ? BENCHMARK_BOOTSTRAP : configuration;
+        return run.nixosConfigurations().getFirst().name();
     }
 
     private void switchOutput(String marker, OutputListener target) {
@@ -276,10 +275,11 @@ public final class Infrastructure extends AbstractInfrastructure {
                     () -> {
                         run.setupAndRun(
                                 benchmarkServerClient,
-                                outputDirectory,
-                                log,
-                                hyperfoilRunner.benchmarkClosure(outputDirectory, loadVariant.protocol(), loadVariant.definition()),
-                                finalProgress);
+                                 outputDirectory,
+                                 log,
+                                 hyperfoilRunner.benchmarkClosure(outputDirectory, loadVariant.protocol(), loadVariant.definition()),
+                                 (configuration, activationProgress) -> activate(log, configuration, activationProgress),
+                                 finalProgress);
                         return null;
                     }
             );
@@ -300,7 +300,7 @@ public final class Infrastructure extends AbstractInfrastructure {
             SutMonitor sutMonitor,
             List<Attachment> attachments
     ) {
-        Infrastructure create(OciLocation location, Path logDirectory, Set<String> nixosConfigurations) throws Exception {
+        Infrastructure create(OciLocation location, Path logDirectory, Set<FrameworkRun.NixosConfiguration> nixosConfigurations) throws Exception {
             return new Infrastructure(this, location, logDirectory, nixosConfigurations);
         }
     }

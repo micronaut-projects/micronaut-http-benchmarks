@@ -1,16 +1,75 @@
 { config, lib, pkgs, ... }:
 let
   codec = config.micronaut-framework.codec;
+  pgoDirectory = config.benchmark.sut.pgoDirectory;
+  runtime = config.benchmark.sut.runtime;
+  runtimeInfo = config.benchmark.sut.runtimeInfo;
+  package =
+    let
+      gradle = pkgs.gradle_9.override {
+        java = runtimeInfo.buildPackage;
+        javaToolchains = [ runtimeInfo.buildPackage ];
+      };
+    in
+    pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
+      pname = "micronaut-framework-${codec}-${runtime}";
+      version = "1.0.0";
+
+      src = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [
+          ./settings.gradle.kts
+          ./build.gradle.kts
+          ./gradle
+          ./src
+        ];
+      };
+
+      mitmCache = gradle.fetchDeps {
+        pkg = finalAttrs.finalPackage;
+        data = ./deps.json;
+        useBwrap = false;
+      };
+
+      gradleBuildTask = if runtime == "hotspot" then "jar" else "nativeCompile";
+      nativeGradleFlags = lib.optionals (runtime != "hotspot") [ "-PnativeBuild" ]
+        ++ lib.optionals (runtime == "native-pgo-instrument") [ "-PnativeImageArgs=--pgo-instrument" ]
+        ++ lib.optionals (runtime == "native-pgo") [ "-PnativeImageArgs=--pgo=${pgoDirectory}/default.iprof" ];
+      gradleUpdateTaskSuffix = lib.optionalString (runtime != "hotspot") " --dry-run";
+      gradleUpdateScript = ''
+        ${lib.optionalString (runtime != "hotspot") ''gradle generateDynamicAccessMetadata -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}''}
+        gradle ${finalAttrs.gradleBuildTask} -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
+        ${lib.optionalString (runtime != "hotspot") ''gradle generateDynamicAccessMetadata -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}''}
+        gradle ${finalAttrs.gradleBuildTask} -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
+      '';
+      gradleFlags = [ "-Pcodec=${codec}" ] ++ finalAttrs.nativeGradleFlags;
+      nativeBuildInputs = [ gradle pkgs.makeWrapper ];
+      __noChroot = runtime == "native-pgo" && pgoDirectory == "/var/lib/sut/pgo";
+      doCheck = false;
+
+      installPhase = ''
+        runHook preInstall
+        if [ "${runtime}" = hotspot ]; then
+          install -Dm444 build/libs/micronaut-framework.jar "$out/share/micronaut-framework/micronaut-framework.jar"
+          cp -r build/libs/libs "$out/share/micronaut-framework/libs"
+          makeWrapper ${runtimeInfo.buildPackage}/bin/java "$out/bin/micronaut-framework" \
+            --prefix PATH : ${lib.makeBinPath [ pkgs.systemd ]} \
+            --add-flags "-jar $out/share/micronaut-framework/micronaut-framework.jar"
+        else
+          install -Dm755 build/native/nativeCompile/micronaut-framework "$out/bin/micronaut-framework"
+        fi
+        runHook postInstall
+      '';
+    });
 in {
   options.micronaut-framework.codec = lib.mkOption {
     type = lib.types.enum [ "jackson-databind" "micronaut-serialization" ];
     default = "jackson-databind";
     description = "The Micronaut Framework JSON codec used by this benchmark run.";
   };
-
   config.benchmark = {
     jvm = {
-      enable = true;
+      enable = runtimeInfo.isJvm;
       extraArgs = [
         "-Djdk.trackAllThreads=false"
         "-XX:+UnlockExperimentalVMOptions"
@@ -18,16 +77,14 @@ in {
       ];
     };
     sut = {
-      package = pkgs.callPackage ./package.nix { inherit codec; };
+      inherit package;
       executable = "micronaut-framework";
-      description = "Micronaut Framework ${codec} benchmark server";
+      description = if runtimeInfo.isJvm then "Micronaut Framework ${codec} benchmark server" else if runtimeInfo.isPgo then "Micronaut Framework PGO benchmark server" else "Micronaut Framework native benchmark server";
       environment = [ "MICRONAUT_SYSTEMD_NOTIFY_ENABLED=true" ];
       metadata = {
-        type = "micronaut-framework-hotspot-${codec}";
-        parameters = {
-          runtime = "Nix-packaged JDK 25";
-          inherit codec;
-        };
+        typePrefix = "micronaut-framework";
+        typeSuffix = codec;
+        parameters.codec = codec;
       };
     };
   };

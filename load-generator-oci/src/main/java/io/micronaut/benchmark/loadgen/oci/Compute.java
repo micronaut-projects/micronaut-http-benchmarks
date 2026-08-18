@@ -178,7 +178,7 @@ public final class Compute {
         }
 
         public Launch nixosConfiguration(String configurationName) {
-            nixosConfiguration = cacheResource(instanceType, configurationName);
+            nixosConfiguration = cacheResource(instanceType, new FrameworkRun.NixosConfiguration(configurationName, false));
             AbstractInfrastructure.launch(nixosConfiguration, nixosConfiguration::manage);
             return nixosConfiguration(nixosConfiguration);
         }
@@ -281,15 +281,16 @@ public final class Compute {
         }
     }
 
-    NixosCacheResource cacheResource(BenchmarkMetadata.InstanceType instanceType, String configuration) {
+    NixosCacheResource cacheResource(BenchmarkMetadata.InstanceType instanceType, FrameworkRun.NixosConfiguration configuration) {
         String platform = instanceType.platform();
-        String installable = ".#packages." + platform + "." + configuration + "-system";
+        String installable = ".#packages." + platform + "." + configuration.name() + "-system";
         return new NixosCacheResource(
                 context,
                 computeConfiguration.storageBucketNamespace,
                 computeConfiguration.storageBucketName,
                 "nixos-cache",
-                installable
+                installable,
+                configuration.profileDependent()
         );
     }
 
