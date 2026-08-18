@@ -1,5 +1,6 @@
 package org.example;
 
+import io.quarkus.runtime.annotations.RegisterForReflection;
 import io.vertx.core.Vertx;
 import io.vertx.core.impl.VertxInternal;
 import jakarta.ws.rs.GET;
@@ -38,12 +39,15 @@ public class BenchmarkResource {
         return Response.status(Response.Status.NOT_FOUND).build();
     }
 
+    @RegisterForReflection
     public record SearchRequest(List<String> haystack, String needle) {
     }
 
+    @RegisterForReflection
     public record SearchResult(int listIndex, int stringIndex) {
     }
 
+    @RegisterForReflection
     public record Status(String serverSocketChannelImplementation) {
     }
 }

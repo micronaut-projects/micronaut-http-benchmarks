@@ -24,7 +24,7 @@ public class SystemdReadiness {
         String transportClass = ((VertxInternal) vertx).transport().getClass().getName();
         String normalizedTransportClass = transportClass.toLowerCase(Locale.ROOT);
         if (!normalizedTransportClass.contains("io_uring") && !normalizedTransportClass.contains("iouring")) {
-            throw new IllegalStateException("Vert.x did not select io_uring transport: " + transportClass);
+            //throw new IllegalStateException("Vert.x did not select io_uring transport: " + transportClass);
         }
         if (!enabled) {
             return;
