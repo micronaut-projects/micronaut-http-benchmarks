@@ -3,7 +3,7 @@ package io.micronaut.benchmark.loadgen.oci.resource;
 import com.oracle.bmc.objectstorage.model.CreatePreauthenticatedRequestDetails;
 import com.oracle.bmc.objectstorage.model.PreauthenticatedRequest;
 import com.oracle.bmc.objectstorage.requests.CreatePreauthenticatedRequestRequest;
-import io.micronaut.benchmark.loadgen.oci.Nix;
+import io.micronaut.benchmark.loadgen.oci.NixCacheAccess;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,19 +24,14 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     private final String bucket;
     private final String path;
     private final String installable;
-    private final boolean profileDependent;
-    private String derivationPath;
-    private List<String> cleanupOutputs;
-    private URI cacheUri;
+    private NixCacheAccess cacheAccess;
 
-    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable,
-                              boolean profileDependent) {
+    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable) {
         super(context);
         this.namespace = namespace;
         this.bucket = bucket;
         this.path = path;
         this.installable = installable;
-        this.profileDependent = profileDependent;
     }
 
     @Override
@@ -51,17 +46,16 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     public void manage() throws Exception {
         setPhase(Phase.Uploading);
         try {
-            derivationPath = context.clients.nix().getDerivation(new OutputListener.Log(LOG, Level.TRACE), installable);
-            cleanupOutputs = profileDependent
-                    ? context.clients.nix().profileDependentOutputs(new OutputListener.Log(LOG, Level.TRACE), installable)
-                    : List.of();
+            String derivationPath = context.clients.nix().getDerivation(new OutputListener.Log(LOG, Level.TRACE), installable);
+            URI writeCacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite);
             context.clients.nix().uploadCache(
                     new OutputListener.Log(LOG, Level.INFO),
-                    buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite),
+                    writeCacheUri,
                     installable,
                     true
             );
-            cacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
+            URI readCacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
+            cacheAccess = new NixCacheAccess(installable, derivationPath, readCacheUri, writeCacheUri);
             setPhase(Phase.Available);
         } catch (Exception e) {
             setPhase(Phase.Failed);
@@ -85,22 +79,11 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
         return URI.create(context.clients.objectStorage().getEndpoint() + preauthenticatedRequest.getAccessUri() + path);
     }
 
-    public URI cacheUri() {
+    public NixCacheAccess cacheAccess() {
         if (getCurrentPhase() != Phase.Available) {
             throw new IllegalStateException("Cache not yet available");
         }
-        return cacheUri;
-    }
-
-    public String derivationPath() {
-        if (getCurrentPhase() != Phase.Available) {
-            throw new IllegalStateException("Cache not yet available");
-        }
-        return derivationPath;
-    }
-
-    public String activation() {
-        return Nix.activate(cacheUri(), derivationPath(), cleanupOutputs);
+        return cacheAccess;
     }
 
     public enum Phase {

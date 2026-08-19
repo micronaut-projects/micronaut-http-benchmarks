@@ -13,6 +13,7 @@ in
 
   # Benchmark servers are ephemeral; batch background metadata and writeback I/O.
   nix.settings.fsync-metadata = false;
+  nix.settings.require-sigs = false;
   boot.kernel.sysctl = {
     "vm.dirty_writeback_centisecs" = 1500;
     "vm.dirty_expire_centisecs" = 3000;

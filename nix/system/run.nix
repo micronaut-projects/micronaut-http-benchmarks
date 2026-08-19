@@ -113,6 +113,11 @@ in {
         default = "/var/lib/sut/pgo";
       };
 
+      pgoBuildDirectory = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+      };
+
       executable = mkOption {
         type = types.nullOr types.str;
         default = null;
@@ -155,6 +160,7 @@ in {
           type = types.nullOr (types.submodule {
             options = {
               optimizedConfiguration = mkOption { type = types.str; };
+              pgoDirectory = mkOption { type = types.str; };
             };
           });
           default = null;

@@ -1,7 +1,7 @@
 { config, pkgs, ... }:
 let
   runtime = config.benchmark.sut.runtime;
-  pgoDirectory = config.benchmark.sut.pgoDirectory;
+  pgoDirectory = if config.benchmark.sut.pgoBuildDirectory == null then config.benchmark.sut.pgoDirectory else config.benchmark.sut.pgoBuildDirectory;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
   package = pkgs.maven.buildMavenPackage {
     pname = "quarkus-${runtime}";
@@ -26,9 +26,9 @@ let
 
     nativeBuildInputs = [
       pkgs.makeWrapper
-    ];
+    ] ++ pkgs.lib.optional (config.benchmark.sut.pgoBuildDirectory != null) config.benchmark.sut.pgoBuildDirectory;
 
-    __noChroot = runtime == "native-pgo";
+    __noChroot = runtime == "native-pgo" && config.benchmark.sut.pgoBuildDirectory == null;
 
     doCheck = false;
 

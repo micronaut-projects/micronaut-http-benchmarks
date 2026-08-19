@@ -18,6 +18,13 @@
 
   programs.command-not-found.enable = false;
 
+  # cloud-init starts sshd explicitly. Keep that start queued until its final
+  # stage has deployed the benchmark role configuration.
+  systemd.services.sshd = {
+    requires = [ "cloud-final.service" ];
+    after = [ "cloud-final.service" ];
+  };
+
   virtualisation.diskSize = 4096;
 
   image.baseName = "nixos";

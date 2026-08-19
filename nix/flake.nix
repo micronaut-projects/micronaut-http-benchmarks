@@ -40,7 +40,7 @@
         };
         cfg = system.config.benchmark;
       in {
-        inherit configurationName runModule system;
+        inherit configurationName runModule runName suite suiteName system;
         metadata = {
           name = "${suiteName}-${cfg.run.name}";
           type = cfg.sut.metadata.type;
@@ -64,6 +64,7 @@
         optimizedConfiguration = "${suiteName}-${runName}-optimized";
         pgo = {
           inherit optimizedConfiguration;
+          pgoDirectory = probe.system.config.benchmark.sut.pgoDirectory;
         };
       in if probe.system.config.benchmark.sut.runtime == "native-pgo" then {
         "${runName}-collector" = evaluateRun suiteName suite "${runName}-collector" runModule [ (pgoStage "native-pgo-instrument" true pgo) ] {
@@ -163,6 +164,20 @@
       // lib.listToAttrs (map rolePackage activatableRoles)
       // lib.listToAttrs (map runPackage systemRuns);
   in {
+    lib.pgoToplevel = optimizedConfiguration: pgoBuildDirectory:
+      let
+        run = lib.findFirst (candidate: candidate.configurationName == optimizedConfiguration)
+          (throw "Unknown optimized PGO configuration: ${optimizedConfiguration}") suiteRuns;
+        pgoRun = evaluateRun run.suiteName run.suite run.runName run.runModule [
+          (pgoStage "native-pgo" false null)
+          { benchmark.sut.pgoBuildDirectory = pgoBuildDirectory; }
+        ] { };
+      in
+      assert lib.assertMsg (builtins.match "^/nix/store/[^/]+$" (toString pgoBuildDirectory) != null)
+        "PGO directory is not a Nix store path: ${toString pgoBuildDirectory}";
+      assert lib.assertMsg (run.system.config.benchmark.sut.runtime == "native-pgo")
+        "Configuration is not a native-PGO optimized run: ${optimizedConfiguration}";
+      pgoRun.system.config.system.build.toplevel;
     packages = lib.genAttrs supportedSystems packagesFor;
     checks = lib.genAttrs supportedSystems (system: {
       benchmark-suite-shape = metadataPackage system "benchmark-suite-shape.json" benchmarkMetadata;

@@ -78,7 +78,7 @@ let
     lib.findFirst (run: run.configurationName == collector.system.config.benchmark.sut.metadata.pgo.optimizedConfiguration)
       (throw "Missing optimized PGO run for ${runName collector}") (lib.attrValues standardRuns);
   pgoProfileModule = collectorOutput: {
-    benchmark.sut.pgoDirectory = "${collectorOutput}";
+    benchmark.sut.pgoBuildDirectory = collectorOutput;
   };
   pgoSmokeTests = collector:
     let

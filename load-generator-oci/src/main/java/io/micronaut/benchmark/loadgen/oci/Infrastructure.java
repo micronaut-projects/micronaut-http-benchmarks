@@ -11,6 +11,7 @@ import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,6 +42,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final PhasedResource.PhaseLock hyperfoilLock;
     private final Map<String, NixosCacheResource> nixosConfigurations;
     private final Map<String, PhasedResource.PhaseLock> nixosConfigurationLocks;
+    private final Set<FrameworkRun.NixosConfiguration> configurations;
     private final OutputListener.Write benchmarkServerLog;
     private final TokenRoutingOutputListener benchmarkServerConsoleHistory;
     private boolean started;
@@ -49,6 +51,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private Infrastructure(Factory factory, OciLocation location, Path logDirectory, Set<FrameworkRun.NixosConfiguration> configurations) throws Exception {
         super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
+        this.configurations = Set.copyOf(Objects.requireNonNull(configurations, "configurations"));
         Files.createDirectories(logDirectory);
         benchmarkServerLog = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("benchmark-server.log")));
         benchmarkServerConsoleHistory = new TokenRoutingOutputListener(benchmarkServerLog);
@@ -57,7 +60,7 @@ public final class Infrastructure extends AbstractInfrastructure {
         hyperfoilLock = hyperfoilRunner.require();
         BenchmarkMetadata.InstanceType instanceType = factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE);
         Map<String, NixosCacheResource> resources = new LinkedHashMap<>();
-        for (FrameworkRun.NixosConfiguration configuration : Objects.requireNonNull(configurations, "configurations")) {
+        for (FrameworkRun.NixosConfiguration configuration : this.configurations) {
             resources.putIfAbsent(configuration.name(), factory.compute.cacheResource(instanceType, configuration));
         }
         resources.computeIfAbsent(BENCHMARK_BOOTSTRAP, name -> {
@@ -81,7 +84,24 @@ public final class Infrastructure extends AbstractInfrastructure {
 
         launch(hyperfoilRunner, hyperfoilRunner::manage);
 
-        List<NixosCacheResource> prefetchResources = prefetchResources();
+        List<NixCacheAccess> prefetchResources = prefetchResources();
+        Thread.ofVirtual()
+                .name("opportunistic-nix-cache-build")
+                .start(() -> {
+                    for (FrameworkRun.NixosConfiguration configuration : configurations) {
+                        if (configuration.dynamicPgo()) {
+                            continue;
+                        }
+                        try {
+                            NixCacheAccess cache = cacheAccess(configuration.name());
+                            LOG.info("Pre-building {}", cache.installable());
+                            factory.nix.buildAndUploadCache(new OutputListener.Log(LOG, Level.DEBUG), cache.writeUri(), cache.installable());
+                            LOG.info("Pre-build {} completed.", cache.installable());
+                        } catch (Exception e) {
+                            LOG.warn("Failed to locally realize and upload cache for {}", configuration.name(), e);
+                        }
+                    }
+                });
         Compute.Launch benchmarkServerLaunch = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE)
                 .privateIp(SERVER_IP)
                 .nixosConfiguration(nixosConfigurations.get(BENCHMARK_BOOTSTRAP))
@@ -108,12 +128,11 @@ public final class Infrastructure extends AbstractInfrastructure {
         started = true;
     }
 
-    private List<NixosCacheResource> prefetchResources() throws Exception {
-        List<NixosCacheResource> resources = new java.util.ArrayList<>();
+    private List<NixCacheAccess> prefetchResources() throws Exception {
+        List<NixCacheAccess> resources = new java.util.ArrayList<>();
         for (Map.Entry<String, NixosCacheResource> entry : nixosConfigurations.entrySet()) {
             if (!entry.getKey().equals(BENCHMARK_BOOTSTRAP)) {
-                nixosConfigurationLocks.get(entry.getKey()).await();
-                resources.add(entry.getValue());
+                resources.add(cacheAccess(entry.getKey()));
             }
         }
         return List.copyOf(resources);
@@ -228,8 +247,7 @@ public final class Infrastructure extends AbstractInfrastructure {
         }
     }
 
-    private void activate(OutputListener.Write log, String configuration, PhaseTracker.PhaseUpdater progress) throws Exception {
-        stopPrefetch();
+    private NixCacheAccess cacheAccess(String configuration) throws Exception {
         NixosCacheResource resource = nixosConfigurations.get(configuration);
         if (resource == null) {
             throw new IllegalArgumentException("NixOS configuration was not prepared: " + configuration);
@@ -239,16 +257,32 @@ public final class Infrastructure extends AbstractInfrastructure {
             throw new IllegalArgumentException("NixOS configuration lock was not prepared: " + configuration);
         }
         lock.await();
-        progress.update(configuration.equals(BENCHMARK_BOOTSTRAP)
+        return resource.cacheAccess();
+    }
+
+    private void activate(OutputListener.Write log, FrameworkRun.Activation request) throws Exception {
+        stopPrefetch();
+        NixCacheAccess cache = cacheAccess(request.configuration());
+        activate(log, request, cache);
+    }
+
+    private void activate(OutputListener.Write log, FrameworkRun.Activation request, NixCacheAccess cache) throws Exception {
+        request.progress().update(request.configuration().equals(BENCHMARK_BOOTSTRAP)
                 ? BenchmarkPhase.RESTORING_BOOTSTRAP
                 : BenchmarkPhase.ACTIVATING_CONFIGURATION);
-        log.println("----------------- NixOS deployment target: " + configuration);
+        log.println("----------------- NixOS deployment target: " + request.configuration());
         retry(() -> {
             try (CommandRunner client = benchmarkServer.connectSsh()) {
-                client.runAndCheck(resource.activation(), log);
+                client.runAndCheck(Nix.activate(cache.readUri(), request.derivation()), log);
             }
             return null;
         });
+    }
+
+    private void activate(OutputListener.Write log, String configuration, PhaseTracker.PhaseUpdater progress) throws Exception {
+        stopPrefetch();
+        NixCacheAccess cache = cacheAccess(configuration);
+        activate(log, FrameworkRun.Activation.defaultFor(configuration, cache, progress), cache);
     }
 
     private void run0(OutputListener.Write log, Path outputDirectory, FrameworkRun run, LoadVariant loadVariant,
@@ -278,7 +312,17 @@ public final class Infrastructure extends AbstractInfrastructure {
                                  outputDirectory,
                                  log,
                                  hyperfoilRunner.benchmarkClosure(outputDirectory, loadVariant.protocol(), loadVariant.definition()),
-                                 (configuration, activationProgress) -> activate(log, configuration, activationProgress),
+                                 new FrameworkRun.ConfigurationActivator() {
+                                     @Override
+                                     public NixCacheAccess resolve(String configuration) throws Exception {
+                                         return Infrastructure.this.cacheAccess(configuration);
+                                     }
+
+                                     @Override
+                                     public void activate(FrameworkRun.Activation request) throws Exception {
+                                         Infrastructure.this.activate(log, request);
+                                     }
+                                 },
                                  finalProgress);
                         return null;
                     }
@@ -296,6 +340,7 @@ public final class Infrastructure extends AbstractInfrastructure {
             AbstractInfrastructure.Factory baseFactory,
             ResourceContext context,
             Compute compute,
+            Nix nix,
             HyperfoilRunner.Factory hyperfoilRunnerFactory,
             SutMonitor sutMonitor,
             List<Attachment> attachments

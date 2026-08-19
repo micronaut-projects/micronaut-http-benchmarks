@@ -37,7 +37,7 @@ public interface FrameworkRun {
 
     List<NixosConfiguration> nixosConfigurations();
 
-    record NixosConfiguration(String name, boolean profileDependent) {
+    record NixosConfiguration(String name, boolean dynamicPgo) {
     }
 
     /**
@@ -58,9 +58,16 @@ public interface FrameworkRun {
             ConfigurationActivator configurationActivator,
             PhaseTracker.PhaseUpdater progress) throws Exception;
 
-    @FunctionalInterface
     interface ConfigurationActivator {
-        void activate(String configuration, PhaseTracker.PhaseUpdater progress) throws Exception;
+        NixCacheAccess resolve(String configuration) throws Exception;
+
+        void activate(Activation request) throws Exception;
+    }
+
+    record Activation(String configuration, String derivation, PhaseTracker.PhaseUpdater progress) {
+        static Activation defaultFor(String configuration, NixCacheAccess cache, PhaseTracker.PhaseUpdater progress) {
+            return new Activation(configuration, cache.defaultDerivation(), progress);
+        }
     }
 
     /**

@@ -289,8 +289,7 @@ public final class Compute {
                 computeConfiguration.storageBucketNamespace,
                 computeConfiguration.storageBucketName,
                 "nixos-cache",
-                installable,
-                configuration.profileDependent()
+                installable
         );
     }
 
@@ -511,7 +510,8 @@ public final class Compute {
                     userDataScript += "echo '" + Base64.getEncoder().encodeToString(entry.getValue()) + "' | base64 -d > " + entry.getKey() + "\n";
                 }
                 if (launch.nixosConfiguration != null) {
-                    userDataScript += launch.nixosConfiguration.activation();
+                    NixCacheAccess cache = launch.nixosConfiguration.cacheAccess();
+                    userDataScript += Nix.activate(cache.readUri(), cache.defaultDerivation());
                 }
                 userDataScript += "systemctl start benchmark-role-ready.target\n";
 

@@ -3,19 +3,28 @@ package io.micronaut.benchmark.loadgen.oci;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import jakarta.inject.Singleton;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 import tools.jackson.databind.JsonNode;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 
 @Singleton
 public final class NixRunSet implements FrameworkRunSet {
     private static final String SUT_SERVICE = "sut.service";
+    private static final Logger LOG = LoggerFactory.getLogger(NixRunSet.class);
 
     private final List<NixFrameworkRun> runs;
 
-    public NixRunSet(BenchmarkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper) {
-        runs = metadata.suite().runs().stream().map(run -> new NixFrameworkRun(run, asyncProfilerHelper)).toList();
+    public NixRunSet(BenchmarkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper, Nix nix) {
+        runs = metadata.suite().runs().stream().map(run -> new NixFrameworkRun(run, asyncProfilerHelper, nix)).toList();
     }
 
     @Override
@@ -23,7 +32,7 @@ public final class NixRunSet implements FrameworkRunSet {
         return runs;
     }
 
-    private record NixFrameworkRun(NixFrameworkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper) implements FrameworkRun {
+    private record NixFrameworkRun(NixFrameworkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper, Nix nix) implements FrameworkRun {
         @Override
         public String type() {
             return metadata.type();
@@ -64,7 +73,15 @@ public final class NixRunSet implements FrameworkRunSet {
                 } finally {
                     benchmarkServerClient.runAndCheck("systemctl stop -- " + SUT_SERVICE, log);
                 }
-                configurationActivator.activate(pgo.optimizedConfiguration(), progress);
+                Path localPgoDirectory = outputDirectory.resolve("pgo");
+                deleteRecursively(localPgoDirectory);
+                benchmarkServerClient.downloadRecursive(pgo.pgoDirectory(), localPgoDirectory);
+                NixCacheAccess cache = configurationActivator.resolve(pgo.optimizedConfiguration());
+                OutputListener pgoLog = new OutputListener.Log(LOG, Level.INFO);
+                Path pgoStorePath = nix.addStorePath(pgoLog, localPgoDirectory);
+                String pgoDerivation = nix.evaluatePgoDerivation(pgoLog, pgo.optimizedConfiguration(), pgoStorePath);
+                nix.uploadPgoCache(pgoLog, cache.writeUri(), pgoStorePath, pgoDerivation);
+                configurationActivator.activate(new Activation(pgo.optimizedConfiguration(), pgoDerivation, progress));
                 progress.update(BenchmarkPhase.STARTING_SERVER);
             }
             benchmarkServerClient.runAndCheck("systemctl restart -- " + SUT_SERVICE, log);
@@ -78,10 +95,32 @@ public final class NixRunSet implements FrameworkRunSet {
             }
         }
     }
+
+    private static void deleteRecursively(Path directory) throws IOException {
+        if (!Files.exists(directory)) {
+            return;
+        }
+        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path path, IOException failure) throws IOException {
+                if (failure != null) {
+                    throw failure;
+                }
+                Files.delete(path);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
 }
 
 record NixFrameworkMetadata(String type, String name, JsonNode parameters, String nixosConfiguration,
                             boolean asyncProfiler, PgoMetadata pgo) {
-    record PgoMetadata(String optimizedConfiguration) {
+    record PgoMetadata(String optimizedConfiguration, String pgoDirectory) {
     }
 }

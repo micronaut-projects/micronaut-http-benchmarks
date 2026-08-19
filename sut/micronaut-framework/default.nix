@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   codec = config.micronaut-framework.codec;
-  pgoDirectory = config.benchmark.sut.pgoDirectory;
+  pgoDirectory = if config.benchmark.sut.pgoBuildDirectory == null then config.benchmark.sut.pgoDirectory else config.benchmark.sut.pgoBuildDirectory;
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
   package =
@@ -43,8 +43,8 @@ let
         gradle ${finalAttrs.gradleBuildTask} -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
       '';
       gradleFlags = [ "-Pcodec=${codec}" ] ++ finalAttrs.nativeGradleFlags;
-      nativeBuildInputs = [ gradle pkgs.makeWrapper ];
-      __noChroot = runtime == "native-pgo" && pgoDirectory == "/var/lib/sut/pgo";
+      nativeBuildInputs = [ gradle pkgs.makeWrapper ] ++ lib.optional (config.benchmark.sut.pgoBuildDirectory != null) config.benchmark.sut.pgoBuildDirectory;
+      __noChroot = runtime == "native-pgo" && config.benchmark.sut.pgoBuildDirectory == null;
       doCheck = false;
 
       installPhase = ''
