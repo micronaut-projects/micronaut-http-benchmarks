@@ -13,7 +13,7 @@ let
       ];
     };
 
-    mvnHash = "sha256-JOXrtGDOPFLJ2WXaaEdcavo9H2r6OJAlgvDcduV45Tk=";
+    mvnHash = "sha256-U9tr15a/1CJVgHOWPvEbV1p7nIab1idj5lEHlCJaraI=";
 
     mvnJdk = runtimeInfo.buildPackage;
 

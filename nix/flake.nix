@@ -107,6 +107,15 @@
       modules = [ ./system/oci-bootstrap.nix ];
     };
     ociBootstrapImage = system: (mkOciBootstrapImage system).config.system.build.image;
+    relayAgent = system: (mkHost {
+      inherit system;
+      definition = ./system/relay-server.nix;
+    }).config.system.build.relay-agent;
+    maintenanceSut = system: name: runtime:
+      (lib.nixosSystem {
+        inherit system;
+        modules = [ ./system/run.nix { imports = [ (../sut + "/${name}") ]; benchmark.sut.runtime = runtime; } ];
+      }).config.benchmark.sut.package;
     roleMetadata = role: (mkHost {
       system = "x86_64-linux";
       definition = role.definition;
@@ -160,6 +169,13 @@
       {
         oci-bootstrap-image = ociBootstrapImage system;
         benchmark-metadata = metadataPackage system "benchmark-metadata.json" benchmarkMetadata;
+        relay-agent = relayAgent system;
+        update-micronaut-framework = maintenanceSut system "micronaut-framework" "native";
+        update-pure-netty = maintenanceSut system "pure-netty" "hotspot";
+        update-quarkus = maintenanceSut system "quarkus" "native";
+        update-vertx = maintenanceSut system "vertx" "hotspot";
+        update-helidon-nima = maintenanceSut system "helidon-nima" "hotspot";
+        update-spring-boot = maintenanceSut system "spring-boot" "hotspot";
       }
       // lib.listToAttrs (map rolePackage activatableRoles)
       // lib.listToAttrs (map runPackage systemRuns);

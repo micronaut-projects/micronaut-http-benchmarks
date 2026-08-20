@@ -1,5 +1,9 @@
 { pkgs, lib, ... }:
 let
+  gradle = pkgs.gradle_9.override {
+    java = pkgs.jdk25_headless;
+    javaToolchains = [ pkgs.jdk25_headless ];
+  };
   relayAgent = pkgs.stdenv.mkDerivation (finalAttrs: {
     pname = "relay-agent";
     version = "unstable";
@@ -10,18 +14,19 @@ let
     };
 
     nativeBuildInputs = [
-      pkgs.jdk25_headless
+      gradle
       pkgs.makeWrapper
     ];
 
-    __noChroot = true;
+    mitmCache = gradle.fetchDeps {
+      pkg = finalAttrs.finalPackage;
+      data = ./relay-agent-deps.json;
+      silent = false;
+      useBwrap = false;
+    };
 
-    buildPhase = ''
-      runHook preBuild
-      export GRADLE_USER_HOME="$TMPDIR/gradle"
-      ./gradlew --no-daemon :relay-agent:installDist
-      runHook postBuild
-    '';
+    gradleBuildTask = ":relay-agent:installDist";
+    gradleUpdateTask = finalAttrs.gradleBuildTask;
 
     installPhase = ''
       mkdir -p "$out/bin" "$out/share/relay-agent"

@@ -79,9 +79,9 @@ public final class NixRunSet implements FrameworkRunSet {
                 NixCacheAccess cache = configurationActivator.resolve(pgo.optimizedConfiguration());
                 OutputListener pgoLog = new OutputListener.Log(LOG, Level.INFO);
                 Path pgoStorePath = nix.addStorePath(pgoLog, localPgoDirectory);
-                String pgoDerivation = nix.evaluatePgoDerivation(pgoLog, pgo.optimizedConfiguration(), pgoStorePath);
-                nix.uploadPgoCache(pgoLog, cache.writeUri(), pgoStorePath, pgoDerivation);
-                configurationActivator.activate(new Activation(pgo.optimizedConfiguration(), pgoDerivation, progress));
+                Path pgoOutput = nix.buildPgoOutput(pgoLog, pgo.optimizedConfiguration(), pgoStorePath);
+                nix.uploadOutputCache(pgoLog, cache.writeUri(), pgoOutput);
+                configurationActivator.activate(new Activation(pgo.optimizedConfiguration(), pgoOutput.toString(), progress));
                 progress.update(BenchmarkPhase.STARTING_SERVER);
             }
             benchmarkServerClient.runAndCheck("systemctl restart -- " + SUT_SERVICE, log);

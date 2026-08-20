@@ -2,6 +2,39 @@
 let
   serialTty = if pkgs.stdenv.hostPlatform.isAarch64 then "ttyAMA0" else "ttyS0";
   serialDevice = "/dev/${serialTty}";
+  benchmarkNixActivate = pkgs.writeShellScriptBin "benchmark-nix-activate" ''
+    set -e
+
+    if [ "$#" -ne 2 ]; then
+      printf '%s\n' 'usage: benchmark-nix-activate CACHE_URI OUTPUT_PATH' >&2
+      exit 2
+    fi
+
+    cache_uri=$1
+    output=$2
+    case "$output" in
+      /nix/store/*) ;;
+      *) printf '%s\n' "invalid Nix store output path: $output" >&2; exit 2 ;;
+    esac
+    output_component=''${output#/nix/store/}
+    case "$output_component" in
+      ""|.|..|*/*|*.drv) printf '%s\n' "invalid Nix store output path: $output" >&2; exit 2 ;;
+    esac
+
+    deadline=$((SECONDS + 840))
+    activation_start=$SECONDS
+    printf '%s %ss %s\n' "$(${pkgs.coreutils}/bin/date -Is)" "$SECONDS" 'nix cache copy start'
+    while ! ${pkgs.nix}/bin/nix --extra-experimental-features nix-command --extra-experimental-features flakes copy --no-check-sigs --from "$cache_uri" "$output"; do
+      if [ "$SECONDS" -ge "$deadline" ]; then exit 1; fi
+      printf '%s %ss %s\n' "$(${pkgs.coreutils}/bin/date -Is)" "$SECONDS" 'nix cache copy retry'
+      ${pkgs.coreutils}/bin/sleep 5
+    done
+    printf '%s %ss %ss %s\n' "$(${pkgs.coreutils}/bin/date -Is)" "$SECONDS" "$((SECONDS - activation_start))" 'nix cache copy complete'
+    switch_start=$SECONDS
+    printf '%s %ss %s\n' "$(${pkgs.coreutils}/bin/date -Is)" "$SECONDS" 'nix activation start'
+    "$output/bin/switch-to-configuration" switch
+    printf '%s %ss %ss %s\n' "$(${pkgs.coreutils}/bin/date -Is)" "$SECONDS" "$((SECONDS - switch_start))" 'nix activation complete'
+  '';
 in
 {
   nixpkgs.config.allowUnfree = true;
@@ -96,4 +129,7 @@ in
   nix.settings.sandbox = "relaxed";
 
   environment.enableAllTerminfo = true;
+  environment.systemPackages = [
+    benchmarkNixActivate
+  ];
 }

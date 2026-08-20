@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+flake="git+file://$root?dir=nix"
+system=x86_64-linux
+nix=(nix --extra-experimental-features 'nix-command flakes')
+export NIXPKGS_ALLOW_UNFREE=1
+
+cd "$root"
+for file in nix/system/relay-agent-deps.json sut/micronaut-framework/deps.json; do
+  git ls-files --error-unmatch -- "$file" >/dev/null || {
+    printf 'tracked file required: %s\n' "$file" >&2
+    exit 1
+  }
+done
+
+update_gradle() {
+  local package=$1 script
+  printf 'Updating Gradle dependencies: %s\n' "$package"
+  script=$("${nix[@]}" eval --impure --raw "$flake#packages.$system.$package.mitmCache.updateScript")
+  "${nix[@]}" build --impure --no-link "$flake#packages.$system.$package.mitmCache.updateScript"
+  "$script"
+}
+
+update_maven() {
+  local name=$1 file="sut/$1/default.nix" attr log original hash backup_active=0
+  attr="packages.$system.update-$name.fetchedMavenDeps"
+  [ "$(rg -c '^[[:blank:]]*mvnHash[[:blank:]]*=' "$file")" -eq 1 ] || {
+    printf 'expected exactly one mvnHash in %s\n' "$file" >&2
+    exit 1
+  }
+  printf 'Updating Maven dependencies: %s\n' "$name"
+  cleanup() {
+    if [ "$backup_active" -eq 1 ] && [ -n "${original:-}" ] && [ -f "$original" ]; then
+      cp "$original" "$file"
+    fi
+    rm -f "${log:-}" "${original:-}"
+  }
+  on_exit() {
+    local status=$1
+    trap - EXIT INT TERM
+    cleanup
+    exit "$status"
+  }
+  trap 'on_exit "$?"' EXIT
+  trap 'on_exit 130' INT
+  trap 'on_exit 143' TERM
+  original=$(mktemp)
+  cp "$file" "$original"
+  backup_active=1
+  perl -0pi -e 's/^[ \t]*mvnHash[ \t]*=[ \t]*"[^"]*";/    mvnHash = "";/m' "$file"
+  log=$(mktemp)
+  if "${nix[@]}" build --impure --refresh -L --no-link "$flake#$attr" >"$log" 2>&1; then
+    printf 'empty mvnHash did not produce a fixed-output mismatch for %s\n' "$name" >&2
+    exit 1
+  fi
+  cp "$original" "$file"
+  hash=$(rg -o 'got:[[:space:]]+sha256-[^[:space:]]+' "$log" | tail -n 1 | awk '{ print $2 }') || {
+    printf 'no Maven hash captured for %s\n' "$name" >&2
+    exit 1
+  }
+  perl -0pi -e "s{^[ \t]*mvnHash[ \t]*=[ \t]*\"[^\"]*\";}{    mvnHash = \"$hash\";}m" "$file"
+  backup_active=0
+  trap - EXIT INT TERM
+  rm -f "$log" "$original"
+}
+
+update_gradle relay-agent
+update_gradle update-micronaut-framework
+for sut in pure-netty quarkus vertx helidon-nima spring-boot; do update_maven "$sut"; done

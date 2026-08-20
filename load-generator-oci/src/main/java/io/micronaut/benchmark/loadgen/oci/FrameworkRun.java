@@ -64,10 +64,7 @@ public interface FrameworkRun {
         void activate(Activation request) throws Exception;
     }
 
-    record Activation(String configuration, String derivation, PhaseTracker.PhaseUpdater progress) {
-        static Activation defaultFor(String configuration, NixCacheAccess cache, PhaseTracker.PhaseUpdater progress) {
-            return new Activation(configuration, cache.defaultDerivation(), progress);
-        }
+    record Activation(String configuration, String output, PhaseTracker.PhaseUpdater progress) {
     }
 
     /**

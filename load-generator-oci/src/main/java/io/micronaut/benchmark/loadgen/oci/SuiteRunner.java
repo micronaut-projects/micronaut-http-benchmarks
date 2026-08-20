@@ -16,12 +16,10 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
-import java.util.stream.Collectors;
 
 /**
  * Main runner for the benchmark suite.
@@ -73,83 +71,91 @@ public final class SuiteRunner {
         clean();
 
         List<LoadVariant> loadVariants = loadManager.getLoadVariants();
-        List<FrameworkRun> enabledRuns = runs;
-        Set<FrameworkRun.NixosConfiguration> enabledConfigurations = enabledRuns.stream()
-                .flatMap(run -> run.nixosConfigurations().stream())
-                .collect(Collectors.toUnmodifiableSet());
-        // all benchmark tasks (all FrameworkRuns * all LoadVariants * number of reps)
-        List<Callable<Void>> allTasks = new ArrayList<>();
-        // benchmark index
+        List<BenchmarkSpec> benchmarkSpecs = new ArrayList<>();
         List<BenchmarkParameters> index = new ArrayList<>();
-        // for REUSE mode, the shared infrastructures for each repetition
-        List<Infrastructure> sharedInfra = new ArrayList<>();
         PhaseTracker phaseTracker = new PhaseTracker(objectMapper, outputDir);
         Semaphore semaphore = new Semaphore(suiteConfiguration.maxConcurrentRuns);
         for (int repetition = 0; repetition < suiteConfiguration.repetitions; repetition++) {
             OciLocation location = locations.get(repetition % locations.size());
-            Infrastructure repInfra;
-            if (suiteConfiguration.infrastructureMode == InfrastructureMode.REUSE) {
-                // create the shared infrastructure for this repetition
-                repInfra = infraFactory.create(location, outputDir.resolve("infra-" + repetition), enabledConfigurations);
-                sharedInfra.add(repInfra);
-            } else {
-                repInfra = null;
-            }
-            // iterate over all runs, and fill the allTasks list
-            for (FrameworkRun run : enabledRuns) {
+            for (FrameworkRun run : runs) {
                 for (LoadVariant loadVariant : loadVariants) {
-                        String name = run.name() + "-" + loadVariant.name() + "-" + repetition;
-                        index.add(new BenchmarkParameters(
-                                name,
-                                run.type(),
-                                run.parameters(),
-                                loadVariant,
-                                repetition,
-                                infraFactory.compute().getInstanceType(Infrastructure.BENCHMARK_SERVER_INSTANCE_TYPE)
-                        ));
-                        PhaseTracker.PhaseUpdater phaseUpdater = phaseTracker.updater(name);
-                        phaseUpdater.update(BenchmarkPhase.QUEUED);
-                        Path out = outputDir.resolve(name);
-                        allTasks.add(() -> {
-                            MdcTracker.withMdc(name, () -> {
-                                // we could use a child compartment here, but compartments seem to be heavily throttled
-                                try {
-                                    if (suiteConfiguration.infrastructureMode == InfrastructureMode.REUSE) {
-                                        assert repInfra != null;
-                                        // run() is synchronized, so this will wait until the infra is available for
-                                        // running this benchmark.
-                                        repInfra.run(out, run, loadVariant, phaseUpdater);
-                                        phaseUpdater.update(BenchmarkPhase.DONE);
-                                    } else {
-                                        semaphore.acquire();
-                                        // create a new infra just for us.
-                                        try (Infrastructure infra = infraFactory.create(location, out, Set.copyOf(run.nixosConfigurations()))) {
-                                            infra.run(out, run, loadVariant, phaseUpdater);
-                                            phaseUpdater.update(BenchmarkPhase.SHUTTING_DOWN);
-                                        }
-                                        phaseUpdater.update(BenchmarkPhase.DONE);
-                                        semaphore.release();
-                                    }
-                                } catch (Exception e) {
-                                    phaseUpdater.update(BenchmarkPhase.FAILED);
-                                    Throwable root = e;
-                                    while (root.getCause() != null) {
-                                        root = root.getCause();
-                                    }
-                                    if (root instanceof InterruptedException) {
-                                        LOG.info("Benchmark interrupted", e);
-                                    } else {
-                                        LOG.error("Failed to run benchmark", e);
-                                    }
-                                    executor.shutdownNow();
-                                }
-                                return null;
-                            });
-                            return null;
-                        });
+                    String name = run.name() + "-" + loadVariant.name() + "-" + repetition;
+                    index.add(new BenchmarkParameters(
+                            name,
+                            run.type(),
+                            run.parameters(),
+                            loadVariant,
+                            repetition,
+                            infraFactory.compute().getInstanceType(Infrastructure.BENCHMARK_SERVER_INSTANCE_TYPE)
+                    ));
+                    PhaseTracker.PhaseUpdater phaseUpdater = phaseTracker.updater(name);
+                    phaseUpdater.update(BenchmarkPhase.QUEUED);
+                    benchmarkSpecs.add(new BenchmarkSpec(repetition, location, run, loadVariant, name,
+                            outputDir.resolve(name), phaseUpdater));
                 }
             }
         }
+        Collections.shuffle(benchmarkSpecs);
+
+        Infrastructure[] sharedInfrastructure;
+        if (suiteConfiguration.infrastructureMode == InfrastructureMode.REUSE) {
+            sharedInfrastructure = new Infrastructure[suiteConfiguration.repetitions];
+            for (int repetition = 0; repetition < suiteConfiguration.repetitions; repetition++) {
+                List<FrameworkRun.NixosConfiguration> configurations = new ArrayList<>();
+                for (BenchmarkSpec benchmarkSpec : benchmarkSpecs) {
+                    if (benchmarkSpec.repetition() == repetition) {
+                        configurations.addAll(benchmarkSpec.run().nixosConfigurations());
+                    }
+                }
+                sharedInfrastructure[repetition] = infraFactory.create(
+                        locations.get(repetition % locations.size()),
+                        outputDir.resolve("infra-" + repetition),
+                        configurations
+                );
+            }
+        } else {
+            sharedInfrastructure = null;
+        }
+
+        List<Callable<Void>> allTasks = benchmarkSpecs.stream()
+                .<Callable<Void>>map(benchmarkSpec -> () -> {
+                    MdcTracker.withMdc(benchmarkSpec.name(), () -> {
+                        // we could use a child compartment here, but compartments seem to be heavily throttled
+                        try {
+                            if (suiteConfiguration.infrastructureMode == InfrastructureMode.REUSE) {
+                                sharedInfrastructure[benchmarkSpec.repetition()].run(
+                                        benchmarkSpec.output(), benchmarkSpec.run(), benchmarkSpec.loadVariant(), benchmarkSpec.phaseUpdater());
+                                benchmarkSpec.phaseUpdater().update(BenchmarkPhase.DONE);
+                            } else {
+                                semaphore.acquire();
+                                // create a new infra just for us.
+                                try (Infrastructure infra = infraFactory.create(
+                                        benchmarkSpec.location(), benchmarkSpec.output(),
+                                        List.copyOf(benchmarkSpec.run().nixosConfigurations()))) {
+                                    infra.run(benchmarkSpec.output(), benchmarkSpec.run(), benchmarkSpec.loadVariant(), benchmarkSpec.phaseUpdater());
+                                    benchmarkSpec.phaseUpdater().update(BenchmarkPhase.SHUTTING_DOWN);
+                                }
+                                benchmarkSpec.phaseUpdater().update(BenchmarkPhase.DONE);
+                                semaphore.release();
+                            }
+                        } catch (Exception e) {
+                            benchmarkSpec.phaseUpdater().update(BenchmarkPhase.FAILED);
+                            Throwable root = e;
+                            while (root.getCause() != null) {
+                                root = root.getCause();
+                            }
+                            if (root instanceof InterruptedException) {
+                                LOG.info("Benchmark interrupted", e);
+                            } else {
+                                LOG.error("Failed to run benchmark", e);
+                            }
+                            executor.shutdownNow();
+                        }
+                        return null;
+                    });
+                    return null;
+                })
+                .toList();
         Future<?> progressTask = executor.submit(() -> {
             try {
                 phaseTracker.trackLoop();
@@ -157,7 +163,6 @@ public final class SuiteRunner {
                 LOG.error("Error in phase tracker", e);
             }
         });
-        Collections.shuffle(allTasks);
         LOG.info("There are {} benchmarks to run", allTasks.size());
         Path newIndex = outputDir.resolve("index.new.json");
         objectMapper.writeValue(newIndex.toFile(), index);
@@ -169,11 +174,15 @@ public final class SuiteRunner {
                 future.get();
             }
         } finally {
-            for (Infrastructure infrastructure : sharedInfra) {
-                try {
-                    infrastructure.close();
-                } catch (Exception e) {
-                    LOG.error("Failed to close shared infrastructure", e);
+            if (sharedInfrastructure != null) {
+                for (Infrastructure infrastructure : sharedInfrastructure) {
+                    if (infrastructure != null) {
+                        try {
+                            infrastructure.close();
+                        } catch (Exception e) {
+                            LOG.error("Failed to close shared infrastructure", e);
+                        }
+                    }
                 }
             }
             for (OciLocation location : locations) {
@@ -184,6 +193,17 @@ public final class SuiteRunner {
         Files.move(newIndex, outputDir.resolve("index.json"), StandardCopyOption.REPLACE_EXISTING);
         LOG.info("All benchmarks complete");
         System.exit(0);
+    }
+
+    private record BenchmarkSpec(
+            int repetition,
+            OciLocation location,
+            FrameworkRun run,
+            LoadVariant loadVariant,
+            String name,
+            Path output,
+            PhaseTracker.PhaseUpdater phaseUpdater
+    ) {
     }
 
     /**
