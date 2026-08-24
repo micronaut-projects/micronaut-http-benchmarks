@@ -22,12 +22,15 @@
       micronaut-native = { imports = [ ../../sut/micronaut-framework ]; benchmark.sut.runtime = "native"; };
       micronaut-pgo = { imports = [ ../../sut/micronaut-framework ]; benchmark.sut.runtime = "native-pgo"; };
       pure-netty.imports = [ ../../sut/pure-netty ];
-      helidon-nima.imports = [ ../../sut/helidon-nima ];
-      spring-boot.imports = [ ../../sut/spring-boot ];
-      quarkus.imports = [ ../../sut/quarkus ];
-      quarkus-native = { imports = [ ../../sut/quarkus ]; benchmark.sut.runtime = "native"; };
-      quarkus-pgo = { imports = [ ../../sut/quarkus ]; benchmark.sut.runtime = "native-pgo"; };
-      vertx.imports = [ ../../sut/vertx ];
+      #helidon-nima.imports = [ ../../sut/helidon-nima ];
+      #spring-boot.imports = [ ../../sut/spring-boot ];
+      #quarkus.imports = [ ../../sut/quarkus ];
+      #quarkus-native = { imports = [ ../../sut/quarkus ]; benchmark.sut.runtime = "native"; };
+      #quarkus-pgo = { imports = [ ../../sut/quarkus ]; benchmark.sut.runtime = "native-pgo"; };
+      flask-gunicorn.imports = [ ../../sut/flask-gunicorn ];
+      #django-gunicorn.imports = [ ../../sut/django-gunicorn ];
+      emmett-granian.imports = [ ../../sut/emmett-granian ];
+      #vertx.imports = [ ../../sut/vertx ];
     };
     asyncProfiler = {
       enable = true;

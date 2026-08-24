@@ -1,0 +1,5 @@
+SECRET_KEY = "benchmark"
+ROOT_URLCONF = "urls"
+ALLOWED_HOSTS = ["*"]
+MIDDLEWARE = []
+INSTALLED_APPS = []

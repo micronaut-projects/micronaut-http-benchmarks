@@ -6,12 +6,17 @@ let
     let
       runtime = cfg.sut.runtime;
       isJvm = runtime == "hotspot";
+      isNative = runtime == "native" || runtime == "native-pgo-instrument" || runtime == "native-pgo";
       isPgo = runtime == "native-pgo-instrument" || runtime == "native-pgo";
       toolchain = if isJvm then cfg.toolchains.java else cfg.toolchains.graalvm;
-    in {
+    in if runtime == "python" then {
+      buildPackage = pkgs.python3;
+      inherit isJvm isNative isPgo;
+      label = "python";
+      displayName = "Nix-packaged Python ${pkgs.python3.version}";
+    } else {
       buildPackage = toolchain.package;
-      inherit isJvm isPgo;
-      isNative = !isJvm;
+      inherit isJvm isNative isPgo;
       label = if isPgo then "${toolchain.metadataLabel}-pgo" else toolchain.metadataLabel;
       displayName = "${toolchain.displayName}${lib.optionalString (!isJvm) " native image"}${lib.optionalString isPgo " PGO"}";
     };
@@ -85,7 +90,7 @@ in {
 
     sut = {
       runtime = mkOption {
-        type = types.enum [ "hotspot" "native" "native-pgo-instrument" "native-pgo" ];
+        type = types.enum [ "hotspot" "native" "native-pgo-instrument" "native-pgo" "python" ];
         default = "hotspot";
       };
       runtimeInfo = mkOption {
@@ -126,6 +131,12 @@ in {
       description = mkOption {
         type = types.nullOr types.str;
         default = null;
+      };
+
+      tlsHttp2 = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Whether the SUT serves HTTP/2 over TLS on port 8443.";
       };
 
       environment = mkOption {
@@ -264,6 +275,7 @@ in {
         Restart = "no";
         StandardOutput = "journal";
         StandardError = "journal";
+        LimitNOFILE = 65536;
         TimeoutStartSec = 130;
       };
     };

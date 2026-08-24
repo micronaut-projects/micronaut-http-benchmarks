@@ -176,6 +176,7 @@
         update-vertx = maintenanceSut system "vertx" "hotspot";
         update-helidon-nima = maintenanceSut system "helidon-nima" "hotspot";
         update-spring-boot = maintenanceSut system "spring-boot" "hotspot";
+        update-pyronaut = (maintenanceSut system "pyronaut" "hotspot").bootstrap;
       }
       // lib.listToAttrs (map rolePackage activatableRoles)
       // lib.listToAttrs (map runPackage systemRuns);
