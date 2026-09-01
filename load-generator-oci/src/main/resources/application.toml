@@ -53,12 +53,6 @@ max-concurrent-captures=4
 [hyperfoil]
 agent-count=2
 
-warmup-duration="1m"
-pgo-duration="2m"
-session-limit-factor=2
-# duration per ops/s benchmark
-benchmark-duration="2m"
-
 [perf-stat]
 enabled=false
 interval="5s"

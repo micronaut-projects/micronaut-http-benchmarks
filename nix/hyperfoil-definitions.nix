@@ -1,10 +1,9 @@
 { config, lib, ... }@moduleArgs:
 let
-  inherit (lib) mkOption types;
-  benchmarkTypes = import ./suites/types.nix { inherit lib; };
+  mkOption = lib.mkOption;
+  types = lib.types;
+  benchmarkTypes = import ./suites/types.nix { lib = lib; };
   suiteName = moduleArgs.suiteName or null;
-  placeholderPrefix = "@@HYPERFOIL_";
-  placeholder = name: "${placeholderPrefix}${name}@@";
   statusArtifactName = "_status";
   validArtifactComponent = name: builtins.match "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" name != null;
   port = types.addCheck types.int (value: value > 0 && value <= 65535);
@@ -29,7 +28,10 @@ let
   };
   render = requestConfig:
     let
-      inherit (requestConfig) mode protocol request target;
+      mode = requestConfig.mode;
+      protocol = requestConfig.protocol;
+      request = requestConfig.request;
+      target = requestConfig.target;
       targetSettings = if protocol.protocol == "HTTP1" then {
         url = target.httpUrl;
         authority = "${target.httpAuthority}:${toString target.httpPort}";
@@ -49,20 +51,23 @@ let
           method = if request.method == null then "GET" else request.method;
           authority = targetSettings.authority;
           path = request.uri;
-        headers = requestHeaders // optionalAttrs { "content-type" = request.requestType; };
+          headers = requestHeaders // optionalAttrs { "content-type" = request.requestType; };
           sync = true;
         } // optionalAttrs { body = request.requestBody; }
           // lib.optionalAttrs withSla { sla = { limits = protocol.sla; }; }
-          // lib.optionalAttrs (handler != null) { inherit handler; };
+          // lib.optionalAttrs (handler != null) { handler = handler; };
       };
       scenario = { withSla, handler }: {
-        initialSequences = [{ test = [ (requestStep { inherit withSla handler; }) ]; }];
+        initialSequences = [{ test = [ (requestStep { withSla = withSla; handler = handler; }) ]; }];
       };
       http = {
         host = targetSettings.url;
         port = targetSettings.port;
-        inherit (targetSettings) allowHttp1x allowHttp2;
-        inherit (protocol) sharedConnections pipeliningLimit maxHttp2Streams;
+        allowHttp1x = targetSettings.allowHttp1x;
+        allowHttp2 = targetSettings.allowHttp2;
+        sharedConnections = protocol.sharedConnections;
+        pipeliningLimit = protocol.pipeliningLimit;
+        maxHttp2Streams = protocol.maxHttp2Streams;
         connectionStrategy = "SHARED_POOL";
         sslHandshakeTimeout = "1m";
         useHttpCache = false;
@@ -84,42 +89,47 @@ let
           else if request.responseMatchingMode == "REGEX" then { regex = request.responseBody; }
           else { json = request.responseBody; };
       };
-      mainPhases = [{
+    in if mode == "local" then {
+      name = "local-${protocol.protocol}-${request.name}";
+      failurePolicy = "CANCEL";
+      http = http // { requestTimeout = "30s"; };
+      phases = [{ local.atOnce = { users = 1; scenario = scenario { withSla = false; handler = responseHandler; }; }; }];
+    } else
+      let
+        warmupDuration = config.benchmark.hyperfoil.warmupDuration;
+        benchmarkDuration = config.benchmark.hyperfoil.benchmarkDuration;
+        pgoDuration = config.benchmark.hyperfoil.pgoDuration;
+        sessionLimitFactor = config.benchmark.hyperfoil.sessionLimitFactor;
+      in {
+      name = "benchmark";
+      failurePolicy = "CANCEL";
+      agents = { };
+      http = http;
+      phases = if mode == "pgo" then [{
+        pgo.constantRate = {
+          usersPerSec = protocol.compileOps;
+          maxSessions = builtins.floor (protocol.compileOps * sessionLimitFactor);
+          duration = pgoDuration;
+          isWarmup = false;
+          scenario = scenario { withSla = false; handler = null; };
+        };
+      }] else [{
         warmup.always = {
-          users = placeholder "WARMUP_SESSIONS";
-          duration = placeholder "WARMUP_DURATION";
+          users = builtins.floor (protocol.compileOps * sessionLimitFactor);
+          duration = warmupDuration;
           isWarmup = true;
           scenario = scenario { withSla = false; handler = responseHandler; };
         };
       }] ++ lib.imap0 (index: ops: {
         "main/${toString index}".constantRate = {
           usersPerSec = ops;
-          maxSessions = placeholder "MAIN_${toString index}_SESSIONS";
-          duration = placeholder "BENCHMARK_DURATION";
+          maxSessions = lib.min (builtins.floor (ops * sessionLimitFactor)) protocol.sharedConnections;
+          duration = benchmarkDuration;
           isWarmup = false;
           startAfterStrict = if index == 0 then "warmup" else "main/${toString (index - 1)}";
           scenario = scenario { withSla = true; handler = responseHandler; };
         };
       }) protocol.ops;
-    in if mode == "local" then {
-      name = "local-${protocol.protocol}-${request.name}";
-      failurePolicy = "CANCEL";
-      http = http // { requestTimeout = "30s"; };
-      phases = [{ local.atOnce = { users = 1; scenario = scenario { withSla = false; handler = responseHandler; }; }; }];
-    } else {
-      name = placeholder "NAME";
-      failurePolicy = "CANCEL";
-      agents = { };
-      inherit http;
-      phases = if mode == "pgo" then [{
-        pgo.constantRate = {
-          usersPerSec = protocol.compileOps;
-          maxSessions = placeholder "PGO_SESSIONS";
-          duration = placeholder "PGO_DURATION";
-          isWarmup = false;
-          scenario = scenario { withSla = false; handler = null; };
-        };
-      }] else mainPhases;
     };
   benchmarkTarget = {
     httpUrl = "http://10.0.0.2"; httpAuthority = "10.0.0.2"; httpPort = 8080;
@@ -134,14 +144,16 @@ let
     assert lib.assertMsg (duplicateDocumentNames == [ ]) "Duplicate suite document names: ${lib.concatStringsSep ", " duplicateDocumentNames}";
     lib.listToAttrs (lib.flatten (lib.mapAttrsToList (protocolName: protocol:
     lib.concatMap (request: [
-      (lib.nameValuePair (suiteRequestName { inherit protocolName; mode = "normal"; requestName = request.name; }) {
+      (lib.nameValuePair (suiteRequestName { protocolName = protocolName; mode = "normal"; requestName = request.name; }) {
         mode = "normal";
-        inherit protocol request;
+        protocol = protocol;
+        request = request;
         target = benchmarkTarget;
       })
-      (lib.nameValuePair (suiteRequestName { inherit protocolName; mode = "pgo"; requestName = request.name; }) {
+      (lib.nameValuePair (suiteRequestName { protocolName = protocolName; mode = "pgo"; requestName = request.name; }) {
         mode = "pgo";
-        inherit protocol request;
+        protocol = protocol;
+        request = request;
         target = benchmarkTarget;
       })
     ]) suite.documents) suite.resolvedProtocols));
@@ -150,18 +162,36 @@ let
     assert lib.assertMsg (duplicateDocumentNames == [ ]) "Duplicate suite document names: ${lib.concatStringsSep ", " duplicateDocumentNames}";
     assert lib.assertMsg (suite.statusRequest.name != statusArtifactName) "Reserved status request name: ${statusArtifactName}";
     assert lib.assertMsg (validArtifactComponent suite.statusRequest.name) "Unsafe status request name in Hyperfoil artifact path: ${suite.statusRequest.name}";
-    assert lib.assertMsg (!(lib.hasInfix placeholderPrefix (builtins.toJSON suite.statusRequest))) "Reserved Hyperfoil placeholder prefix in status request";
     assert lib.assertMsg (!(builtins.any (request: request.name == statusArtifactName) suite.documents)) "Reserved document name: ${statusArtifactName}";
     lib.mapAttrs (protocolName: _: lib.listToAttrs (map (request:
       assert lib.assertMsg (validArtifactComponent protocolName) "Unsafe protocol name in Hyperfoil artifact path: ${protocolName}";
       assert lib.assertMsg (validArtifactComponent request.name) "Unsafe request name in Hyperfoil artifact path: ${request.name}";
-      assert lib.assertMsg (!(lib.hasInfix placeholderPrefix (builtins.toJSON request))) "Reserved Hyperfoil placeholder prefix in request ${request.name}";
       lib.nameValuePair request.name {
-        normal = config.benchmark.hyperfoil.rendered.${suiteRequestName { inherit protocolName; requestName = request.name; mode = "normal"; }};
-        pgo = config.benchmark.hyperfoil.rendered.${suiteRequestName { inherit protocolName; requestName = request.name; mode = "pgo"; }};
+        normal = config.benchmark.hyperfoil.rendered.${suiteRequestName { protocolName = protocolName; requestName = request.name; mode = "normal"; }};
+        pgo = config.benchmark.hyperfoil.rendered.${suiteRequestName { protocolName = protocolName; requestName = request.name; mode = "pgo"; }};
       }) suite.documents)) suite.resolvedProtocols;
 in {
   options.benchmark.hyperfoil = {
+    warmupDuration = mkOption {
+      type = benchmarkTypes.duration;
+      default = "1m";
+      description = "Duration of the Hyperfoil warmup phase.";
+    };
+    benchmarkDuration = mkOption {
+      type = benchmarkTypes.duration;
+      default = "2m";
+      description = "Duration of each main Hyperfoil benchmark phase.";
+    };
+    pgoDuration = mkOption {
+      type = benchmarkTypes.duration;
+      default = "2m";
+      description = "Duration of the Hyperfoil PGO phase.";
+    };
+    sessionLimitFactor = mkOption {
+      type = types.addCheck types.number (value: value > 0);
+      default = 2;
+      description = "Multiplier used to derive Hyperfoil session limits from request rates.";
+    };
     requests = mkOption {
       type = types.attrsOf requestDefinition;
       default = { };
@@ -186,7 +216,7 @@ in {
         assert lib.assertMsg (validArtifactComponent name) "Unsafe Hyperfoil request name: ${name}";
         render request
       ) config.benchmark.hyperfoil.requests;
-      inherit definitions;
+      definitions = definitions;
     };
   };
 }

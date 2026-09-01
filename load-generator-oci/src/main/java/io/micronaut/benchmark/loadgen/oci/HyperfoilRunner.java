@@ -30,7 +30,6 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -46,7 +45,6 @@ import java.util.concurrent.TimeoutException;
  */
 public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.HyperfoilPhase> {
     private static final Logger LOG = LoggerFactory.getLogger(HyperfoilRunner.class);
-    static final String PLACEHOLDER_PREFIX = "@@HYPERFOIL_";
 
     /**
      * IP of the hyperfoil controller.
@@ -316,22 +314,11 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     }
 
     private String benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) throws Exception {
-        Map<String, Object> replacements = new LinkedHashMap<>();
-        replacements.put("NAME", "benchmark-" + UUID.randomUUID());
-        if (forPgo) {
-            replacements.put("PGO_DURATION", factory.config.pgoDuration.toMillis() + "ms");
-            replacements.put("PGO_SESSIONS", (int) (protocol.compileOps() * factory.config.sessionLimitFactor));
-        } else {
-            replacements.put("WARMUP_DURATION", factory.config.warmupDuration.toMillis() + "ms");
-            replacements.put("WARMUP_SESSIONS", (int) (protocol.compileOps() * factory.config.sessionLimitFactor));
-            replacements.put("BENCHMARK_DURATION", factory.config.benchmarkDuration.toMillis() + "ms");
-            for (int i = 0; i < protocol.ops().size(); i++) {
-                int ops = protocol.ops().get(i);
-                replacements.put("MAIN_" + i + "_SESSIONS", Math.min((int) (ops * factory.config.sessionLimitFactor), protocol.sharedConnections()));
-            }
-        }
         Map<String, Object> definition = yamlMap(yaml().load(Files.readString(factory.benchmarkDefinition(request, protocol, forPgo))), "Hyperfoil benchmark definition");
-        replacePlaceholders(definition, replacements);
+        if (!(definition.get("name") instanceof String)) {
+            throw new IllegalArgumentException("Expected Hyperfoil benchmark name to be a string");
+        }
+        definition.put("name", "benchmark-" + UUID.randomUUID());
 
         Map<String, Object> configuredAgents = yamlMap(definition.get("agents"), "Hyperfoil agents");
         if (!configuredAgents.isEmpty()) {
@@ -365,50 +352,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             result.put(key, entry.getValue());
         }
         return result;
-    }
-
-    private static void replacePlaceholders(Map<String, Object> value, Map<String, Object> replacements) {
-        for (Map.Entry<String, Object> entry : value.entrySet()) {
-            String key = entry.getKey();
-            if (isReservedPlaceholder(key)) {
-                throw new IllegalArgumentException("Hyperfoil placeholder cannot be a YAML key: " + key);
-            }
-            entry.setValue(replacePlaceholders(entry.getValue(), replacements));
-        }
-    }
-
-    private static Object replacePlaceholders(Object value, Map<String, Object> replacements) {
-        if (value instanceof Map<?, ?>) {
-            Map<String, Object> map = yamlMap(value, "YAML mapping");
-            replacePlaceholders(map, replacements);
-            return map;
-        }
-        if (value instanceof List<?> list) {
-            List<Object> result = new ArrayList<>(list.size());
-            for (Object element : list) {
-                result.add(replacePlaceholders(element, replacements));
-            }
-            return result;
-        }
-        if (value instanceof String string && isReservedPlaceholder(string)) {
-            Object replacement = replacements.get(placeholderName(string));
-            if (replacement == null) {
-                throw new IllegalArgumentException("Unresolved Hyperfoil benchmark placeholder: " + string);
-            }
-            return replacement;
-        }
-        return value;
-    }
-
-    private static boolean isReservedPlaceholder(String value) {
-        return value.startsWith(PLACEHOLDER_PREFIX);
-    }
-
-    private static String placeholderName(String placeholder) {
-        if (!placeholder.endsWith("@@")) {
-            throw new IllegalArgumentException("Malformed Hyperfoil benchmark placeholder: " + placeholder);
-        }
-        return placeholder.substring(PLACEHOLDER_PREFIX.length(), placeholder.length() - 2);
     }
 
     private final class AgentResource extends AbstractDecoratedResource {
@@ -479,22 +422,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         }
     }
 
-    /**
-     * @param agentCount         Number of agents to create
-     * @param warmupDuration     Duration of the warmup run
-     * @param benchmarkDuration  Duration of each main benchmark run
-     * @param pgoDuration        Duration of the PGO run
-     * @param sessionLimitFactor Factor of the hyperfoil session limit. If a particular run is 1000 ops/s, and this
-     *                           factor is 2, the maximum number of hyperfoil sessions is 2000.
-     */
     @ConfigurationProperties("hyperfoil")
-    public record HyperfoilConfiguration(
-            int agentCount,
-            Duration warmupDuration,
-            Duration benchmarkDuration,
-            Duration pgoDuration,
-            double sessionLimitFactor
-    ) {
+    public record HyperfoilConfiguration(int agentCount) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
