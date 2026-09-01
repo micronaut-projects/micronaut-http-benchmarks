@@ -10,6 +10,7 @@
       requestHeaders = {
         Content-Type = "application/json";
       };
+      host = "example.com";
       requestBody = ''{"haystack":["ssxvnj","hpdqdx","vcrast","vybcwv","mgnykr","xvzxkg"],"needle":"bcw"}'';
       responseBody = ''{"listIndex":3,"stringIndex":2}'';
     }];

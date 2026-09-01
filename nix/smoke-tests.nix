@@ -6,6 +6,61 @@ let
   standardRuns = evaluatedSuiteRuns.standard;
   enabledRuns = lib.filter (run: run.system.config.benchmark.sut.metadata.enabled) (lib.attrValues standardRuns);
   statusRequest = standard.config.benchmark.suite.statusRequest;
+  hyperfoil = import ./system/hyperfoil.nix { inherit pkgs; };
+  localTarget = {
+    httpUrl = "http://127.0.0.1";
+    httpAuthority = "127.0.0.1";
+    httpPort = 8080;
+    httpsUrl = "https://localhost";
+    httpsAuthority = "localhost";
+    httpsPort = 8443;
+  };
+  localProtocol = protocol: (removeAttrs protocol [ "enable" ]) // {
+    sharedConnections = 1;
+    pipeliningLimit = 1;
+    maxHttp2Streams = 1;
+    compileOps = 1;
+    ops = [ 1 ];
+    sla = { "0.99" = "20s"; };
+  };
+  localRequests = lib.evalModules {
+    modules = [
+      ./hyperfoil-definitions.nix
+      {
+        benchmark.hyperfoil.requests = {
+          status-http1 = {
+            mode = "local";
+            target = localTarget;
+            request = statusRequest;
+            protocol = localProtocol (protocolFor "http1");
+          };
+          training-http1 = {
+            mode = "local";
+            target = localTarget;
+            request = trainingRequest;
+            protocol = localProtocol (protocolFor "http1");
+          };
+          status-https2 = {
+            mode = "local";
+            target = localTarget;
+            request = statusRequest;
+            protocol = localProtocol (protocolFor "https2");
+          };
+          training-https2 = {
+            mode = "local";
+            target = localTarget;
+            request = trainingRequest;
+            protocol = localProtocol (protocolFor "https2");
+          };
+        };
+      }
+    ];
+  };
+  localDefinition = name:
+    (pkgs.formats.yaml { }).generate "local-${name}.yaml"
+      localRequests.config.benchmark.hyperfoil.rendered.${name};
+  runDefinition = definition:
+    "JAVA_OPTS='-Dio.hyperfoil.jitter.watchdog.threshold=86400000 -Dio.hyperfoil.cpu.watchdog.idle.threshold=0' ${hyperfoil}/bin/run.sh ${definition} --fail-on-errors --export /tmp/hyperfoil-result.json --export-format JSON";
   trainingRequest = if standard.config.benchmark.suite.documents == [ ] then statusRequest else lib.head standard.config.benchmark.suite.documents;
   curlRequest = baseUrl: extraArgs: request:
     let
@@ -16,15 +71,15 @@ let
       headers = lib.mapAttrsToList (name: value: "--header ${lib.escapeShellArg "${name}: ${value}"}") requestHeaders;
       data = lib.optional (request.requestBody != null) "--data ${lib.escapeShellArg request.requestBody}";
     in "curl --fail --silent --show-error --max-time 20 ${extraArgs} --request ${lib.escapeShellArg (if request.method == null then "GET" else request.method)} --request-target ${lib.escapeShellArg request.uri} ${lib.concatStringsSep " " (headers ++ data)} ${lib.escapeShellArg baseUrl}";
-  assertResponse = baseUrl: extraArgs: request:
-    if request.responseBody == null then "machine.succeed(${builtins.toJSON (curlRequest baseUrl extraArgs request)})"
-    else "machine.succeed(${builtins.toJSON "response=$(${curlRequest baseUrl extraArgs request}); test \"$response\" = ${lib.escapeShellArg request.responseBody}"})";
+  protocolFor = name: standard.config.benchmark.suite.protocols.${name} // {
+    protocol = if name == "http1" then "HTTP1" else if name == "https1" then "HTTPS1" else "HTTPS2";
+  };
   verifyEndpoints = tlsHttp2: ''
-    machine.succeed(${builtins.toJSON "${curlRequest "http://127.0.0.1:8080" "" statusRequest} > /dev/null"})
-    ${assertResponse "http://127.0.0.1:8080" "" trainingRequest}
+    machine.succeed(${builtins.toJSON (runDefinition (localDefinition "status-http1"))})
+    machine.succeed(${builtins.toJSON (runDefinition (localDefinition "training-http1"))})
   '' + lib.optionalString tlsHttp2 ''
-    machine.succeed(${builtins.toJSON "test \"$(${curlRequest "https://127.0.0.1:8443" "--http2 --insecure --output /dev/null --write-out '%{http_version}'" statusRequest})\" = 2"})
-    ${assertResponse "https://127.0.0.1:8443" "--http2 --insecure" trainingRequest}
+    machine.succeed(${builtins.toJSON (runDefinition (localDefinition "status-https2"))})
+    machine.succeed(${builtins.toJSON (runDefinition (localDefinition "training-https2"))})
   '';
   localRunModules = suite: runName: profilerEnabled: runModule: extraModules: [
     ./system/local-vm.nix
@@ -39,6 +94,7 @@ let
           "-Xmx1G"
         ];
       };
+      environment.systemPackages = [ hyperfoil pkgs.jdk25_headless ];
     }
     runModule
   ] ++ extraModules;

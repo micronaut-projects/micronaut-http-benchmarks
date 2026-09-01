@@ -16,17 +16,17 @@
       ./system/benchmark-bootstrap.nix
       ./system/run.nix
     ];
-    evalSuite = suiteModule: lib.evalModules {
-      modules = [ ./suites/module.nix suiteModule ];
+    evalSuite = suiteName: suiteModule: lib.evalModules {
+      specialArgs = { inherit suiteName; };
+      modules = [ ./suites/module.nix ./hyperfoil-definitions.nix suiteModule ];
     };
-    evaluatedSuites = lib.mapAttrs (_: evalSuite) suiteModules;
+    evaluatedSuites = lib.mapAttrs evalSuite suiteModules;
 
     optionalAttrs = attrs: lib.filterAttrs (_: value: value != null) attrs;
     requestMetadata = request: optionalAttrs {
       inherit (request) name method uri host requestType requestHeaders requestBody responseBody responseMatchingMode;
     };
     protocolMetadata = protocol: protocol;
-
     evaluateRun = suiteName: suite: runName: runModule: extraModules: metadataOverrides:
       let
         configurationName = "${suiteName}-${runName}";
@@ -87,6 +87,7 @@
         documents = map requestMetadata suiteConfig.documents;
         statusRequest = requestMetadata suiteConfig.statusRequest;
         protocols = lib.mapAttrs (_: protocolMetadata) suiteConfig.resolvedProtocols;
+        benchmarkDefinitions = suite.config.benchmark.hyperfoil.definitions;
       }
     ) evaluatedSuites;
 
@@ -147,7 +148,25 @@
       true;
 
     instanceTypes = lib.listToAttrs (map (role: lib.nameValuePair role.name role.instance) rolesWithMetadata);
-    benchmarkMetadata = { suites = metadataSuites; inherit instanceTypes; };
+    benchmarkDefinitionsPackage = system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        yaml = pkgs.formats.yaml { };
+      in pkgs.linkFarm "benchmark-definitions" (lib.flatten (lib.mapAttrsToList (suiteName: suite:
+        lib.flatten (lib.mapAttrsToList (protocolName: documents:
+          lib.flatten (lib.mapAttrsToList (documentName: definitions: [
+            {
+              name = "${suiteName}/${protocolName}/${documentName}/normal.yaml";
+              path = yaml.generate "${suiteName}-${protocolName}-${documentName}-normal.yaml" definitions.normal;
+            }
+            {
+              name = "${suiteName}/${protocolName}/${documentName}/pgo.yaml";
+              path = yaml.generate "${suiteName}-${protocolName}-${documentName}-pgo.yaml" definitions.pgo;
+            }
+          ]) documents)
+        ) suite.benchmarkDefinitions)
+      ) metadataSuites));
+    benchmarkMetadata = { suites = lib.mapAttrs (_: suite: removeAttrs suite [ "benchmarkDefinitions" ]) metadataSuites; inherit instanceTypes; };
     metadataPackage = system: name: value: (import nixpkgs { inherit system; }).writeTextFile {
       inherit name;
       text = builtins.toJSON value;
@@ -168,7 +187,8 @@
       assert metadataAssertions;
       {
         oci-bootstrap-image = ociBootstrapImage system;
-        benchmark-metadata = metadataPackage system "benchmark-metadata.json" benchmarkMetadata;
+        benchmark-metadata = metadataPackage system "benchmark-metadata.json" (benchmarkMetadata // { benchmarkDefinitions = benchmarkDefinitionsPackage system; });
+        benchmark-definitions = benchmarkDefinitionsPackage system;
         relay-agent = relayAgent system;
         update-micronaut-framework = maintenanceSut system "micronaut-framework" "native";
         update-pure-netty = maintenanceSut system "pure-netty" "hotspot";

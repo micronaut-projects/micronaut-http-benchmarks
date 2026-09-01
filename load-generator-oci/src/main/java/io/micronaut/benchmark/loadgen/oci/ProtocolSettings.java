@@ -1,6 +1,5 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -23,7 +22,7 @@ public record ProtocolSettings(
         int maxHttp2Streams,
         int compileOps,
         List<Integer> ops,
-        Map<Double, Duration> sla
+        Map<Double, String> sla
 ) {
     public ProtocolSettings {
         protocol = Objects.requireNonNull(protocol);

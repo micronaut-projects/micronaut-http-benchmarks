@@ -1,23 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.oracle.bmc.http.client.pki.Pem;
-import io.hyperfoil.api.config.Benchmark;
-import io.hyperfoil.api.config.BenchmarkBuilder;
-import io.hyperfoil.api.config.SLABuilder;
-import io.hyperfoil.api.config.ScenarioBuilder;
 import io.hyperfoil.api.statistics.StatisticsSummary;
 import io.hyperfoil.client.RestClient;
 import io.hyperfoil.controller.Client;
 import io.hyperfoil.controller.model.RequestStatisticsResponse;
 import io.hyperfoil.controller.model.RequestStats;
-import io.hyperfoil.core.util.ConstantBytesGenerator;
-import io.hyperfoil.http.config.ConnectionStrategy;
-import io.hyperfoil.http.config.HttpBuilder;
-import io.hyperfoil.http.config.HttpPluginBuilder;
 import io.hyperfoil.http.statistics.HttpStats;
-import io.hyperfoil.http.steps.HttpRequestStepBuilder;
-import io.hyperfoil.http.steps.HttpStepCatalog;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
@@ -33,40 +22,41 @@ import jakarta.inject.Singleton;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
+import org.yaml.snakeyaml.representer.Representer;
 import reactor.core.publisher.Flux;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
-import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Base64;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.regex.Pattern;
 
 /**
  * This class manages the provisioning of a hyperfoil cluster and allows using it for benchmarks.
  */
 public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.HyperfoilPhase> {
     private static final Logger LOG = LoggerFactory.getLogger(HyperfoilRunner.class);
+    static final String PLACEHOLDER_PREFIX = "@@HYPERFOIL_";
 
     /**
      * IP of the hyperfoil controller.
@@ -89,7 +79,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     private X509Certificate mtlsCert;
     private PrivateKey mtlsKey;
 
-    private CommandRunner controllerSession;
     private final Compute.Launch controllerLaunch;
     private final List<PhaseLock> controllerLocks;
     private final List<AgentResource> agents = new ArrayList<>();
@@ -182,12 +171,10 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                     setPhase(HyperfoilPhase.AWAITING_AGENTS);
                     PhaseLock.awaitAll(agentLocks);
 
-                    this.controllerSession = controllerSession;
                     this.controllerPortForward = controllerPortForward;
                     this.client = client;
                     setPhase(HyperfoilPhase.READY);
                     awaitUnlocked(HyperfoilPhase.READY);
-                    this.controllerSession = null;
                     this.controllerPortForward = null;
                     this.client = null;
 
@@ -231,150 +218,24 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         };
     }
 
-    private String createCurlCommand(Protocol protocol, SuiteRequest definition, String socketUri, boolean verbose) throws CertificateEncodingException {
-        StringBuilder builder = new StringBuilder("curl");
-        builder.append(protocol == Protocol.HTTP1 ? " --http1.1" : " --http2");
-        builder.append(" --insecure");
-        builder.append(" --max-time 20");
-        if (mtlsCert != null) {
-            builder.append(" --cert <(echo '");
-            builder.append(Base64.getEncoder().encodeToString(Pem.encoder().encode(mtlsCert).getBytes(StandardCharsets.UTF_8)));
-            builder.append("' | base64 -d)");
-        }
-        if (mtlsKey != null) {
-            builder.append(" --key <(echo '");
-            builder.append(Base64.getEncoder().encodeToString(Pem.encoder().encode(mtlsKey)));
-            builder.append("' | base64 -d)");
-        }
-        builder.append(verbose ? " -v" : " --silent");
-        builder.append(" -X ").append(definition.method().name());
-        builder.append(" --request-target '").append(definition.uri()).append("'");
-        builder.append(" -H 'host: ").append(definition.host()).append("'");
-        if (definition.requestBody() != null) {
-            builder.append(" -H 'content-type: ").append(definition.requestType()).append("'");
-            builder.append(" -d '").append(definition.requestBody()).append("'");
-        }
-        definition.requestHeaders().forEach((key, value) -> builder.append(" -H '").append(key).append(": ").append(value).append("'"));
-        builder.append(' ').append(socketUri);
-        return builder.toString();
-    }
-
     private void benchmark(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body, PhaseTracker.PhaseUpdater progress, boolean forPgo) throws Exception {
         awaitPhase(HyperfoilPhase.READY);
 
         BenchmarkPhase benchmarkPhase = forPgo ? BenchmarkPhase.PGO : BenchmarkPhase.BENCHMARKING;
 
         progress.update(benchmarkPhase);
-        String ip = Infrastructure.SERVER_IP;
-        int port = protocol.protocol() == Protocol.HTTP1 ? 8080 : 8443;
-        io.hyperfoil.http.config.Protocol prot = protocol.protocol() == Protocol.HTTP1 ? io.hyperfoil.http.config.Protocol.HTTP : io.hyperfoil.http.config.Protocol.HTTPS;
-
-        String socketUri = prot.scheme + "://" + ip + ":" + port;
-        SuiteRequest statusRequest = factory.statusRequest;
-        Infrastructure.retry(() -> {
-            try (OutputListener.Write write = new OutputListener.Write(Files.newOutputStream(outputDirectory.resolve(statusRequest.name() + ".http")))) {
-                SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), statusRequest, socketUri, true), write);
-            }
-            return null;
-        }, controllerPortForward::disconnect);
-        Infrastructure.retry(() -> {
-            ByteArrayOutputStream resp = new ByteArrayOutputStream();
-            try (OutputListener.Write write = new OutputListener.Write(resp)) {
-                SshUtil.run(controllerSession, createCurlCommand(protocol.protocol(), body, socketUri, false), write);
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to query benchmark output. Body: '" + resp.toString(StandardCharsets.UTF_8) + "'", e);
-            }
-            boolean matches = switch (body.responseMatchingMode()) {
-                case EQUAL -> Arrays.equals(resp.toByteArray(), body.responseBody().getBytes(StandardCharsets.UTF_8));
-                case JSON -> factory.objectMapper.readTree(resp.toByteArray()).equals(factory.objectMapper.readTree(body.responseBody()));
-                case REGEX -> Pattern.compile(body.responseBody()).matcher(resp.toString(StandardCharsets.UTF_8)).matches();
-            };
-            if (!matches) {
-                throw new InvalidatesBenchmarkException("Response to test request was incorrect: " + resp.toString(StandardCharsets.UTF_8));
-            }
-            return null;
-        });
-
-        String name = "benchmark-" + UUID.randomUUID();
-        BenchmarkBuilder benchmark = BenchmarkBuilder.builder()
-                .name(name)
-                .failurePolicy(Benchmark.FailurePolicy.CANCEL);
-        BenchmarkMetadata.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
-        for (int i = 0; i < factory.config.agentCount; i++) {
-            String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
-            benchmark.addAgent("agent" + i, agentIp(i) + ":22", Map.of(
-                    "threads", String.valueOf((int) agentInstanceType.ocpus() - 1),
-                    "extras", extras,
-                    "user", "root"
-            ));
-        }
-
-        HttpBuilder httpBuilder = benchmark.addPlugin(HttpPluginBuilder::new)
-                .http()
-                .protocol(prot)
-                .host(ip)
-                .port(port)
-                .allowHttp1x(protocol.protocol() != Protocol.HTTPS2)
-                .allowHttp2(protocol.protocol() == Protocol.HTTPS2)
-                .sharedConnections(protocol.sharedConnections())
-                .connectionStrategy(ConnectionStrategy.SHARED_POOL)
-                .pipeliningLimit(protocol.pipeliningLimit())
-                .maxHttp2Streams(protocol.maxHttp2Streams())
-                .sslHandshakeTimeout(TimeUnit.MINUTES.toMillis(1))
-                .useHttpCache(false); // caching is expensive, disable it
-
-        if (mtlsCert != null) {
-            KeyStore ks = KeyStore.getInstance("PKCS12");
-            ks.load(null, null);
-            ks.setKeyEntry("default", mtlsKey, "".toCharArray(), new Certificate[]{mtlsCert});
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ks.store(baos, "".toCharArray());
-            httpBuilder.keyManager()
-                    .storeBytes(baos.toByteArray())
-                    .password("");
-        }
-
         List<String> phaseNames = new ArrayList<>();
         if (!forPgo) {
             phaseNames.add("warmup");
-            prepareScenario(body, ip, port, benchmark.addPhase("warmup")
-                    .constantRate(protocol.compileOps())
-                    .maxSessions((int) (protocol.compileOps() * factory.config.sessionLimitFactor))
-                    .duration(TimeUnit.MILLISECONDS.convert(factory.config.warmupDuration))
-                    .isWarmup(true)
-                    .scenario());
-            String lastPhase = "warmup";
             for (int i = 0; i < protocol.ops().size(); i++) {
-                int ops = protocol.ops().get(i);
                 String phaseName = "main/" + i;
                 phaseNames.add(phaseName);
-                SLABuilder<?>.LimitsBuilder limits = prepareScenario(body, ip, port, benchmark.addPhase(phaseName)
-                        .constantRate(0)
-                        .usersPerSec(ops)
-                        .maxSessions(Math.min((int) (ops * factory.config.sessionLimitFactor), protocol.sharedConnections()))
-                        .duration(TimeUnit.MILLISECONDS.convert(factory.config.benchmarkDuration))
-                        .isWarmup(false)
-                        .startAfter(lastPhase)
-                        .scenario())
-                        .sla().addItem().limits();
-                for (Map.Entry<Double, Duration> e : protocol.sla().entrySet()) {
-                    limits.add(e.getKey(), e.getValue().toNanos());
-                }
-                lastPhase = phaseName;
             }
         } else {
             phaseNames.add("pgo");
-            prepareScenario(body, ip, port, benchmark.addPhase("pgo")
-                    .constantRate(protocol.compileOps())
-                    .maxSessions((int) (protocol.compileOps() * factory.config.sessionLimitFactor))
-                    .duration(TimeUnit.MILLISECONDS.convert(factory.config.pgoDuration))
-                    .isWarmup(false)
-                    .scenario());
         }
 
-        Benchmark builtBenchmark = benchmark.build();
-
-        Client.BenchmarkRef benchmarkRef = client.register(builtBenchmark, null);
+        Client.BenchmarkRef benchmarkRef = client.register(benchmarkDefinition(body, protocol, forPgo), benchmarkFiles(), null, null);
         Client.RunRef runRef = benchmarkRef.start("run", Map.of());
         long startTime = System.nanoTime();
         String lastPhase = null;
@@ -428,6 +289,11 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                 benchmarkFailures.add("No responses in phase " + stats.name);
                 invalidatesBenchmark = true;
             }
+            if (stats.total.summary.invalid > 0 || stats.total.summary.requestTimeouts > 0
+                    || stats.total.summary.connectionErrors > 0 || stats.total.summary.internalErrors > 0) {
+                benchmarkFailures.add("Request failures in phase " + stats.name);
+                invalidatesBenchmark = true;
+            }
         }
 
         if (!forPgo || !benchmarkFailures.isEmpty()) {
@@ -463,22 +329,144 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         }
     }
 
-    private static HttpRequestStepBuilder prepareScenario(SuiteRequest sampleRequest, String ip, int port, ScenarioBuilder warmup) {
-        HttpRequestStepBuilder builder = warmup.initialSequence("test")
-                .step(HttpStepCatalog.class)
-                .httpRequest(sampleRequest.method())
-                .authority(ip + ":" + port)
-                .path(sampleRequest.uri())
-                .body(sampleRequest.requestBody() == null ? null : new ConstantBytesGenerator(sampleRequest.requestBody().getBytes(StandardCharsets.UTF_8)));
-        HttpRequestStepBuilder.HeadersBuilder headers = builder.headers();
-        // MUST be lowercase for HTTP/2
-        headers.header("content-type", sampleRequest.requestType());
-        sampleRequest.requestHeaders().forEach((header, value) -> headers.header(header.toLowerCase(Locale.ROOT), value));
-        return builder;
-    }
-
     private static String agentIp(int i) {
         return HYPERFOIL_AGENT_PREFIX + (i + 1);
+    }
+
+    private Map<String, byte[]> benchmarkFiles() throws Exception {
+        if (mtlsCert == null) {
+            return Map.of();
+        }
+        return Map.of("mtls.p12", mtlsKeyStore());
+    }
+
+    private Map<String, Object> runtimeAgents() {
+        BenchmarkMetadata.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
+        Map<String, Object> agents = new LinkedHashMap<>();
+        for (int i = 0; i < factory.config.agentCount; i++) {
+            String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
+            Map<String, Object> agent = new LinkedHashMap<>();
+            agent.put("host", agentIp(i));
+            agent.put("port", 22);
+            agent.put("threads", (int) agentInstanceType.ocpus() - 1);
+            agent.put("extras", extras);
+            agent.put("user", "root");
+            agents.put("agent" + i, agent);
+        }
+        return agents;
+    }
+
+    private byte[] mtlsKeyStore() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        keyStore.load(null, null);
+        keyStore.setKeyEntry("default", mtlsKey, "".toCharArray(), new Certificate[]{mtlsCert});
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        keyStore.store(bytes, "".toCharArray());
+        return bytes.toByteArray();
+    }
+
+    private String benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) throws Exception {
+        Map<String, Object> replacements = new LinkedHashMap<>();
+        replacements.put("NAME", "benchmark-" + UUID.randomUUID());
+        if (forPgo) {
+            replacements.put("PGO_DURATION", factory.config.pgoDuration.toMillis() + "ms");
+            replacements.put("PGO_SESSIONS", (int) (protocol.compileOps() * factory.config.sessionLimitFactor));
+        } else {
+            replacements.put("WARMUP_DURATION", factory.config.warmupDuration.toMillis() + "ms");
+            replacements.put("WARMUP_SESSIONS", (int) (protocol.compileOps() * factory.config.sessionLimitFactor));
+            replacements.put("BENCHMARK_DURATION", factory.config.benchmarkDuration.toMillis() + "ms");
+            for (int i = 0; i < protocol.ops().size(); i++) {
+                int ops = protocol.ops().get(i);
+                replacements.put("MAIN_" + i + "_SESSIONS", Math.min((int) (ops * factory.config.sessionLimitFactor), protocol.sharedConnections()));
+            }
+        }
+        Map<String, Object> definition = yamlMap(yaml().load(Files.readString(factory.benchmarkDefinition(request, protocol, forPgo))), "Hyperfoil benchmark definition");
+        replacePlaceholders(definition, replacements);
+
+        Map<String, Object> configuredAgents = yamlMap(definition.get("agents"), "Hyperfoil agents");
+        if (!configuredAgents.isEmpty()) {
+            throw new IllegalArgumentException("Expected an empty Hyperfoil agent mapping");
+        }
+        definition.put("agents", runtimeAgents());
+
+        if (mtlsCert != null) {
+            Map<String, Object> http = yamlMap(definition.get("http"), "Hyperfoil http configuration");
+            Map<String, Object> keyManager = new LinkedHashMap<>();
+            keyManager.put("storeFile", "mtls.p12");
+            keyManager.put("password", "");
+            http.put("keyManager", keyManager);
+            definition.put("http", http);
+        }
+        return yaml().dump(definition);
+    }
+
+    private static Yaml yaml() {
+        LoaderOptions loaderOptions = new LoaderOptions();
+        loaderOptions.setAllowDuplicateKeys(false);
+        DumperOptions dumperOptions = new DumperOptions();
+        dumperOptions.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+        dumperOptions.setIndent(2);
+        dumperOptions.setWidth(120);
+        dumperOptions.setSplitLines(false);
+        return new Yaml(new SafeConstructor(loaderOptions), new Representer(dumperOptions), dumperOptions, loaderOptions);
+    }
+
+    private static Map<String, Object> yamlMap(Object value, String description) {
+        if (!(value instanceof Map<?, ?> map)) {
+            throw new IllegalArgumentException("Expected " + description + " to be a mapping");
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (!(entry.getKey() instanceof String key)) {
+                throw new IllegalArgumentException("Expected string key in " + description);
+            }
+            result.put(key, entry.getValue());
+        }
+        return result;
+    }
+
+    private static void replacePlaceholders(Map<String, Object> value, Map<String, Object> replacements) {
+        for (Map.Entry<String, Object> entry : value.entrySet()) {
+            String key = entry.getKey();
+            if (isReservedPlaceholder(key)) {
+                throw new IllegalArgumentException("Hyperfoil placeholder cannot be a YAML key: " + key);
+            }
+            entry.setValue(replacePlaceholders(entry.getValue(), replacements));
+        }
+    }
+
+    private static Object replacePlaceholders(Object value, Map<String, Object> replacements) {
+        if (value instanceof Map<?, ?>) {
+            Map<String, Object> map = yamlMap(value, "YAML mapping");
+            replacePlaceholders(map, replacements);
+            return map;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> result = new ArrayList<>(list.size());
+            for (Object element : list) {
+                result.add(replacePlaceholders(element, replacements));
+            }
+            return result;
+        }
+        if (value instanceof String string && isReservedPlaceholder(string)) {
+            Object replacement = replacements.get(placeholderName(string));
+            if (replacement == null) {
+                throw new IllegalArgumentException("Unresolved Hyperfoil benchmark placeholder: " + string);
+            }
+            return replacement;
+        }
+        return value;
+    }
+
+    private static boolean isReservedPlaceholder(String value) {
+        return value.startsWith(PLACEHOLDER_PREFIX);
+    }
+
+    private static String placeholderName(String placeholder) {
+        if (!placeholder.endsWith("@@")) {
+            throw new IllegalArgumentException("Malformed Hyperfoil benchmark placeholder: " + placeholder);
+        }
+        return placeholder.substring(PLACEHOLDER_PREFIX.length(), placeholder.length() - 2);
     }
 
     private final class AgentResource extends AbstractDecoratedResource {
@@ -520,6 +508,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final SshFactory sshFactory;
         private final HyperfoilConfiguration config;
         private final SuiteRequest statusRequest;
+        private final BenchmarkMetadata metadata;
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
@@ -531,6 +520,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             this.sshFactory = sshFactory;
             this.config = config;
             this.statusRequest = metadata.suite().statusRequest();
+            this.metadata = metadata;
             this.objectMapper = objectMapper.rebuild()
                     .registerSubtypes(HttpStats.class)
                     .build();
@@ -538,6 +528,10 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             this.certificateProviders = certificateProviders;
             this.vertx = Vertx.vertx();
 
+        }
+
+        Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) {
+            return metadata.benchmarkDefinition(request, protocol, forPgo);
         }
 
         public HyperfoilRunner create(Path outputDirectory, AbstractInfrastructure infrastructure) throws Exception {

@@ -8,6 +8,7 @@ import org.slf4j.event.Level;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -18,7 +19,9 @@ public final class BenchmarkMetadata {
 
     private final Map<String, Suite> suites;
     private final Map<String, InstanceType> instanceTypes;
+    private final Path benchmarkDefinitions;
     private Suite selectedSuite;
+    private String selectedSuiteName;
 
     public BenchmarkMetadata(Nix nix, JsonMapper objectMapper, SuiteRunner.SuiteConfiguration suiteConfiguration) throws Exception {
         this(objectMapper.readValue(
@@ -30,6 +33,7 @@ public final class BenchmarkMetadata {
     BenchmarkMetadata(Document document, String suiteName) {
         suites = Map.copyOf(document.suites());
         instanceTypes = Map.copyOf(document.instanceTypes());
+        benchmarkDefinitions = Objects.requireNonNull(document.benchmarkDefinitions());
         selectSuite(suiteName);
     }
 
@@ -50,14 +54,32 @@ public final class BenchmarkMetadata {
         if (selectedSuite == null) {
             throw new IllegalArgumentException("Unknown benchmark suite: " + name);
         }
+        selectedSuiteName = name;
         return selectedSuite;
+    }
+
+    public Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) {
+        return definitionPath(protocol, request.name(), forPgo ? "pgo.yaml" : "normal.yaml");
+    }
+
+    private Path definitionPath(ProtocolSettings protocol, String requestName, String fileName) {
+        Path definitionsRoot = benchmarkDefinitions.toAbsolutePath().normalize();
+        Path definition = definitionsRoot.resolve(selectedSuiteName)
+                .resolve(protocol.protocol().name().toLowerCase())
+                .resolve(requestName)
+                .resolve(fileName)
+                .normalize();
+        if (!definition.startsWith(definitionsRoot)) {
+            throw new IllegalArgumentException("Benchmark definition path escapes definitions root");
+        }
+        return definition;
     }
 
     public InstanceType instanceType(String name) {
         return instanceTypes.get(name);
     }
 
-    record Document(Map<String, Suite> suites, Map<String, InstanceType> instanceTypes) {
+    record Document(Map<String, Suite> suites, Map<String, InstanceType> instanceTypes, Path benchmarkDefinitions) {
     }
 
     public record Suite(

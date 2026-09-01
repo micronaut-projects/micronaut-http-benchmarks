@@ -15,7 +15,7 @@ java {
 }
 
 dependencies {
-    runtimeOnly("org.yaml:snakeyaml")
+    implementation("org.yaml:snakeyaml")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-sdk")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-identity")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-core")
