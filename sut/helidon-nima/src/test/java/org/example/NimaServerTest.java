@@ -50,7 +50,8 @@ public class NimaServerTest {
     }
 
     @BeforeEach
-    public void start() throws CertificateException {
+    public void start() throws Exception {
+        System.setProperty("benchmark.tls.directory", "src/test/resources/benchmark-tls");
         webServer = Main.start(0, 0);
     }
 

@@ -3,6 +3,7 @@ let
   runtime = config.benchmark.sut.runtime;
   pgoDirectory = if config.benchmark.sut.pgoBuildDirectory == null then config.benchmark.sut.pgoDirectory else config.benchmark.sut.pgoBuildDirectory;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
+  tls = import ../../nix/tls.nix { inherit pkgs; };
   package = pkgs.maven.buildMavenPackage {
     pname = "quarkus-${runtime}";
     version = "1.0.0";
@@ -31,6 +32,9 @@ let
     __noChroot = runtime == "native-pgo" && config.benchmark.sut.pgoBuildDirectory == null;
 
     doCheck = false;
+    preBuild = ''
+      install -Dm644 ${tls}/server.p12 src/main/resources/keys.p12
+    '';
 
     installPhase = ''
       runHook preInstall

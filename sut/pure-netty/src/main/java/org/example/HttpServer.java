@@ -21,12 +21,11 @@ import io.netty.handler.ssl.ApplicationProtocolNegotiationHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandler;
-import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 
 import javax.net.ssl.SSLException;
+import java.io.File;
 import java.net.InetSocketAddress;
-import java.security.cert.CertificateException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -58,9 +57,11 @@ public final class HttpServer implements AutoCloseable {
         return ((ServerSocketChannel) channel).localAddress();
     }
 
-    public InetSocketAddress bindHttps(String host, int port) throws CertificateException, SSLException {
-        SelfSignedCertificate ssc = new SelfSignedCertificate();
-        SslContext sslContext = SslContextBuilder.forServer(ssc.key(), ssc.cert())
+    public InetSocketAddress bindHttps(String host, int port) throws SSLException {
+        String tlsDirectory = System.getProperty("benchmark.tls.directory", "/etc/benchmark-tls");
+        SslContext sslContext = SslContextBuilder.forServer(
+                        new File(tlsDirectory, "server.pem"),
+                        new File(tlsDirectory, "server-key.pem"))
                 .applicationProtocolConfig(new ApplicationProtocolConfig(
                         ApplicationProtocolConfig.Protocol.ALPN,
                         ApplicationProtocolConfig.SelectorFailureBehavior.NO_ADVERTISE,

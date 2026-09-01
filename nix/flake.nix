@@ -181,11 +181,13 @@
     runPackage = run: lib.nameValuePair "${run.configurationName}-system" run.system.config.system.build.toplevel;
     packagesFor = system:
       let
+        pkgs = import nixpkgs { inherit system; };
         activatableRoles = lib.filter (role: role.activatable && role.instance.platform == system) rolesWithMetadata;
         systemRuns = lib.filter (run: run.system.pkgs.system == system) suiteRuns;
       in
       assert metadataAssertions;
       {
+        benchmark-tls = import ./tls.nix { inherit pkgs; };
         oci-bootstrap-image = ociBootstrapImage system;
         benchmark-metadata = metadataPackage system "benchmark-metadata.json" (benchmarkMetadata // { benchmarkDefinitions = benchmarkDefinitionsPackage system; });
         benchmark-definitions = benchmarkDefinitionsPackage system;

@@ -4,6 +4,7 @@ let
   pgoDirectory = if config.benchmark.sut.pgoBuildDirectory == null then config.benchmark.sut.pgoDirectory else config.benchmark.sut.pgoBuildDirectory;
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
+  tls = import ../../nix/tls.nix { inherit pkgs; };
   package =
     let
       gradle = pkgs.gradle_9.override {
@@ -45,6 +46,9 @@ let
         gradle ${finalAttrs.gradleBuildTask} -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
       '';
       gradleFlags = [ "-Pcodec=${codec}" ] ++ finalAttrs.nativeGradleFlags;
+      preBuild = ''
+        install -Dm644 ${tls}/server.p12 src/main/resources/server.p12
+      '';
       nativeBuildInputs = [ gradle pkgs.makeWrapper ] ++ lib.optional (config.benchmark.sut.pgoBuildDirectory != null) config.benchmark.sut.pgoBuildDirectory;
       __noChroot = runtime == "native-pgo" && config.benchmark.sut.pgoBuildDirectory == null;
       doCheck = false;

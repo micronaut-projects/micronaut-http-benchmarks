@@ -66,6 +66,15 @@ let
         connectionStrategy = "SHARED_POOL";
         sslHandshakeTimeout = "1m";
         useHttpCache = false;
+      } // lib.optionalAttrs (protocol.protocol != "HTTP1") {
+        trustManager = {
+          certFile = "/etc/benchmark-tls/ca.pem";
+        };
+        keyManager = {
+          storeType = "PKCS12";
+          storeFile = "/etc/benchmark-tls/client.p12";
+          password = "password";
+        };
       };
       responseHandler = {
         autoRangeCheck = true;

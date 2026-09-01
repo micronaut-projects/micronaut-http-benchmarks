@@ -8,7 +8,7 @@ import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.internal.VertxInternal;
 import io.vertx.core.json.Json;
-import io.vertx.core.net.SelfSignedCertificate;
+import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
@@ -43,7 +43,9 @@ public class MyVerticle extends AbstractVerticle {
                         .setUseAlpn(true)
                         .addEnabledCipherSuite("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256")
                         .addEnabledCipherSuite("TLS_AES_128_GCM_SHA256")
-                        .setKeyCertOptions(SelfSignedCertificate.create().keyCertOptions()))
+                        .setKeyCertOptions(new PemKeyCertOptions()
+                                .setCertPath(tlsPath("server.pem"))
+                                .setKeyPath(tlsPath("server-key.pem"))))
                 .requestHandler(router)
                 .listen(httpsPort)
                 .onSuccess(event -> httpsPort = event.actualPort());
@@ -58,6 +60,10 @@ public class MyVerticle extends AbstractVerticle {
                         ((VertxInternal) vertx).transport().getClass().getName(),
                         Json.CODEC.getClass().getName()
                 )));
+    }
+
+    private static String tlsPath(String fileName) {
+        return System.getProperty("benchmark.tls.directory", "/etc/benchmark-tls") + "/" + fileName;
     }
 
     private void find(RoutingContext routingContext) {

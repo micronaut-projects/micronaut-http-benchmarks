@@ -1,5 +1,6 @@
 { lib, pkgs, ... }:
 let
+  tls = import ../../nix/tls.nix { inherit pkgs; };
   python = pkgs.python3.withPackages (pythonPackages: [
     pythonPackages.django
     pythonPackages.gunicorn
@@ -18,11 +19,8 @@ let
       install -Dm644 settings.py "$out/share/django-gunicorn/settings.py"
       install -Dm644 urls.py "$out/share/django-gunicorn/urls.py"
       install -Dm644 wsgi.py "$out/share/django-gunicorn/wsgi.py"
-      install -Dm644 ${../micronaut-framework/src/main/resources/server.p12} "$out/share/django-gunicorn/server.p12"
-      ${pkgs.openssl}/bin/openssl pkcs12 -in "$out/share/django-gunicorn/server.p12" -clcerts -nokeys -passin pass:password -out "$out/share/django-gunicorn/cert.pem"
-      ${pkgs.openssl}/bin/openssl pkcs12 -in "$out/share/django-gunicorn/server.p12" -nocerts -nodes -passin pass:password -out "$out/share/django-gunicorn/key.pem"
-      rm "$out/share/django-gunicorn/server.p12"
-      chmod 0644 "$out/share/django-gunicorn/cert.pem" "$out/share/django-gunicorn/key.pem"
+      install -Dm644 ${tls}/server.pem "$out/share/django-gunicorn/cert.pem"
+      install -Dm644 ${tls}/server-key.pem "$out/share/django-gunicorn/key.pem"
       install -Dm755 run "$out/libexec/django-gunicorn"
       makeWrapper ${pkgs.bash}/bin/bash "$out/bin/django-gunicorn" \
         --add-flags "$out/libexec/django-gunicorn" \

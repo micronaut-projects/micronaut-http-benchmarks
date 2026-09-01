@@ -39,6 +39,8 @@
   };
 
   config = {
+    environment.etc."benchmark-tls".source = import ../tls.nix { inherit pkgs; };
+
     networking.firewall.extraInputRules = ''
       ip saddr 10.0.0.0/18 accept comment "benchmark private network"
     '';

@@ -1,5 +1,6 @@
 { lib, pkgs, ... }:
 let
+  tls = import ../../nix/tls.nix { inherit pkgs; };
   python = pkgs.python3;
   emmett-core-src = python.pkgs.fetchPypi {
     pname = "emmett_core";
@@ -86,14 +87,8 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
     installPhase = ''
       install -Dm644 app.py "$out/share/emmett-granian/app.py"
-      install -Dm644 ${../micronaut-framework/src/main/resources/server.p12} "$out/share/emmett-granian/server.p12"
-      ${pkgs.openssl}/bin/openssl pkcs12 -in "$out/share/emmett-granian/server.p12" -clcerts -nokeys -passin pass:password -out "$out/share/emmett-granian/cert.pem"
-      ${pkgs.openssl}/bin/openssl pkcs12 -in "$out/share/emmett-granian/server.p12" -nocerts -nodes -passin pass:password -out "$out/share/emmett-granian/key.pem"
-      ${pkgs.openssl}/bin/openssl pkcs8 -topk8 -nocrypt -in "$out/share/emmett-granian/key.pem" -out "$out/share/emmett-granian/key.pkcs8.pem"
-      ${pkgs.openssl}/bin/openssl pkey -in "$out/share/emmett-granian/key.pkcs8.pem" -noout
-      mv "$out/share/emmett-granian/key.pkcs8.pem" "$out/share/emmett-granian/key.pem"
-      rm "$out/share/emmett-granian/server.p12"
-      chmod 0644 "$out/share/emmett-granian/cert.pem" "$out/share/emmett-granian/key.pem"
+      install -Dm644 ${tls}/server.pem "$out/share/emmett-granian/cert.pem"
+      install -Dm644 ${tls}/server-key.pem "$out/share/emmett-granian/key.pem"
       install -Dm755 run "$out/libexec/emmett-granian"
       makeWrapper ${pkgs.bash}/bin/bash "$out/bin/emmett-granian" \
         --add-flags "$out/libexec/emmett-granian" \

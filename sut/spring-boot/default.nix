@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   runtimeInfo = config.benchmark.sut.runtimeInfo;
+  tls = import ../../nix/tls.nix { inherit pkgs; };
   package = pkgs.maven.buildMavenPackage {
     pname = "spring-boot";
     version = "1.0.0";
@@ -22,6 +23,9 @@ let
     ];
 
     doCheck = false;
+    preBuild = ''
+      install -Dm644 ${tls}/server.p12 src/main/resources/keys.p12
+    '';
 
     installPhase = ''
       runHook preInstall

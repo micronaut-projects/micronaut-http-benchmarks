@@ -1,5 +1,6 @@
 { lib, pkgs, ... }:
 let
+  tls = import ../../nix/tls.nix { inherit pkgs; };
   python = pkgs.python3.withPackages (pythonPackages: [
     pythonPackages.flask
     pythonPackages.gunicorn
@@ -16,11 +17,8 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
     installPhase = ''
       install -Dm644 app.py "$out/share/flask-gunicorn/app.py"
-      install -Dm644 ${../micronaut-framework/src/main/resources/server.p12} "$out/share/flask-gunicorn/server.p12"
-      ${pkgs.openssl}/bin/openssl pkcs12 -in "$out/share/flask-gunicorn/server.p12" -clcerts -nokeys -passin pass:password -out "$out/share/flask-gunicorn/cert.pem"
-      ${pkgs.openssl}/bin/openssl pkcs12 -in "$out/share/flask-gunicorn/server.p12" -nocerts -nodes -passin pass:password -out "$out/share/flask-gunicorn/key.pem"
-      rm "$out/share/flask-gunicorn/server.p12"
-      chmod 0644 "$out/share/flask-gunicorn/cert.pem" "$out/share/flask-gunicorn/key.pem"
+      install -Dm644 ${tls}/server.pem "$out/share/flask-gunicorn/cert.pem"
+      install -Dm644 ${tls}/server-key.pem "$out/share/flask-gunicorn/key.pem"
       install -Dm755 run "$out/libexec/flask-gunicorn"
       makeWrapper ${pkgs.bash}/bin/bash "$out/bin/flask-gunicorn" \
         --add-flags "$out/libexec/flask-gunicorn" \

@@ -251,7 +251,7 @@ in {
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       environment = lib.optionalAttrs cfg.jvm.enable {
-        JAVA_TOOL_OPTIONS = builtins.concatStringsSep " " jvmArgs;
+        JAVA_TOOL_OPTIONS = builtins.concatStringsSep " " (jvmArgs ++ [ "-Dbenchmark.tls.directory=/etc/benchmark-tls" ]);
       };
       path = lib.optional cfg.asyncProfiler.enable pkgs.async-profiler;
       serviceConfig = {

@@ -12,10 +12,7 @@ import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
-import io.micronaut.context.BeanProvider;
 import io.micronaut.context.annotation.ConfigurationProperties;
-import io.micronaut.http.ssl.CertificateProvider;
-import io.micronaut.inject.qualifiers.Qualifiers;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -27,22 +24,15 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 import org.yaml.snakeyaml.representer.Representer;
-import reactor.core.publisher.Flux;
 import tools.jackson.databind.ObjectMapper;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.cert.Certificate;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,9 +65,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
     private final Factory factory;
     private final Path logDirectory;
-
-    private X509Certificate mtlsCert;
-    private PrivateKey mtlsKey;
 
     private final Compute.Launch controllerLaunch;
     private final List<PhaseLock> controllerLocks;
@@ -118,27 +105,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             agentLocks.addAll(r.require());
         }
 
-        if (factory.config.mtls != null) {
-            CertificateProvider provider = factory.certificateProviders.get(Qualifiers.byName(factory.config.mtls));
-            Flux.from(provider.getKeyStore()).subscribe(keyStore -> {
-                try {
-                    Enumeration<String> aliases = keyStore.aliases();
-                    while (aliases.hasMoreElements()) {
-                        String alias = aliases.nextElement();
-                        if (keyStore.isKeyEntry(alias)) {
-                            mtlsKey = (PrivateKey) keyStore.getKey(alias, "".toCharArray());
-                            mtlsCert = (X509Certificate) keyStore.getCertificate(alias);
-                            break;
-                        }
-                    }
-                } catch (Exception e) {
-                    LOG.error("Error loading key store", e);
-                }
-            });
-        } else {
-            mtlsCert = null;
-            mtlsKey = null;
-        }
     }
 
     @Override
@@ -235,7 +201,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             phaseNames.add("pgo");
         }
 
-        Client.BenchmarkRef benchmarkRef = client.register(benchmarkDefinition(body, protocol, forPgo), benchmarkFiles(), null, null);
+        Client.BenchmarkRef benchmarkRef = client.register(benchmarkDefinition(body, protocol, forPgo), Map.of(), null, null);
         Client.RunRef runRef = benchmarkRef.start("run", Map.of());
         long startTime = System.nanoTime();
         String lastPhase = null;
@@ -333,13 +299,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         return HYPERFOIL_AGENT_PREFIX + (i + 1);
     }
 
-    private Map<String, byte[]> benchmarkFiles() throws Exception {
-        if (mtlsCert == null) {
-            return Map.of();
-        }
-        return Map.of("mtls.p12", mtlsKeyStore());
-    }
-
     private Map<String, Object> runtimeAgents() {
         BenchmarkMetadata.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
         Map<String, Object> agents = new LinkedHashMap<>();
@@ -354,15 +313,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             agents.put("agent" + i, agent);
         }
         return agents;
-    }
-
-    private byte[] mtlsKeyStore() throws Exception {
-        KeyStore keyStore = KeyStore.getInstance("PKCS12");
-        keyStore.load(null, null);
-        keyStore.setKeyEntry("default", mtlsKey, "".toCharArray(), new Certificate[]{mtlsCert});
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        keyStore.store(bytes, "".toCharArray());
-        return bytes.toByteArray();
     }
 
     private String benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) throws Exception {
@@ -389,14 +339,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         }
         definition.put("agents", runtimeAgents());
 
-        if (mtlsCert != null) {
-            Map<String, Object> http = yamlMap(definition.get("http"), "Hyperfoil http configuration");
-            Map<String, Object> keyManager = new LinkedHashMap<>();
-            keyManager.put("storeFile", "mtls.p12");
-            keyManager.put("password", "");
-            http.put("keyManager", keyManager);
-            definition.put("http", http);
-        }
         return yaml().dump(definition);
     }
 
@@ -512,9 +454,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
-        private final BeanProvider<CertificateProvider> certificateProviders;
 
-        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, HyperfoilConfiguration config, BenchmarkMetadata metadata, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory, BeanProvider<CertificateProvider> certificateProviders) {
+        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, HyperfoilConfiguration config, BenchmarkMetadata metadata, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
             this.context = context;
             this.compute = compute;
             this.sshFactory = sshFactory;
@@ -525,7 +466,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                     .registerSubtypes(HttpStats.class)
                     .build();
             this.resilientForwarderFactory = resilientForwarderFactory;
-            this.certificateProviders = certificateProviders;
             this.vertx = Vertx.vertx();
 
         }
@@ -553,8 +493,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             Duration warmupDuration,
             Duration benchmarkDuration,
             Duration pgoDuration,
-            double sessionLimitFactor,
-            @Nullable String mtls
+            double sessionLimitFactor
     ) {
     }
 

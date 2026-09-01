@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   runtimeInfo = config.benchmark.sut.runtimeInfo;
+  tls = import ../../nix/tls.nix { inherit pkgs; };
   package = pkgs.maven.buildMavenPackage {
     pname = "helidon-nima";
     version = "1.0.0";
@@ -22,6 +23,11 @@ let
     ];
 
     doCheck = false;
+
+    preBuild = ''
+      install -Dm644 ${tls}/server.pem src/test/resources/benchmark-tls/server.pem
+      install -Dm644 ${tls}/server-key.pem src/test/resources/benchmark-tls/server-key.pem
+    '';
 
     installPhase = ''
       runHook preInstall

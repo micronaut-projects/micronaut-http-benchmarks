@@ -9,9 +9,14 @@ import io.helidon.webserver.http1.Http1Config;
 import io.helidon.webserver.http1.Http1ConnectionSelector;
 import io.helidon.webserver.http2.Http2Config;
 import io.helidon.webserver.http2.Http2ConnectionSelector;
-import io.netty.handler.ssl.util.SelfSignedCertificate;
 
-import java.security.cert.CertificateException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.List;
 
 public class Main {
@@ -32,8 +37,10 @@ public class Main {
         }
     }
 
-    static WebServer start(int httpPort, int httpsPort) throws CertificateException {
-        SelfSignedCertificate ssc = new SelfSignedCertificate();
+    static WebServer start(int httpPort, int httpsPort) throws Exception {
+        String tlsDirectory = System.getProperty("benchmark.tls.directory", "/etc/benchmark-tls");
+        PrivateKey privateKey = privateKey(Path.of(tlsDirectory, "server-key.pem"));
+        X509Certificate certificate = certificate(Path.of(tlsDirectory, "server.pem"));
         HttpRouting.Builder routing = HttpRouting.builder()
                 .post("/search/find", (req, res) -> {
                     Input input = req.content().as(Input.class);
@@ -55,8 +62,8 @@ public class Main {
                         .applicationProtocols(List.of("h2", "http/1.1"))
                         .addEnabledCipherSuite("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256")
                         .addEnabledCipherSuite("TLS_AES_128_GCM_SHA256")
-                        .privateKey(ssc.key())
-                        .privateKeyCertChain(List.of(ssc.cert()))
+                        .privateKey(privateKey)
+                        .privateKeyCertChain(List.of(certificate))
                         .build())
                         .host("0.0.0.0").port(httpsPort)
                         .connectionOptions(SocketOptions.builder()
@@ -66,6 +73,20 @@ public class Main {
                         .addConnectionSelector(Http2ConnectionSelector.builder().http2Config(Http2Config.builder().build()).build())
                         .routing(routing));
         return builder.build().start();
+    }
+
+    private static PrivateKey privateKey(Path path) throws Exception {
+        String pem = Files.readString(path)
+                .replace("-----BEGIN PRIVATE KEY-----", "")
+                .replace("-----END PRIVATE KEY-----", "")
+                .replaceAll("\\s", "");
+        return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(java.util.Base64.getDecoder().decode(pem)));
+    }
+
+    private static X509Certificate certificate(Path path) throws Exception {
+        try (var input = Files.newInputStream(path)) {
+            return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+        }
     }
 
     private static Result find(List<String> haystack, String needle) {
