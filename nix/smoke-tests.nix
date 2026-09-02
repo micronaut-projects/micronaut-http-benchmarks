@@ -81,14 +81,14 @@ let
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition "status-https2"))})
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition "training-https2"))})
   '';
-  localRunModules = suite: runName: profilerEnabled: runModule: extraModules: [
+  localRunModules = suite: runName: profilingEnabled: runModule: extraModules: [
     ./system/local-vm.nix
     ./system/run.nix
     { imports = suite.config.benchmark.suite.runModules; }
     { benchmark.run.name = runName; }
     {
       benchmark = {
-        asyncProfiler.enable = lib.mkForce profilerEnabled;
+        profiling.enable = lib.mkForce profilingEnabled;
         jvm.args = lib.mkForce [
           "-Xms1G"
           "-Xmx1G"
@@ -98,7 +98,7 @@ let
     }
     runModule
   ] ++ extraModules;
-  serviceTest = name: tlsHttp2: asyncProfiler: modules: pkgs.testers.runNixOSTest {
+  serviceTest = name: tlsHttp2: profiling: pySpy: artifact: modules: pkgs.testers.runNixOSTest {
     inherit name;
     nodes.machine.imports = modules;
     testScript = ''
@@ -106,16 +106,19 @@ let
       machine.wait_for_unit("multi-user.target")
       machine.succeed("systemctl start sut.service || (journalctl --no-pager -u sut.service; false)")
       machine.wait_for_unit("sut.service")
+      ${lib.optionalString pySpy ''
+        machine.succeed("systemctl cat sut.service | ${pkgs.gnugrep}/bin/grep -Fx KillSignal=SIGINT")
+      ''}
       ${verifyEndpoints tlsHttp2}
-      ${lib.optionalString asyncProfiler ''
+      ${lib.optionalString profiling ''
         machine.succeed("systemctl stop sut.service")
-        machine.succeed("test -s /var/lib/sut/profile.jfr")
+        machine.succeed("test -s /var/lib/sut/${artifact}")
       ''}
     '';
   };
   runName = run: run.system.config.benchmark.run.name;
   smokeName = run: "${runName run}-smoke";
-  runModulesFor = run: profilerEnabled: extraModules: localRunModules standard (runName run) profilerEnabled run.runModule extraModules;
+  runModulesFor = run: profilingEnabled: extraModules: localRunModules standard (runName run) profilingEnabled run.runModule extraModules;
   collectorTest = collector: pkgs.testers.runNixOSTest {
     name = smokeName collector;
     nodes.machine.imports = runModulesFor collector false [ (pgoStage "native-pgo-instrument" false null) ];
@@ -148,11 +151,11 @@ let
       optimized = optimizedRun collector;
     in [
       (lib.nameValuePair (smokeName collector) collectorOutput)
-      (lib.nameValuePair (smokeName optimized) (serviceTest (smokeName optimized) optimized.system.config.benchmark.sut.tlsHttp2 false (runModulesFor optimized false [ (pgoProfileModule collectorOutput) ])))
+      (lib.nameValuePair (smokeName optimized) (serviceTest (smokeName optimized) optimized.system.config.benchmark.sut.tlsHttp2 false false "" (runModulesFor optimized false [ (pgoProfileModule collectorOutput) ])))
     ];
-  serviceSmokeTests = map (run: lib.nameValuePair (smokeName run) (serviceTest (smokeName run) run.system.config.benchmark.sut.tlsHttp2 false (runModulesFor run false [ ])))
+  serviceSmokeTests = map (run: lib.nameValuePair (smokeName run) (serviceTest (smokeName run) run.system.config.benchmark.sut.tlsHttp2 false false "" (runModulesFor run false [ ])))
     (lib.filter (run: run.system.config.benchmark.sut.runtime != "native-pgo-instrument") enabledRuns);
   pyronaut = standardRuns.pyronaut;
-  pyronautAsyncProfilerSmoke = lib.nameValuePair "pyronaut-async-profiler-smoke" (serviceTest "pyronaut-async-profiler-smoke" pyronaut.system.config.benchmark.sut.tlsHttp2 true (runModulesFor pyronaut true [ ]));
-in lib.listToAttrs ([ pyronautAsyncProfilerSmoke ] ++ serviceSmokeTests ++ lib.concatMap pgoSmokeTests
+  profilingSmoke = run: lib.nameValuePair "${runName run}-profiling-smoke" (serviceTest "${runName run}-profiling-smoke" run.system.config.benchmark.sut.tlsHttp2 true (run.system.config.benchmark.sut.metadata.profiling.tool == "py-spy") run.system.config.benchmark.sut.metadata.profiling.artifact (runModulesFor run true [ ]));
+in lib.listToAttrs ((map profilingSmoke (lib.filter (run: run.system.config.benchmark.sut.runtime != "native-pgo-instrument") enabledRuns)) ++ serviceSmokeTests ++ lib.concatMap pgoSmokeTests
   (lib.filter (run: run.system.config.benchmark.sut.runtime == "native-pgo-instrument") enabledRuns))

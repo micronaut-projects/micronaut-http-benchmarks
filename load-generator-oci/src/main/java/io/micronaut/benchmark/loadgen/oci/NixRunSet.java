@@ -23,8 +23,8 @@ public final class NixRunSet implements FrameworkRunSet {
 
     private final List<NixFrameworkRun> runs;
 
-    public NixRunSet(BenchmarkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper, Nix nix) {
-        runs = metadata.suite().runs().stream().map(run -> new NixFrameworkRun(run, asyncProfilerHelper, nix)).toList();
+    public NixRunSet(BenchmarkMetadata metadata, Nix nix) {
+        runs = metadata.suite().runs().stream().map(run -> new NixFrameworkRun(run, nix)).toList();
     }
 
     @Override
@@ -32,7 +32,7 @@ public final class NixRunSet implements FrameworkRunSet {
         return runs;
     }
 
-    private record NixFrameworkRun(NixFrameworkMetadata metadata, AsyncProfilerHelper asyncProfilerHelper, Nix nix) implements FrameworkRun {
+    private record NixFrameworkRun(NixFrameworkMetadata metadata, Nix nix) implements FrameworkRun {
         @Override
         public String type() {
             return metadata.type();
@@ -40,12 +40,18 @@ public final class NixRunSet implements FrameworkRunSet {
 
         @Override
         public String name() {
-            return metadata.name() + (metadata.asyncProfiler() ? "-async-profiler" : "");
+            return metadata.name() + (metadata.profiling() == null ? "" : "-profile");
         }
 
         @Override
         public JsonNode parameters() {
             return metadata.parameters();
+        }
+
+        @Override
+        public Profiling profiling() {
+            NixFrameworkMetadata.ProfilingMetadata profiling = metadata.profiling();
+            return profiling == null ? null : new Profiling(profiling.tool(), profiling.artifact());
         }
 
         @Override
@@ -86,10 +92,10 @@ public final class NixRunSet implements FrameworkRunSet {
             }
             benchmarkServerClient.runAndCheck("systemctl restart -- " + SUT_SERVICE, log);
             benchmarkClosure.benchmark(progress);
-            if (metadata.asyncProfiler()) {
+            Profiling profiling = profiling();
+            if (profiling != null) {
                 benchmarkServerClient.runAndCheck("systemctl stop -- " + SUT_SERVICE, log);
-                benchmarkServerClient.download(AsyncProfilerHelper.REMOTE_PROFILE_PATH, outputDirectory.resolve(AsyncProfilerHelper.PROFILE_FILE_NAME));
-                asyncProfilerHelper.convert(outputDirectory);
+                benchmarkServerClient.download(profiling.remotePath(), outputDirectory.resolve(profiling.artifact()));
             } else {
                 benchmarkServerClient.runAndCheck("systemctl --quiet is-active -- " + SUT_SERVICE, log);
             }
@@ -120,7 +126,9 @@ public final class NixRunSet implements FrameworkRunSet {
 }
 
 record NixFrameworkMetadata(String type, String name, JsonNode parameters, String nixosConfiguration,
-                            boolean asyncProfiler, PgoMetadata pgo) {
+                            ProfilingMetadata profiling, PgoMetadata pgo) {
+    record ProfilingMetadata(String tool, String artifact) {
+    }
     record PgoMetadata(String optimizedConfiguration, String pgoDirectory) {
     }
 }

@@ -5,9 +5,12 @@ import jakarta.inject.Singleton;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -28,50 +31,73 @@ public class Nix {
         this.jsonMapper = jsonMapper;
     }
 
-    private void nix(OutputListener log, List<String> args) throws Exception {
-        List<String> cmd = new ArrayList<>(NIX_LOCAL);
-        cmd.addAll(args);
-
-        ProcessBuilder pb = new ProcessBuilder();
-        pb.directory(Path.of("nix").toFile());
-        pb.command(cmd);
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-        try (OutputStream stdout = new OutputListener.Stream(List.of(log))) {
-            process.getInputStream().transferTo(stdout);
-        }
-        int exit = process.waitFor();
-        if (exit != 0) {
-            throw new IllegalStateException("Nix exit with next output: " + exit);
-        }
+    private static ProcessBuilder processBuilder(List<String> args) {
+        List<String> command = new ArrayList<>(NIX_LOCAL.size() + args.size());
+        command.addAll(NIX_LOCAL);
+        command.addAll(args);
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(Path.of("nix").toFile());
+        return builder;
     }
 
-    private JsonNode nixJson(OutputListener log, List<String> args) throws Exception {
-        List<String> cmd = new ArrayList<>(NIX_LOCAL);
-        cmd.addAll(args);
-
-        ProcessBuilder pb = new ProcessBuilder();
-        pb.directory(Path.of("nix").toFile());
-        pb.command(cmd);
-        Process process = pb.start();
+    public static void run(List<String> args, OutputStream stdout, OutputStream stderr) throws IOException, InterruptedException {
+        Process process = processBuilder(args).start();
         AtomicReference<IOException> stderrFailure = new AtomicReference<>();
         Thread stderrThread = Thread.ofVirtual().start(() -> {
-            try {
-                process.getErrorStream().transferTo(new OutputListener.Stream(List.of(log)));
+            try (InputStream input = process.getErrorStream()) {
+                input.transferTo(stderr);
             } catch (IOException e) {
                 stderrFailure.set(e);
             }
         });
-        byte[] bytes = process.getInputStream().readAllBytes();
-        int exit = process.waitFor();
-        stderrThread.join();
+        IOException stdoutFailure = null;
+        try (InputStream input = process.getInputStream()) {
+            input.transferTo(stdout);
+        } catch (IOException e) {
+            stdoutFailure = e;
+        }
+        int exit;
+        try {
+            exit = process.waitFor();
+            stderrThread.join();
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            process.waitFor();
+            Thread.currentThread().interrupt();
+            throw e;
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+                try {
+                    process.waitFor();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
         if (stderrFailure.get() != null) {
             throw stderrFailure.get();
         }
-        if (exit != 0) {
-            throw new IllegalStateException("Nix exit with next output: " + exit);
+        if (stdoutFailure != null) {
+            throw stdoutFailure;
         }
-        return jsonMapper.readTree(bytes);
+        if (exit != 0) {
+            throw new IOException("Nix exited with exit code " + exit);
+        }
+    }
+
+    private void nix(OutputListener log, List<String> args) throws Exception {
+        try (OutputStream stream = synchronizedOutputStream(new OutputListener.Stream(List.of(log)))) {
+            run(args, stream, stream);
+        }
+    }
+
+    private JsonNode nixJson(OutputListener log, List<String> args) throws Exception {
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        try (OutputStream stderr = new OutputListener.Stream(List.of(log))) {
+            run(args, stdout, stderr);
+        }
+        return jsonMapper.readTree(stdout.toByteArray());
     }
 
     public Path build(OutputListener log, String installable) throws Exception {
@@ -138,33 +164,39 @@ public class Nix {
     }
 
     private Path nixStoreAdd(OutputListener log, List<String> args) throws Exception {
-        List<String> command = new ArrayList<>(NIX_LOCAL);
-        command.addAll(args);
-        ProcessBuilder processBuilder = new ProcessBuilder(command);
-        processBuilder.directory(Path.of("nix").toFile());
-        Process process = processBuilder.start();
-        AtomicReference<IOException> stderrFailure = new AtomicReference<>();
-        Thread stderrThread = Thread.ofVirtual().start(() -> {
-            try (OutputStream stderr = new OutputListener.Stream(List.of(log))) {
-                process.getErrorStream().transferTo(stderr);
-            } catch (IOException e) {
-                stderrFailure.set(e);
-            }
-        });
-        byte[] output = process.getInputStream().readAllBytes();
-        int exit = process.waitFor();
-        stderrThread.join();
-        if (stderrFailure.get() != null) {
-            throw stderrFailure.get();
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        try (OutputStream stderr = new OutputListener.Stream(List.of(log))) {
+            run(args, stdout, stderr);
         }
-        if (exit != 0) {
-            throw new IllegalStateException("Nix exit with next output: " + exit);
-        }
-        String storePath = new String(output, java.nio.charset.StandardCharsets.UTF_8).strip();
+        String storePath = new String(stdout.toByteArray(), StandardCharsets.UTF_8).strip();
         if (storePath.lines().count() != 1) {
             throw new IllegalStateException("Malformed Nix store path: " + storePath);
         }
         return outputPath(storePath);
+    }
+
+    private static OutputStream synchronizedOutputStream(OutputStream delegate) {
+        return new OutputStream() {
+            @Override
+            public synchronized void write(int b) throws IOException {
+                delegate.write(b);
+            }
+
+            @Override
+            public synchronized void write(byte[] b, int off, int len) throws IOException {
+                delegate.write(b, off, len);
+            }
+
+            @Override
+            public synchronized void flush() throws IOException {
+                delegate.flush();
+            }
+
+            @Override
+            public synchronized void close() throws IOException {
+                delegate.close();
+            }
+        };
     }
 
     private static Path outputPath(String value) {

@@ -46,11 +46,13 @@
           type = cfg.sut.metadata.type;
           parameters = cfg.sut.metadata.parameters;
           nixosConfiguration = configurationName;
-          asyncProfiler = cfg.asyncProfiler.enable;
+          profiling = cfg.sut.metadata.profiling;
           pgo = cfg.sut.metadata.pgo;
         } // metadataOverrides;
       };
-    pgoStage = runtime: enabled: pgo: {
+    pgoStage = runtime: enabled: pgo: lib.optionalAttrs (runtime == "native-pgo-instrument") {
+      benchmark.profiling.enable = lib.mkForce false;
+    } // {
       benchmark.sut = {
         runtime = lib.mkForce runtime;
         metadata.enabled = lib.mkForce enabled;
@@ -69,6 +71,7 @@
       in if probe.system.config.benchmark.sut.runtime == "native-pgo" then {
         "${runName}-collector" = evaluateRun suiteName suite "${runName}-collector" runModule [ (pgoStage "native-pgo-instrument" true pgo) ] {
           name = "${suiteName}-${runName}";
+          profiling = probe.metadata.profiling;
         };
         "${runName}-optimized" = evaluateRun suiteName suite "${runName}-optimized" runModule [ (pgoStage "native-pgo" false null) ] { };
       } else {
@@ -138,6 +141,13 @@
           || (role.instance.diskPerformanceUnits != null && role.instance.diskPerformanceUnits < 0)
           || (role.activatable && role.instance.platform == null)
         ) rolesWithMetadata;
+        profiledNativeRuns = lib.filter (run:
+          run.system.config.benchmark.profiling.enable && run.system.config.benchmark.sut.runtimeInfo.isNative
+        ) suiteRuns;
+        pySpyRuns = lib.filter (run:
+          run.system.config.benchmark.profiling.enable
+          && run.system.config.benchmark.sut.metadata.profiling.tool == "py-spy"
+        ) suiteRuns;
       in
       assert lib.assertMsg (duplicateNames roleNames == [ ]) "Duplicate OCI instance metadata names: ${lib.concatStringsSep ", " (duplicateNames roleNames)}";
       assert lib.assertMsg (duplicateRunNames == [ ]) "Duplicate suite-local run names: ${lib.concatStringsSep ", " duplicateRunNames}";
@@ -145,6 +155,8 @@
       assert lib.assertMsg (duplicateNames outputNames == [ ]) "Duplicate package output names: ${lib.concatStringsSep ", " (duplicateNames outputNames)}";
       assert lib.assertMsg (invalidRoles == [ ]) "Malformed OCI instance metadata for: ${lib.concatStringsSep ", " (map (role: role.name) invalidRoles)}";
       assert lib.assertMsg (builtins.all (suite: builtins.isList suite.runs && builtins.isList suite.documents && builtins.isAttrs suite.protocols && builtins.isAttrs suite.statusRequest) (lib.attrValues metadataSuites)) "Benchmark metadata has the suite schema expected by the load generator";
+      assert lib.assertMsg (builtins.all (run: run.system.config.benchmark.sut.runtimeInfo.keepDebugSymbols && lib.all (argument: lib.elem argument run.system.config.benchmark.sut.runtimeInfo.nativeImageArgs) [ "-g" "-H:+PreserveFramePointer" "-H:-DeleteLocalSymbols" ]) profiledNativeRuns) "Profiled native runs must retain native-image and local symbols.";
+      assert lib.assertMsg (builtins.all (run: run.system.config.systemd.services.sut.serviceConfig.KillSignal == "SIGINT") pySpyRuns) "Python py-spy profiling runs must stop with SIGINT.";
       true;
 
     instanceTypes = lib.listToAttrs (map (role: lib.nameValuePair role.name role.instance) rolesWithMetadata);
@@ -188,6 +200,7 @@
       assert metadataAssertions;
       {
         benchmark-tls = import ./tls.nix { inherit pkgs; };
+        profiling-perf = pkgs.linuxPackages.perf;
         oci-bootstrap-image = ociBootstrapImage system;
         benchmark-metadata = metadataPackage system "benchmark-metadata.json" (benchmarkMetadata // { benchmarkDefinitions = benchmarkDefinitionsPackage system; });
         benchmark-definitions = benchmarkDefinitionsPackage system;

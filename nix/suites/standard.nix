@@ -33,7 +33,7 @@
       emmett-granian.imports = [ ../../sut/emmett-granian ];
       #vertx.imports = [ ../../sut/vertx ];
     };
-    asyncProfiler = {
+    profiling = {
       enable = true;
     };
   };

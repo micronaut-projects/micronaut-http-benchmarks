@@ -25,7 +25,6 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.sql.Date;
 import java.time.Duration;
@@ -79,10 +78,10 @@ public class Main {
     private final double minTime;
     private final double maxTime = Duration.ofMillis(200).toNanos();
     private final List<SuiteRunner.BenchmarkParameters> index;
-    private final boolean asyncProfiler;
     private final Map<SuiteRunner.BenchmarkParameters, JfrSummary> jfrSummaries;
+    private final Map<SuiteRunner.BenchmarkParameters, ProfileConverter.ProfileArtifacts> profiles;
 
-    private Main() throws IOException {
+    private Main() throws IOException, InterruptedException {
         index = mapper.readValue(OUTPUT.resolve("index.json").toFile(), new TypeReference<>() {
         });
         index.sort(Comparator.comparing(SuiteRunner.BenchmarkParameters::name));
@@ -102,21 +101,28 @@ public class Main {
                 .mapToDouble(HyperfoilRunner.StatsAll.Percentile::to)
                 .min().orElseThrow();
 
-        asyncProfiler = index.stream().anyMatch(p -> p.name().contains("-async-profiler"));
-        if (asyncProfiler && !index.stream().allMatch(p -> p.name().contains("-async-profiler"))) {
-            //throw new IllegalStateException("Can't mix async-profiler with normal results");
-        }
-
-        if (asyncProfiler) {
-            jfrSummaries = new HashMap<>();
-            for (SuiteRunner.BenchmarkParameters parameters : index) {
-                Path path = OUTPUT.resolve(parameters.name()).resolve("profile.jfr");
-                if (!Files.exists(path) || Files.size(path) == 0) {
-                    continue;
-                }
+        profiles = new HashMap<>();
+        jfrSummaries = new HashMap<>();
+        for (SuiteRunner.BenchmarkParameters parameters : index) {
+            if (parameters.profiling() == null) {
+                continue;
+            }
+            Path directory = OUTPUT.resolve(parameters.name());
+            ProfileConverter.ProfileArtifacts profile;
+            try {
+                profile = ProfileConverter.convert(directory, parameters.profiling());
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw exception;
+            } catch (IOException | IllegalArgumentException exception) {
+                System.err.println("Failed to convert profile for " + parameters.name() + ": " + exception.getMessage());
+                profile = ProfileConverter.ProfileArtifacts.failed(parameters.profiling(), directory.resolve(parameters.profiling().artifact()));
+            }
+            profiles.put(parameters, profile);
+            if (profile.available() && "async-profiler".equals(parameters.profiling().tool())) {
                 JfrSummary summary = new JfrSummary();
                 jfrSummaries.put(parameters, summary);
-                try (JfrReader jfr = new JfrReader(path.toString())) {
+                try (JfrReader jfr = new JfrReader(profile.raw().toString())) {
                     while (true) {
                         Event event = jfr.readEvent();
                         if (event == null) {
@@ -139,8 +145,6 @@ public class Main {
                     }
                 }
             }
-        } else {
-            jfrSummaries = null;
         }
     }
 
@@ -177,7 +181,7 @@ public class Main {
         Map<CpuUsageMetric, Double> maxCpu;
         DropdownSelector cpuMetricSelector;
         Map<CpuUsageMetric, DropdownSelector.OptionAttribute> metricAttributes;
-        if (asyncProfiler) {
+        if (!jfrSummaries.isEmpty()) {
             cpuMetricSelector = new DropdownSelector();
             metricAttributes = new EnumMap<>(CpuUsageMetric.class);
             for (CpuUsageMetric metric : CpuUsageMetric.values()) {
@@ -206,7 +210,8 @@ public class Main {
             loadGroup.add(
                     parameters,
                     getBenchmark(parameters.name()),
-                    jfrSummaries == null ? null : jfrSummaries.get(parameters)
+                    jfrSummaries.get(parameters),
+                    profiles.get(parameters)
             );
         }
 
@@ -256,7 +261,7 @@ public class Main {
                 .append("' max='").append(Math.log10(Duration.ofSeconds(2).toNanos()))
                 .append("' value='").append(Math.log10(maxTime))
                 .append("' oninput='updateMaxTime(Math.pow(10, this.value))' step='any'> <span></span></label>");
-        if (asyncProfiler) {
+        if (!jfrSummaries.isEmpty()) {
             html.append("<label>CPU Usage Metric: ");
             cpuMetricSelector.emitSelect(html);
             html.append("</label>");
@@ -274,18 +279,24 @@ public class Main {
         Main main = new Main();
         String html = main.plot();
 
-        Path outputRoot = Paths.get("output");
+        Path outputRoot = OUTPUT.toAbsolutePath().normalize();
         Path plotFile = outputRoot.resolve("plot.html");
         Files.writeString(plotFile, html);
 
         List<Path> resultFiles = new ArrayList<>();
         resultFiles.add(plotFile);
-        for (SuiteRunner.BenchmarkParameters parameters : main.index) {
-            for (String s : List.of("flamegraph.html", "heatmap.html", "profile.jfr")) {
-                Path f = outputRoot.resolve(parameters.name()).resolve(s);
-                if (Files.exists(f)) {
-                    resultFiles.add(f);
-                }
+        for (ProfileConverter.ProfileArtifacts profile : main.profiles.values()) {
+            if (profile.raw() != null) {
+                resultFiles.add(profile.raw());
+            }
+            if (profile.flamegraph() != null && Files.exists(profile.flamegraph())) {
+                resultFiles.add(profile.flamegraph());
+            }
+            if (profile.reverseFlamegraph() != null && Files.exists(profile.reverseFlamegraph())) {
+                resultFiles.add(profile.reverseFlamegraph());
+            }
+            if (profile.heatmap() != null && Files.exists(profile.heatmap())) {
+                resultFiles.add(profile.heatmap());
             }
         }
 
@@ -293,9 +304,9 @@ public class Main {
         Path zipped = outputRoot.resolve("plot.zip");
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(zipped))) {
             for (Path file : resultFiles) {
-                assert file.startsWith(outputRoot);
-                zip.putNextEntry(new ZipEntry(outputRoot.relativize(file).toString()));
-                Files.copy(file, zip);
+                Path contained = requireOutputPath(outputRoot, file);
+                zip.putNextEntry(new ZipEntry(outputRoot.relativize(contained).toString()));
+                Files.copy(contained, zip);
             }
         }
 
@@ -305,17 +316,17 @@ public class Main {
             String prefix = Instant.now() + "/";
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             for (Path file : resultFiles) {
-                System.out.println("Uploading " + file);
-                byte[] bytes = Files.readAllBytes(file);
-                assert file.startsWith(outputRoot);
+                Path contained = requireOutputPath(outputRoot, file);
+                System.out.println("Uploading " + contained);
+                byte[] bytes = Files.readAllBytes(contained);
                 os.putObject(PutObjectRequest.builder()
                         .namespaceName("oraclelabs")
                         .bucketName("benchmark-results")
-                        .objectName(prefix + outputRoot.relativize(file))
+                        .objectName(prefix + outputRoot.relativize(contained))
                         .opcContentSha256(Base64.getEncoder().encodeToString(md.digest(bytes)))
                         .contentLength((long) bytes.length)
                         .putObjectBody(new ByteArrayInputStream(bytes))
-                        .contentType(file.toString().endsWith(".jfr") ? "application/octet-stream" : "text/html")
+                        .contentType(contained.toString().endsWith(".html") ? "text/html" : "application/octet-stream")
                         .build());
                 md.reset();
             }
@@ -336,6 +347,14 @@ public class Main {
             System.out.println("Result URI: " + uri);
             Runtime.getRuntime().exec(new String[]{"firefox", uri});
         }
+    }
+
+    private static Path requireOutputPath(Path outputRoot, Path file) {
+        Path normalized = file.toAbsolutePath().normalize();
+        if (!normalized.startsWith(outputRoot)) {
+            throw new IllegalArgumentException("Result file escapes output directory: " + file);
+        }
+        return normalized;
     }
 
     record Discriminator(

@@ -31,7 +31,6 @@ dependencies {
     api(libs.hyperfoil.api)
     api(libs.hyperfoil.core)
     api(libs.hyperfoil.clustering)
-    api(libs.async.profiler.jfr.converter)
     implementation(libs.mina.sshd.core)
     implementation(libs.mina.sshd.scp)
     implementation(libs.mina.sshd.sftp)

@@ -71,16 +71,3 @@ storage-bucket-name = "benchmark-storage"
 version=24
 common-options="-XX:+UseZGC -Xms12G -Xmx12G -Dio.netty.iouring.iosqeAsyncThreshold=2147483647 -Dio.netty.iouring.ringSize=8192"
 option-choices={ ""="" }
-
-[[async-profiler.conversion]]
-input="profile.jfr"
-output="flamegraph.html"
-args="--output html"
-[[async-profiler.conversion]]
-input="profile.jfr"
-output="flamegraph-reverse.html"
-args="-r --output html"
-[[async-profiler.conversion]]
-input="profile.jfr"
-output="heatmap.html"
-args="--output heatmap"

@@ -14,14 +14,27 @@ let
       inherit isJvm isNative isPgo;
       label = "python";
       displayName = "Nix-packaged Python ${pkgs.python3.version}";
+      keepDebugSymbols = false;
+      nativeImageArgs = [ ];
     } else {
       buildPackage = toolchain.package;
       inherit isJvm isNative isPgo;
       label = if isPgo then "${toolchain.metadataLabel}-pgo" else toolchain.metadataLabel;
       displayName = "${toolchain.displayName}${lib.optionalString (!isJvm) " native image"}${lib.optionalString isPgo " PGO"}";
+      keepDebugSymbols = isNative && cfg.profiling.enable;
+      nativeImageArgs = lib.optionals (isNative && cfg.profiling.enable) [ "-g" "-H:+PreserveFramePointer" "-H:-DeleteLocalSymbols" ];
     };
-  asyncProfilerArgs = cfg.asyncProfiler.args;
-  jvmArgs = cfg.jvm.args ++ cfg.jvm.extraArgs ++ lib.optional cfg.asyncProfiler.enable "-agentpath:${pkgs.async-profiler}/lib/libasyncProfiler.so=${asyncProfilerArgs},file=/var/lib/sut/profile.jfr";
+  profilingTool = if runtimeProjection.isJvm then "async-profiler" else if runtimeProjection.isNative then "perf" else "py-spy";
+  profilingArtifact = if runtimeProjection.isJvm then "profile.jfr" else if runtimeProjection.isNative then "profile.data" else "profile.txt";
+  profilingPath = "/var/lib/sut/${profilingArtifact}";
+  profilingPackage = if runtimeProjection.isJvm then pkgs.async-profiler else if runtimeProjection.isNative then pkgs.linuxPackages.perf else pkgs.py-spy;
+  jvmArgs = cfg.jvm.args ++ cfg.jvm.extraArgs ++ lib.optional cfg.profiling.enable "-agentpath:${pkgs.async-profiler}/lib/libasyncProfiler.so=${cfg.profiling.args},file=${profilingPath}";
+  sutCommand = "${cfg.sut.package}/bin/${cfg.sut.executable}";
+  profilingLauncher = pkgs.writeShellScript "benchmark-profile-${cfg.run.name}" (if runtimeProjection.isNative then ''
+    exec ${pkgs.linuxPackages.perf}/bin/perf record -F 99 -e cpu-clock --call-graph fp -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
+  '' else ''
+    exec ${pkgs.py-spy}/bin/py-spy record --rate 1 --format raw --subprocesses -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
+  '');
 in {
   options.benchmark = {
     run.name = mkOption {
@@ -29,13 +42,13 @@ in {
       description = "The suite-local identity of this benchmark run.";
     };
 
-    asyncProfiler = mkOption {
+    profiling = mkOption {
       type = types.submodule {
         options = {
           enable = mkOption {
             type = types.bool;
             default = false;
-            description = "Enable the Nix-provided async-profiler JVM agent for this run.";
+            description = "Enable the runtime-specific low-overhead profiler for this run.";
           };
 
           args = mkOption {
@@ -100,8 +113,10 @@ in {
             isJvm = mkOption { type = types.bool; };
             isNative = mkOption { type = types.bool; };
             isPgo = mkOption { type = types.bool; };
+            keepDebugSymbols = mkOption { type = types.bool; };
             label = mkOption { type = types.str; };
             displayName = mkOption { type = types.str; };
+            nativeImageArgs = mkOption { type = types.listOf types.str; };
           };
         };
         default = runtimeProjection;
@@ -177,6 +192,16 @@ in {
           default = null;
         };
 
+        profiling = mkOption {
+          type = types.nullOr (types.submodule {
+            options = {
+              tool = mkOption { type = types.enum [ "async-profiler" "perf" "py-spy" ]; };
+              artifact = mkOption { type = types.str; };
+            };
+          });
+          default = null;
+        };
+
         enabled = mkOption {
           type = types.bool;
           default = true;
@@ -233,6 +258,10 @@ in {
     benchmark.sut.metadata = {
       type = builtins.concatStringsSep "-" ([ cfg.sut.metadata.typePrefix cfg.sut.runtimeInfo.label ] ++ lib.optional (cfg.sut.metadata.typeSuffix != null) cfg.sut.metadata.typeSuffix);
       parameters.runtime = cfg.sut.runtimeInfo.displayName;
+      profiling = if cfg.profiling.enable then {
+        tool = profilingTool;
+        artifact = profilingArtifact;
+      } else null;
     };
     users.users.sut = {
       isSystemUser = true;
@@ -253,16 +282,16 @@ in {
       environment = lib.optionalAttrs cfg.jvm.enable {
         JAVA_TOOL_OPTIONS = builtins.concatStringsSep " " (jvmArgs ++ [ "-Dbenchmark.tls.directory=/etc/benchmark-tls" ]);
       };
-      path = lib.optional cfg.asyncProfiler.enable pkgs.async-profiler;
+      path = lib.optional cfg.profiling.enable profilingPackage;
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "all";
-        ExecStart = "${cfg.sut.package}/bin/${cfg.sut.executable}";
+        ExecStart = if cfg.profiling.enable && !cfg.sut.runtimeInfo.isJvm then profilingLauncher else sutCommand;
         Environment = cfg.sut.environment;
         User = "sut";
         StateDirectory = "sut";
         StateDirectoryMode = "0755";
-        ExecStartPre = lib.optional cfg.asyncProfiler.enable "${pkgs.coreutils}/bin/rm -f /var/lib/sut/profile.jfr"
+        ExecStartPre = lib.optional cfg.profiling.enable "${pkgs.coreutils}/bin/rm -f ${profilingPath}"
           ++ lib.optionals (cfg.sut.runtime == "native-pgo-instrument") [
             "${pkgs.coreutils}/bin/mkdir -p /var/lib/sut/pgo"
             "${pkgs.findutils}/bin/find /var/lib/sut/pgo -mindepth 1 -delete"
@@ -277,9 +306,9 @@ in {
         StandardError = "journal";
         LimitNOFILE = 65536;
         TimeoutStartSec = 130;
+      } // lib.optionalAttrs (cfg.profiling.enable && profilingTool == "py-spy") {
+        KillSignal = "SIGINT";
       };
     };
-  } (mkIf (cfg.sut.runtime != "hotspot") {
-    benchmark.asyncProfiler.enable = lib.mkForce false;
-  })];
+  }];
 }

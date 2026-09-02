@@ -83,8 +83,9 @@ public final class SuiteRunner {
                     index.add(new BenchmarkParameters(
                             name,
                             run.type(),
-                            run.parameters(),
-                            loadVariant,
+                             run.parameters(),
+                             run.profiling(),
+                             loadVariant,
                             repetition,
                             infraFactory.compute().getInstanceType(Infrastructure.BENCHMARK_SERVER_INSTANCE_TYPE)
                     ));
@@ -242,6 +243,7 @@ public final class SuiteRunner {
             String name,
             String type,
             Object parameters,
+            @io.micronaut.core.annotation.Nullable FrameworkRun.Profiling profiling,
             LoadVariant load,
             int repetition,
         BenchmarkMetadata.InstanceType sutSpecs

@@ -71,8 +71,9 @@ final class LoadGroup {
         return this;
     }
 
-    void add(SuiteRunner.BenchmarkParameters parameters, HyperfoilRunner.StatsAll result, @Nullable JfrSummary jfrSummary) {
-        index.add(new Entry(parameters, result, jfrSummary));
+    void add(SuiteRunner.BenchmarkParameters parameters, HyperfoilRunner.StatsAll result, @Nullable JfrSummary jfrSummary,
+             @Nullable ProfileConverter.ProfileArtifacts profile) {
+        index.add(new Entry(parameters, result, jfrSummary, profile));
     }
 
     private static DiscriminatorLabel getDiscriminator(SuiteRunner.BenchmarkParameters p) {
@@ -245,8 +246,8 @@ final class LoadGroup {
             html.append("<dt").append(htmlAttr()).append(">SUT</dt><dd").append(htmlAttr()).append(">")
                     .append(formatSut(sut))
                     .append("</dd>");
-            if (index.stream().anyMatch(e -> e.jfrSummary != null)) {
-                html.append("<dt").append(htmlAttr()).append(">async-profiler</dt><dd class='warning ").append(htmlClass()).append("'>enabled</dd>");
+            if (index.stream().anyMatch(e -> e.profile != null && e.profile.available())) {
+                html.append("<dt").append(htmlAttr()).append(">profiling</dt><dd class='warning ").append(htmlClass()).append("'>enabled</dd>");
             }
         } else {
             for (LoadGroup child : children) {
@@ -358,10 +359,17 @@ final class LoadGroup {
             for (Entry entry : index) {
                 if (getDiscriminator(entry.parameters).equals(d.label)) {
                     html.append("<h3>").append(entry.parameters.name()).append("</h3><ul>");
-                    if (entry.jfrSummary != null) {
-                        html.append("<li><a href='").append(entry.parameters.name()).append("/flamegraph.html'>Flamegraph</a></li>");
-                        html.append("<li><a href='").append(entry.parameters.name()).append("/heatmap.html'>Heatmap</a></li>");
-                        html.append("<li><a href='").append(entry.parameters.name()).append("/profile.jfr'>Profile</a></li>");
+                    if (entry.profile != null && entry.profile.available()) {
+                        if (entry.profile.flamegraph() != null) {
+                            html.append("<li><a href='").append(entry.parameters.name()).append("/flamegraph.html'>Flamegraph</a></li>");
+                        }
+                        if (entry.profile.reverseFlamegraph() != null) {
+                            html.append("<li><a href='").append(entry.parameters.name()).append("/flamegraph-reverse.html'>Reverse flamegraph</a></li>");
+                        }
+                        if (entry.profile.heatmap() != null) {
+                            html.append("<li><a href='").append(entry.parameters.name()).append("/heatmap.html'>Heatmap</a></li>");
+                        }
+                        html.append("<li><a href='").append(entry.parameters.name()).append('/').append(entry.profile.profiling().artifact()).append("'>Profile</a></li>");
                     }
                     html.append("</ul>");
                 }
@@ -376,11 +384,13 @@ final class LoadGroup {
      * @param parameters The parameters
      * @param result     The hyperfoil result
      * @param jfrSummary The summary of the collected JFR file, if any
+     * @param profile    The converted profile artifacts, if any
      */
     private record Entry(
             SuiteRunner.BenchmarkParameters parameters,
             HyperfoilRunner.StatsAll result,
-            @Nullable JfrSummary jfrSummary
+            @Nullable JfrSummary jfrSummary,
+            @Nullable ProfileConverter.ProfileArtifacts profile
     ) {
     }
 

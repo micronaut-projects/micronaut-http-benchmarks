@@ -33,9 +33,10 @@ let
       };
 
       gradleBuildTask = if runtime == "hotspot" then "jar" else "nativeCompile";
-      nativeGradleFlags = lib.optionals (runtime != "hotspot") [ "-PnativeBuild" ]
-        ++ lib.optionals (runtime == "native-pgo-instrument") [ "-PnativeImageArgs=--pgo-instrument" ]
-        ++ lib.optionals (runtime == "native-pgo") [ "-PnativeImageArgs=--pgo=${pgoDirectory}/default.iprof" ];
+      dontStrip = runtimeInfo.keepDebugSymbols;
+      nativeGradleFlags = lib.optionals (runtime != "hotspot") [ "-PnativeBuild" "-PnativeImageArgs=${lib.concatStringsSep "," (runtimeInfo.nativeImageArgs
+        ++ lib.optionals (runtime == "native-pgo-instrument") [ "--pgo-instrument" ]
+        ++ lib.optionals (runtime == "native-pgo") [ "--pgo=${pgoDirectory}/default.iprof" ])}" ];
       gradleUpdateTaskSuffix = lib.optionalString (runtime != "hotspot") " --dry-run";
       gradleUpdateScript = ''
         gradle nixDownloadDeps -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}

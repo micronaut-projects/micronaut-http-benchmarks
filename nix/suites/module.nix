@@ -2,7 +2,7 @@
 let
   inherit (lib) mkIf mkOption types;
   benchmarkTypes = import ./types.nix { inherit lib; };
-  asyncProfiler = types.submodule {
+  profiling = types.submodule {
     options = {
       enable = mkOption {
         type = types.bool;
@@ -43,17 +43,17 @@ in {
       description = "Reusable aspects composed into every run in this suite.";
     };
 
-    asyncProfiler = mkOption {
-      type = asyncProfiler;
+    profiling = mkOption {
+      type = profiling;
       default = { };
-      description = "Configure async-profiler for JVM SUT runs in this suite.";
+      description = "Configure low-overhead runtime-specific profiling for all suite SUTs.";
     };
   };
 
-  config.benchmark.suite.runModules = mkIf config.benchmark.suite.asyncProfiler.enable [{
-    benchmark.asyncProfiler = {
+  config.benchmark.suite.runModules = mkIf config.benchmark.suite.profiling.enable [{
+    benchmark.profiling = {
       enable = lib.mkDefault true;
-      args = config.benchmark.suite.asyncProfiler.args;
+      args = config.benchmark.suite.profiling.args;
     };
   }];
 }

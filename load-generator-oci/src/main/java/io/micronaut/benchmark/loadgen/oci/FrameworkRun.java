@@ -35,9 +35,25 @@ public interface FrameworkRun {
     @Nullable
     Object parameters();
 
+    @Nullable
+    Profiling profiling();
+
     List<NixosConfiguration> nixosConfigurations();
 
     record NixosConfiguration(String name, boolean dynamicPgo) {
+    }
+
+    record Profiling(String tool, String artifact) {
+        public Profiling {
+            Path artifactPath = Path.of(artifact);
+            if (artifact.isBlank() || artifactPath.isAbsolute() || artifactPath.getNameCount() != 1 || artifact.equals(".") || artifact.equals("..") || artifact.contains("\\")) {
+                throw new IllegalArgumentException("Profiling artifact must be a single filename: " + artifact);
+            }
+        }
+
+        public String remotePath() {
+            return "/var/lib/sut/" + artifact;
+        }
     }
 
     /**

@@ -19,11 +19,13 @@ let
     mvnHash = "sha256-xVJKLzUwsFhRlLRJo7sMsQWKkYJgKD7iOoBoC+1xEv4=";
 
     mvnJdk = runtimeInfo.buildPackage;
+    dontStrip = runtimeInfo.keepDebugSymbols;
 
     mvnParameters = builtins.concatStringsSep " " ([ ]
       ++ pkgs.lib.optionals (runtime != "hotspot") [ "-Pnative" ]
-      ++ pkgs.lib.optionals (runtime == "native-pgo-instrument") [ "-Dquarkus.native.additional-build-args=--pgo-instrument" ]
-      ++ pkgs.lib.optionals (runtime == "native-pgo") [ "-Dquarkus.native.additional-build-args=--pgo=${pgoDirectory}/default.iprof" ]);
+      ++ pkgs.lib.optionals (runtime != "hotspot") [ "-Dquarkus.native.additional-build-args=${builtins.concatStringsSep "," (runtimeInfo.nativeImageArgs
+        ++ pkgs.lib.optionals (runtime == "native-pgo-instrument") [ "--pgo-instrument" ]
+        ++ pkgs.lib.optionals (runtime == "native-pgo") [ "--pgo=${pgoDirectory}/default.iprof" ])}" ]);
 
     nativeBuildInputs = [
       pkgs.makeWrapper
