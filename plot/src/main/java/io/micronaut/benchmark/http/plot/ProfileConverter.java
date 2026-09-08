@@ -49,34 +49,97 @@ final class ProfileConverter {
 
     private static ProfileArtifacts convertPerf(Path directory, FrameworkRun.Profiling profiling, Path raw) throws IOException, InterruptedException {
         Path perfScript = Files.createTempFile(directory, "profile-perf-script-", ".txt");
-        Path collapsed = Files.createTempFile(directory, "profile-perf-", ".txt");
         try {
             try (OutputStream output = Files.newOutputStream(perfScript)) {
-                Nix.run(perfScriptCommand(raw), output, System.err);
+                Nix.run(perfScriptCommand(directory, profiling, raw), output, System.err);
             }
-            try (BufferedReader input = Files.newBufferedReader(perfScript);
-                 BufferedWriter writer = Files.newBufferedWriter(collapsed)) {
-                PerfStackCollapse.convert(input, writer);
-            }
-            Path flamegraph = convert(directory, "flamegraph.html", output -> FlameGraph.convert(collapsed.toString(), output.toString(), new Arguments("--output", "html")));
-            return new ProfileArtifacts(profiling, raw, flamegraph, null, null);
+            return convertPerfScript(directory, profiling, raw, perfScript);
         } finally {
             Files.deleteIfExists(perfScript);
-            Files.deleteIfExists(collapsed);
         }
     }
 
-    static List<String> perfScriptCommand(Path raw) {
-        String profile = raw.toAbsolutePath().normalize().toString();
+    static ProfileArtifacts convertPerfScript(
+            Path directory, FrameworkRun.Profiling profiling, Path raw, Path perfScript) throws IOException {
+        try {
+            Path collapsed = Files.createTempFile(directory, "profile-perf-", ".txt");
+            Path flamegraph;
+            try {
+                try (BufferedReader input = Files.newBufferedReader(perfScript);
+                     BufferedWriter writer = Files.newBufferedWriter(collapsed)) {
+                    PerfStackCollapse.convert(input, writer);
+                }
+                flamegraph = convert(directory, "flamegraph.html", output ->
+                        FlameGraph.convert(collapsed.toString(), output.toString(), new Arguments("--output", "html")));
+            } finally {
+                Files.deleteIfExists(collapsed);
+            }
+
+            Path syntheticJfr = Files.createTempFile(directory, "profile-perf-", ".jfr");
+            try {
+                PerfJfrWriter.convert(perfScript, syntheticJfr);
+                Path heatmap = convert(directory, "heatmap.html", output -> convertHeatmap(syntheticJfr, output));
+                return new ProfileArtifacts(profiling, raw, flamegraph, null, heatmap);
+            } finally {
+                Files.deleteIfExists(syntheticJfr);
+            }
+        } catch (IOException | RuntimeException failure) {
+            deleteAfterFailedPerfConversion(directory, failure);
+            throw failure;
+        }
+    }
+
+    private static void deleteAfterFailedPerfConversion(Path directory, Exception failure) {
+        for (String name : new String[]{"flamegraph.html", "heatmap.html"}) {
+            try {
+                Files.deleteIfExists(directory.resolve(name));
+            } catch (IOException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    static void convertHeatmap(Path input, Path output) throws IOException {
+        JfrToHeatmap.convert(input.toString(), output.toString(), new Arguments("--output", "heatmap"));
+        try (BufferedReader reader = Files.newBufferedReader(output)) {
+            if ("No samples found".equals(reader.readLine())) {
+                throw new IOException("Heatmap conversion found no samples");
+            }
+        }
+    }
+
+    static List<String> perfScriptCommand(Path directory, FrameworkRun.Profiling profiling, Path raw) throws IOException {
+        String injectedArtifact = profiling.injectedArtifact();
+        String symbolDirectory = profiling.symbolDirectory();
+        if (injectedArtifact == null && symbolDirectory == null) {
+            return List.of(
+                    "shell", ".#profiling-perf", "--command", "perf", "script", "--ns", "-i",
+                    raw.toAbsolutePath().normalize().toString());
+        }
+        if (injectedArtifact == null || symbolDirectory == null) {
+            throw new IOException("Perf supplemental metadata must declare both injectedArtifact and symbolDirectory");
+        }
+
+        Path injected = directory.resolve(injectedArtifact).toAbsolutePath().normalize();
+        Path symbols = directory.resolve(symbolDirectory).toAbsolutePath().normalize();
+        if (!Files.isRegularFile(injected) || Files.size(injected) == 0) {
+            throw new IOException("Declared perf injected artifact must be a non-empty file: " + injected);
+        }
+        if (!isNonEmptyDirectory(symbols)) {
+            throw new IOException("Declared perf symbol directory must be a non-empty directory: " + symbols);
+        }
         return List.of(
-                "shell",
-                ".#profiling-perf",
-                "--command",
-                "perf",
-                "script",
-                "-i",
-                profile
-        );
+                "shell", ".#profiling-perf", "--command", "perf", "script", "--ns",
+                "--symfs", symbols.toString(), "-i", injected.toString());
+    }
+
+    private static boolean isNonEmptyDirectory(Path directory) throws IOException {
+        if (!Files.isDirectory(directory)) {
+            return false;
+        }
+        try (var entries = Files.list(directory)) {
+            return entries.findAny().isPresent();
+        }
     }
 
     private static ProfileArtifacts convertCollapsed(Path directory, FrameworkRun.Profiling profiling, Path raw) throws IOException {
