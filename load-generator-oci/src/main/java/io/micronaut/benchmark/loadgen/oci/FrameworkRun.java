@@ -43,16 +43,31 @@ public interface FrameworkRun {
     record NixosConfiguration(String name, boolean dynamicPgo) {
     }
 
-    record Profiling(String tool, String artifact) {
+    record Profiling(String tool, String artifact, @Nullable String injectedArtifact, @Nullable String symbolDirectory) {
+        private static final String REMOTE_DIRECTORY = "/var/lib/sut/";
+
         public Profiling {
-            Path artifactPath = Path.of(artifact);
-            if (artifact.isBlank() || artifactPath.isAbsolute() || artifactPath.getNameCount() != 1 || artifact.equals(".") || artifact.equals("..") || artifact.contains("\\")) {
-                throw new IllegalArgumentException("Profiling artifact must be a single filename: " + artifact);
+            if ((injectedArtifact == null) != (symbolDirectory == null)) {
+                throw new IllegalArgumentException("Profiling injectedArtifact and symbolDirectory must be declared together");
             }
         }
 
-        public String remotePath() {
-            return "/var/lib/sut/" + artifact;
+        public Profiling(String tool, String artifact) {
+            this(tool, artifact, null, null);
+        }
+
+        public String remoteArtifactPath() {
+            return REMOTE_DIRECTORY + artifact;
+        }
+
+        @Nullable
+        public String remoteInjectedArtifactPath() {
+            return injectedArtifact == null ? null : REMOTE_DIRECTORY + injectedArtifact;
+        }
+
+        @Nullable
+        public String remoteSymbolDirectoryPath() {
+            return symbolDirectory == null ? null : REMOTE_DIRECTORY + symbolDirectory;
         }
     }
 

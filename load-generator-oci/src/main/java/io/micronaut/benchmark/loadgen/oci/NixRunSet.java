@@ -2,6 +2,7 @@ package io.micronaut.benchmark.loadgen.oci;
 
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
+import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,10 +10,12 @@ import org.slf4j.event.Level;
 import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 
@@ -51,7 +54,12 @@ public final class NixRunSet implements FrameworkRunSet {
         @Override
         public Profiling profiling() {
             NixFrameworkMetadata.ProfilingMetadata profiling = metadata.profiling();
-            return profiling == null ? null : new Profiling(profiling.tool(), profiling.artifact());
+            return profiling == null ? null : new Profiling(
+                    profiling.tool(),
+                    profiling.artifact(),
+                    profiling.injectedArtifact(),
+                    profiling.symbolDirectory()
+            );
         }
 
         @Override
@@ -95,9 +103,82 @@ public final class NixRunSet implements FrameworkRunSet {
             Profiling profiling = profiling();
             if (profiling != null) {
                 benchmarkServerClient.runAndCheck("systemctl stop -- " + SUT_SERVICE, log);
-                benchmarkServerClient.download(profiling.remotePath(), outputDirectory.resolve(profiling.artifact()));
+                collectProfilingArtifacts(benchmarkServerClient, outputDirectory, profiling);
             } else {
                 benchmarkServerClient.runAndCheck("systemctl --quiet is-active -- " + SUT_SERVICE, log);
+            }
+        }
+    }
+
+    private static void collectProfilingArtifacts(CommandRunner client, Path outputDirectory, FrameworkRun.Profiling profiling) throws Exception {
+        Path artifact = outputDirectory.resolve(profiling.artifact());
+        Path artifactStaging = stagingPath(artifact);
+        Path injectedArtifact = profiling.injectedArtifact() == null ? null : outputDirectory.resolve(profiling.injectedArtifact());
+        Path injectedArtifactStaging = injectedArtifact == null ? null : stagingPath(injectedArtifact);
+        Path symbolDirectory = profiling.symbolDirectory() == null ? null : outputDirectory.resolve(profiling.symbolDirectory());
+        Path symbolDirectoryStaging = symbolDirectory == null ? null : stagingPath(symbolDirectory);
+
+        try {
+            deletePaths(artifact, injectedArtifact, symbolDirectory, artifactStaging, injectedArtifactStaging, symbolDirectoryStaging);
+            client.download(profiling.remoteArtifactPath(), artifactStaging);
+            requireNonEmptyFile(artifactStaging);
+            if (injectedArtifact != null) {
+                client.download(profiling.remoteInjectedArtifactPath(), injectedArtifactStaging);
+                requireNonEmptyFile(injectedArtifactStaging);
+                client.downloadRecursive(profiling.remoteSymbolDirectoryPath(), symbolDirectoryStaging);
+                requireNonEmptyDirectory(symbolDirectoryStaging);
+                publish(symbolDirectoryStaging, symbolDirectory);
+                publish(injectedArtifactStaging, injectedArtifact);
+            }
+            publish(artifactStaging, artifact);
+        } catch (Exception failure) {
+            try {
+                deletePaths(artifact, injectedArtifact, symbolDirectory, artifactStaging, injectedArtifactStaging, symbolDirectoryStaging);
+            } catch (IOException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        }
+    }
+
+    private static Path stagingPath(Path destination) {
+        return destination.resolveSibling("." + destination.getFileName() + ".staging");
+    }
+
+    private static void requireNonEmptyFile(Path file) throws IOException {
+        if (!Files.isRegularFile(file) || Files.size(file) == 0) {
+            throw new IOException("Downloaded profiling artifact is not a non-empty file: " + file);
+        }
+    }
+
+    private static void requireNonEmptyDirectory(Path directory) throws IOException {
+        if (!Files.isDirectory(directory)) {
+            throw new IOException("Downloaded profiling symbols are not a directory: " + directory);
+        }
+        try (var entries = Files.list(directory)) {
+            if (entries.findAny().isEmpty()) {
+                throw new IOException("Downloaded profiling symbol directory is empty: " + directory);
+            }
+        }
+    }
+
+    private static void publish(Path staging, Path destination) throws IOException {
+        try {
+            Files.move(staging, destination, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException atomicFailure) {
+            try {
+                Files.move(staging, destination);
+            } catch (IOException failure) {
+                failure.addSuppressed(atomicFailure);
+                throw failure;
+            }
+        }
+    }
+
+    private static void deletePaths(Path... paths) throws IOException {
+        for (Path path : paths) {
+            if (path != null) {
+                deleteRecursively(path);
             }
         }
     }
@@ -127,7 +208,8 @@ public final class NixRunSet implements FrameworkRunSet {
 
 record NixFrameworkMetadata(String type, String name, JsonNode parameters, String nixosConfiguration,
                             ProfilingMetadata profiling, PgoMetadata pgo) {
-    record ProfilingMetadata(String tool, String artifact) {
+    record ProfilingMetadata(String tool, String artifact, @Nullable String injectedArtifact,
+                             @Nullable String symbolDirectory) {
     }
     record PgoMetadata(String optimizedConfiguration, String pgoDirectory) {
     }
