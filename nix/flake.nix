@@ -205,6 +205,12 @@
         benchmark-metadata = metadataPackage system "benchmark-metadata.json" (benchmarkMetadata // { benchmarkDefinitions = benchmarkDefinitionsPackage system; });
         benchmark-definitions = benchmarkDefinitionsPackage system;
         relay-agent = relayAgent system;
+        update-dependencies = pkgs.writeShellApplication {
+          name = "update-dependencies";
+          inheritPath = false;
+          runtimeInputs = [ pkgs.nix pkgs.gitMinimal pkgs.ripgrep pkgs.perl pkgs.gawk pkgs.coreutils ];
+          text = builtins.readFile ./update-dependencies;
+        };
         update-micronaut-framework = maintenanceSut system "micronaut-framework" "native";
         update-pure-netty = maintenanceSut system "pure-netty" "hotspot";
         update-quarkus = maintenanceSut system "quarkus" "native";

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if ! root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  printf 'update-dependencies must be run from within a Git checkout\n' >&2
+  exit 1
+fi
 flake="git+file://$root?dir=nix"
 system=x86_64-linux
 nix=(nix --extra-experimental-features 'nix-command flakes')
@@ -32,7 +35,7 @@ update_maven() {
   }
   printf 'Updating Maven dependencies: %s\n' "$name"
   cleanup() {
-    if [ "$backup_active" -eq 1 ] && [ -n "${original:-}" ] && [ -f "$original" ]; then
+    if [ "${backup_active:-0}" -eq 1 ] && [ -n "${original:-}" ] && [ -f "$original" ]; then
       cp "$original" "$file"
     fi
     rm -f "${log:-}" "${original:-}"
