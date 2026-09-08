@@ -3,6 +3,7 @@ hyperfoil-api = { group = "io.hyperfoil", name = "hyperfoil-api", version.ref = 
 hyperfoil-core = { group = "io.hyperfoil", name = "hyperfoil-core", version.ref = "hyperfoil" }
 hyperfoil-clustering = { group = "io.hyperfoil", name = "hyperfoil-clustering", version.ref = "hyperfoil" }
 async-profiler-jfr-converter = { group = "tools.profiler", name = "jfr-converter", version.ref = "async-profiler" }
+openjdk-jmc-flightrecorder-writer = { group = "org.openjdk.jmc", name = "flightrecorder.writer", version.ref = "openjdk-jmc" }
 mina-sshd-core = { group = "org.apache.sshd", name = "sshd-core", version.ref = "mina-sshd" }
 mina-sshd-scp = { group = "org.apache.sshd", name = "sshd-scp", version.ref = "mina-sshd" }
 mina-sshd-sftp = { group = "org.apache.sshd", name = "sshd-sftp", version.ref = "mina-sshd" }
@@ -42,6 +43,7 @@ spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 [versions]
 hyperfoil = "0.29.3"
 async-profiler = "4.5"
+openjdk-jmc = "9.1.2"
 mina-sshd = "2.19.0"
 micronaut = "5.1.0"
 micronaut-gradle = "5.0.2"
