@@ -12,31 +12,13 @@ final class PerfStackCollapse {
     }
 
     static void convert(BufferedReader input, Writer output) throws IOException {
-        List<String> stack = new ArrayList<>();
-        String line;
-        while ((line = input.readLine()) != null) {
-            if (line.isBlank()) {
-                writeSample(stack, output);
-                stack.clear();
-            } else if (line.startsWith("\t") || line.startsWith(" ")) {
-                String frame = line.trim();
-                int address = frame.indexOf(' ');
-                if (address >= 0) {
-                    frame = frame.substring(address + 1);
-                }
-                int symbol = frame.indexOf(" (");
-                stack.add((symbol < 0 ? frame : frame.substring(0, symbol)).replace(';', ':'));
-            }
-        }
-        writeSample(stack, output);
+        PerfScriptParser.parse(input, sample -> writeSample(sample.frames(), output));
     }
 
     private static void writeSample(List<String> stack, Writer output) throws IOException {
-        if (stack.isEmpty()) {
-            return;
-        }
-        Collections.reverse(stack);
-        output.write(String.join(";", stack));
+        List<String> rootFirst = new ArrayList<>(stack);
+        Collections.reverse(rootFirst);
+        output.write(String.join(";", rootFirst));
         output.write(" 1\n");
     }
 }

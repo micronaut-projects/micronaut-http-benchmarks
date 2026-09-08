@@ -25,4 +25,21 @@ final class PerfStackCollapseTest {
 
         assertEquals("[unknown];foo:worker+0x12 1\nqux;baz 1\n", collapsed.toString());
     }
+
+    @Test
+    void preservesNamedAotAndJitFramesAndEscapesSemicolons() throws Exception {
+        String perfScript = """
+                java 456 [003] 3.0: cycles:
+                 7f Ljava/lang/String;::charAt [JIT] (jitted-456-1.so)
+                 7f io.micronaut.benchmark.Controller::hello [AOT] (benchmark-aot)
+                 7f JavaMainWrapper::invoke_main [AOT] (benchmark-aot)
+                """;
+        StringWriter collapsed = new StringWriter();
+
+        PerfStackCollapse.convert(new BufferedReader(new StringReader(perfScript)), collapsed);
+
+        assertEquals(
+                "JavaMainWrapper::invoke_main [AOT];io.micronaut.benchmark.Controller::hello [AOT];Ljava/lang/String:::charAt [JIT] 1\n",
+                collapsed.toString());
+    }
 }
