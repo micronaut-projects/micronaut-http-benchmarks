@@ -22,7 +22,14 @@ let
       label = if isPgo then "${toolchain.metadataLabel}-pgo" else toolchain.metadataLabel;
       displayName = "${toolchain.displayName}${lib.optionalString (!isJvm) " native image"}${lib.optionalString isPgo " PGO"}";
       keepDebugSymbols = isNative && cfg.profiling.enable;
-      nativeImageArgs = lib.optionals (isNative && cfg.profiling.enable) [ "-g" "-H:+PreserveFramePointer" "-H:-DeleteLocalSymbols" ];
+      nativeImageArgs = lib.optionals (isNative && cfg.profiling.enable) [
+        "-g"
+        "-H:+PreserveFramePointer"
+        "-H:-DeleteLocalSymbols"
+        "-H:+RuntimeDebugInfo"
+        "-H:RuntimeDebugInfoFormat=jitdump"
+        "-R:RuntimeJitdumpDir=/var/lib/sut/jitdump"
+      ];
     };
   profilingTool = if runtimeProjection.isJvm then "async-profiler" else if runtimeProjection.isNative then "perf" else "py-spy";
   profilingArtifact = if runtimeProjection.isJvm then "profile.jfr" else if runtimeProjection.isNative then "profile.data" else "profile.txt";
@@ -31,10 +38,54 @@ let
   jvmArgs = cfg.jvm.args ++ cfg.jvm.extraArgs ++ lib.optional cfg.profiling.enable "-agentpath:${pkgs.async-profiler}/lib/libasyncProfiler.so=${cfg.profiling.args},file=${profilingPath}";
   sutCommand = "${cfg.sut.package}/bin/${cfg.sut.executable}";
   profilingLauncher = pkgs.writeShellScript "benchmark-profile-${cfg.run.name}" (if runtimeProjection.isNative then ''
-    exec ${pkgs.linuxPackages.perf}/bin/perf record -F 99 -e cpu-clock --call-graph fp -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
+    exec ${pkgs.linuxPackages.perf}/bin/perf record -k 1 -F 99 -e cpu-clock --call-graph fp -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
   '' else ''
     exec ${pkgs.py-spy}/bin/py-spy record --rate 1 --format raw --subprocesses -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
   '');
+  nativeProfileCleanup = pkgs.writeShellScript "benchmark-clean-native-profile-${cfg.run.name}" ''
+    set -eu
+    rm -rf \
+      /var/lib/sut/profile.data \
+      /var/lib/sut/profile.jit.data \
+      /var/lib/sut/profile-symbols \
+      /var/lib/sut/jitdump
+    install -d -m 0755 /var/lib/sut/jitdump
+  '';
+  nativeProfileFinalizer = pkgs.writeShellScript "benchmark-finalize-native-profile-${cfg.run.name}" ''
+    set -eu
+    raw_profile=/var/lib/sut/profile.data
+    injected_profile=/var/lib/sut/profile.jit.data
+    symbol_directory=/var/lib/sut/profile-symbols
+    package=${lib.escapeShellArg (toString cfg.sut.package)}
+
+    rm -f "$injected_profile"
+    rm -rf "$symbol_directory"
+    install -d -m 0755 "$symbol_directory"
+    perf inject -j -i "$raw_profile" -o "$injected_profile"
+
+    elf_manifest=$(mktemp)
+    jit_manifest=$(mktemp)
+    trap 'rm -f "$elf_manifest" "$jit_manifest"' EXIT
+
+    elf_staged=false
+    find -L "$package" -type f -perm /111 -print0 > "$elf_manifest"
+    while IFS= read -r -d "" source; do
+      if readelf -h "$source" > /dev/null 2>&1; then
+        elf_staged=true
+        destination="$symbol_directory$source"
+        install -d -m 0755 "$(dirname "$destination")"
+        cp --preserve=mode,timestamps "$source" "$destination"
+      fi
+    done < "$elf_manifest"
+    test "$elf_staged" = true
+
+    find /var/lib/sut/jitdump -type f -print0 > "$jit_manifest"
+    while IFS= read -r -d "" source; do
+      destination="$symbol_directory$source"
+      install -d -m 0755 "$(dirname "$destination")"
+      cp --preserve=mode,timestamps "$source" "$destination"
+    done < "$jit_manifest"
+  '';
 in {
   options.benchmark = {
     run.name = mkOption {
@@ -197,6 +248,14 @@ in {
             options = {
               tool = mkOption { type = types.enum [ "async-profiler" "perf" "py-spy" ]; };
               artifact = mkOption { type = types.str; };
+              injectedArtifact = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+              };
+              symbolDirectory = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+              };
             };
           });
           default = null;
@@ -261,6 +320,8 @@ in {
       profiling = if cfg.profiling.enable then {
         tool = profilingTool;
         artifact = profilingArtifact;
+        injectedArtifact = if cfg.sut.runtimeInfo.isNative then "profile.jit.data" else null;
+        symbolDirectory = if cfg.sut.runtimeInfo.isNative then "profile-symbols" else null;
       } else null;
     };
     users.users.sut = {
@@ -282,7 +343,8 @@ in {
       environment = lib.optionalAttrs cfg.jvm.enable {
         JAVA_TOOL_OPTIONS = builtins.concatStringsSep " " (jvmArgs ++ [ "-Dbenchmark.tls.directory=/etc/benchmark-tls" ]);
       };
-      path = lib.optional cfg.profiling.enable profilingPackage;
+      path = lib.optional cfg.profiling.enable profilingPackage
+        ++ lib.optionals (cfg.profiling.enable && cfg.sut.runtimeInfo.isNative) [ pkgs.binutils pkgs.coreutils pkgs.findutils ];
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "all";
@@ -291,7 +353,7 @@ in {
         User = "sut";
         StateDirectory = "sut";
         StateDirectoryMode = "0755";
-        ExecStartPre = lib.optional cfg.profiling.enable "${pkgs.coreutils}/bin/rm -f ${profilingPath}"
+        ExecStartPre = lib.optional cfg.profiling.enable (if cfg.sut.runtimeInfo.isNative then nativeProfileCleanup else "${pkgs.coreutils}/bin/rm -f ${profilingPath}")
           ++ lib.optionals (cfg.sut.runtime == "native-pgo-instrument") [
             "${pkgs.coreutils}/bin/mkdir -p /var/lib/sut/pgo"
             "${pkgs.findutils}/bin/find /var/lib/sut/pgo -mindepth 1 -delete"
@@ -299,7 +361,7 @@ in {
           ];
         ExecStopPost = lib.optionals (cfg.sut.runtime == "native-pgo-instrument") [
           "${pkgs.coreutils}/bin/install -m 0644 /var/lib/sut/default.iprof /var/lib/sut/pgo/default.iprof"
-        ];
+        ] ++ lib.optional (cfg.profiling.enable && cfg.sut.runtimeInfo.isNative) nativeProfileFinalizer;
         WorkingDirectory = lib.optional (cfg.sut.runtime == "native-pgo-instrument") "/var/lib/sut";
         Restart = "no";
         StandardOutput = "journal";

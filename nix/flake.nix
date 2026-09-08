@@ -46,7 +46,7 @@
           type = cfg.sut.metadata.type;
           parameters = cfg.sut.metadata.parameters;
           nixosConfiguration = configurationName;
-          profiling = cfg.sut.metadata.profiling;
+          profiling = if cfg.sut.metadata.profiling == null then null else optionalAttrs cfg.sut.metadata.profiling;
           pgo = cfg.sut.metadata.pgo;
         } // metadataOverrides;
       };
@@ -144,6 +144,9 @@
         profiledNativeRuns = lib.filter (run:
           run.system.config.benchmark.profiling.enable && run.system.config.benchmark.sut.runtimeInfo.isNative
         ) suiteRuns;
+        profiledNonNativeRuns = lib.filter (run:
+          run.system.config.benchmark.profiling.enable && !run.system.config.benchmark.sut.runtimeInfo.isNative
+        ) suiteRuns;
         pySpyRuns = lib.filter (run:
           run.system.config.benchmark.profiling.enable
           && run.system.config.benchmark.sut.metadata.profiling.tool == "py-spy"
@@ -155,7 +158,9 @@
       assert lib.assertMsg (duplicateNames outputNames == [ ]) "Duplicate package output names: ${lib.concatStringsSep ", " (duplicateNames outputNames)}";
       assert lib.assertMsg (invalidRoles == [ ]) "Malformed OCI instance metadata for: ${lib.concatStringsSep ", " (map (role: role.name) invalidRoles)}";
       assert lib.assertMsg (builtins.all (suite: builtins.isList suite.runs && builtins.isList suite.documents && builtins.isAttrs suite.protocols && builtins.isAttrs suite.statusRequest) (lib.attrValues metadataSuites)) "Benchmark metadata has the suite schema expected by the load generator";
-      assert lib.assertMsg (builtins.all (run: run.system.config.benchmark.sut.runtimeInfo.keepDebugSymbols && lib.all (argument: lib.elem argument run.system.config.benchmark.sut.runtimeInfo.nativeImageArgs) [ "-g" "-H:+PreserveFramePointer" "-H:-DeleteLocalSymbols" ]) profiledNativeRuns) "Profiled native runs must retain native-image and local symbols.";
+      assert lib.assertMsg (builtins.all (run: run.system.config.benchmark.sut.runtimeInfo.keepDebugSymbols && lib.all (argument: lib.elem argument run.system.config.benchmark.sut.runtimeInfo.nativeImageArgs) [ "-g" "-H:+PreserveFramePointer" "-H:-DeleteLocalSymbols" "-H:+RuntimeDebugInfo" "-H:RuntimeDebugInfoFormat=jitdump" "-R:RuntimeJitdumpDir=/var/lib/sut/jitdump" ]) profiledNativeRuns) "Profiled native runs must retain native-image, local, and runtime JIT symbols.";
+      assert lib.assertMsg (builtins.all (run: run.metadata.profiling.injectedArtifact == "profile.jit.data" && run.metadata.profiling.symbolDirectory == "profile-symbols") profiledNativeRuns) "Profiled native runs must publish injected perf data and symbol-directory metadata.";
+      assert lib.assertMsg (builtins.all (run: lib.attrNames run.metadata.profiling == [ "artifact" "tool" ]) profiledNonNativeRuns) "JFR and py-spy profiling metadata must retain its existing schema.";
       assert lib.assertMsg (builtins.all (run: run.system.config.systemd.services.sut.serviceConfig.KillSignal == "SIGINT") pySpyRuns) "Python py-spy profiling runs must stop with SIGINT.";
       true;
 

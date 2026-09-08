@@ -81,6 +81,28 @@ let
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition "status-https2"))})
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition "training-https2"))})
   '';
+  verifyNativeProfile = sutPackage: ''
+    machine.succeed("test -s /var/lib/sut/profile.jit.data")
+    machine.succeed("test -d /var/lib/sut/profile-symbols")
+    machine.succeed(${builtins.toJSON ''
+      elf_found=false
+      while IFS= read -r -d "" source; do
+        if ${pkgs.binutils}/bin/readelf -h "$source" > /dev/null 2>&1; then
+          elf_found=true
+          staged="/var/lib/sut/profile-symbols$source"
+          test -f "$staged"
+          ${pkgs.coreutils}/bin/cmp "$source" "$staged"
+        fi
+      done < <(${pkgs.findutils}/bin/find -L ${lib.escapeShellArg (toString sutPackage)} -type f -perm /111 -print0)
+      test "$elf_found" = true
+
+      while IFS= read -r -d "" source; do
+        staged="/var/lib/sut/profile-symbols$source"
+        test -f "$staged"
+        ${pkgs.coreutils}/bin/cmp "$source" "$staged"
+      done < <(${pkgs.findutils}/bin/find /var/lib/sut/jitdump -type f -print0)
+    ''})
+  '';
   localRunModules = suite: runName: profilingEnabled: runModule: extraModules: [
     ./system/local-vm.nix
     ./system/run.nix
@@ -98,12 +120,15 @@ let
     }
     runModule
   ] ++ extraModules;
-  serviceTest = name: tlsHttp2: profiling: pySpy: artifact: modules: pkgs.testers.runNixOSTest {
+  serviceTest = { name, tlsHttp2, profiling, pySpy, artifact, nativeProfile ? null, modules }: pkgs.testers.runNixOSTest {
     inherit name;
     nodes.machine.imports = modules;
     testScript = ''
       start_all()
       machine.wait_for_unit("multi-user.target")
+      ${lib.optionalString (nativeProfile != null) ''
+        machine.succeed("runuser -u sut -- ${pkgs.runtimeShell} -c 'mkdir -p /var/lib/sut/profile-symbols /var/lib/sut/jitdump; printf stale > /var/lib/sut/profile.data; printf stale > /var/lib/sut/profile.jit.data; printf stale > /var/lib/sut/profile-symbols/stale; printf stale > /var/lib/sut/jitdump/stale'")
+      ''}
       machine.succeed("systemctl start sut.service || (journalctl --no-pager -u sut.service; false)")
       machine.wait_for_unit("sut.service")
       ${lib.optionalString pySpy ''
@@ -113,6 +138,11 @@ let
       ${lib.optionalString profiling ''
         machine.succeed("systemctl stop sut.service")
         machine.succeed("test -s /var/lib/sut/${artifact}")
+        ${lib.optionalString (nativeProfile != null) ''
+          machine.succeed("test ! -e /var/lib/sut/jitdump/stale")
+          machine.succeed("test ! -e /var/lib/sut/profile-symbols/stale")
+        ''}
+        ${lib.optionalString (nativeProfile != null) (verifyNativeProfile nativeProfile)}
       ''}
     '';
   };
@@ -151,11 +181,33 @@ let
       optimized = optimizedRun collector;
     in [
       (lib.nameValuePair (smokeName collector) collectorOutput)
-      (lib.nameValuePair (smokeName optimized) (serviceTest (smokeName optimized) optimized.system.config.benchmark.sut.tlsHttp2 false false "" (runModulesFor optimized false [ (pgoProfileModule collectorOutput) ])))
-    ];
-  serviceSmokeTests = map (run: lib.nameValuePair (smokeName run) (serviceTest (smokeName run) run.system.config.benchmark.sut.tlsHttp2 false false "" (runModulesFor run false [ ])))
+      (lib.nameValuePair (smokeName optimized) (serviceTest {
+        name = smokeName optimized;
+        tlsHttp2 = optimized.system.config.benchmark.sut.tlsHttp2;
+        profiling = false;
+        pySpy = false;
+        artifact = "";
+        modules = runModulesFor optimized false [ (pgoProfileModule collectorOutput) ];
+      }))
+     ];
+  serviceSmokeTests = map (run: lib.nameValuePair (smokeName run) (serviceTest {
+    name = smokeName run;
+    tlsHttp2 = run.system.config.benchmark.sut.tlsHttp2;
+    profiling = false;
+    pySpy = false;
+    artifact = "";
+    modules = runModulesFor run false [ ];
+  }))
     (lib.filter (run: run.system.config.benchmark.sut.runtime != "native-pgo-instrument") enabledRuns);
   pyronaut = standardRuns.pyronaut;
-  profilingSmoke = run: lib.nameValuePair "${runName run}-profiling-smoke" (serviceTest "${runName run}-profiling-smoke" run.system.config.benchmark.sut.tlsHttp2 true (run.system.config.benchmark.sut.metadata.profiling.tool == "py-spy") run.system.config.benchmark.sut.metadata.profiling.artifact (runModulesFor run true [ ]));
+  profilingSmoke = run: lib.nameValuePair "${runName run}-profiling-smoke" (serviceTest {
+    name = "${runName run}-profiling-smoke";
+    tlsHttp2 = run.system.config.benchmark.sut.tlsHttp2;
+    profiling = true;
+    pySpy = run.system.config.benchmark.sut.metadata.profiling.tool == "py-spy";
+    artifact = run.system.config.benchmark.sut.metadata.profiling.artifact;
+    nativeProfile = if run.system.config.benchmark.sut.runtimeInfo.isNative then run.system.config.benchmark.sut.package else null;
+    modules = runModulesFor run true [ ];
+  });
 in lib.listToAttrs ((map profilingSmoke (lib.filter (run: run.system.config.benchmark.sut.runtime != "native-pgo-instrument") enabledRuns)) ++ serviceSmokeTests ++ lib.concatMap pgoSmokeTests
   (lib.filter (run: run.system.config.benchmark.sut.runtime == "native-pgo-instrument") enabledRuns))
