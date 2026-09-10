@@ -16,7 +16,7 @@ let
       ];
     };
 
-    mvnHash = "sha256-xVJKLzUwsFhRlLRJo7sMsQWKkYJgKD7iOoBoC+1xEv4=";
+    mvnHash = "sha256-Rp1lib42AaivT7PlIoxWL3O7NS1fTgOfPSHHNHBHA/M=";
 
     mvnJdk = runtimeInfo.buildPackage;
     dontStrip = runtimeInfo.keepDebugSymbols;
@@ -59,7 +59,6 @@ in {
       inherit package;
       executable = "quarkus";
       description = "Quarkus${if runtimeInfo.isJvm then "" else if runtimeInfo.isPgo then " PGO" else " native"} benchmark server";
-      environment = [ "BENCHMARK_SYSTEMD_READINESS_ENABLED=true" ];
       metadata = {
         typePrefix = "quarkus";
       };
