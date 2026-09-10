@@ -18,6 +18,7 @@
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>3.38.2</quarkus.platform.version>
+        <quarkus-systemd-notify.version>1.0.2</quarkus-systemd-notify.version>
         <skipITs>true</skipITs>
         <surefire-plugin.version>${maven-surefire-plugin.version}</surefire-plugin.version>
     </properties>
@@ -38,6 +39,11 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-rest-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkiverse.systemd.notify</groupId>
+            <artifactId>quarkus-systemd-notify</artifactId>
+            <version>${quarkus-systemd-notify.version}</version>
         </dependency>
         <dependency>
             <groupId>io.vertx</groupId>
