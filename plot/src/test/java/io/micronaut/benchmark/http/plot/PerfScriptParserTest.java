@@ -13,7 +13,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class PerfScriptParserTest {
     @TempDir
@@ -37,7 +36,37 @@ final class PerfScriptParserTest {
         assertEquals(7, sample.cpu());
         assertEquals(42_000_000_001L, sample.timestampNanos());
         assertEquals("cycles:u", sample.event());
-        assertEquals(List.of("leaf:symbol+0x1", "root"), sample.frames());
+        assertEquals(List.of(
+                new PerfScriptParser.Frame("leaf;symbol+0x1", "lib.so"),
+                new PerfScriptParser.Frame("root", "app")), sample.frames());
+    }
+
+    @Test
+    void retainsExactSymbolsAndOuterDsoMetadata() throws Exception {
+        List<PerfScriptParser.Sample> samples = new ArrayList<>();
+        PerfScriptParser.parse(new BufferedReader(new StringReader("""
+                java 456 [003] 3.0: cycles:
+                 7f io.micronaut.benchmark.Controller::hello [AOT] (benchmark-aot)
+                 80 JavaMainWrapper::invoke_main [AOT] (benchmark-aot)
+                 81 Ljava/lang/String;::charAt [JIT] (jitted-456-1.so)
+                 82 foo;worker+0x12 (libfoo.so)
+                 83 std::vector<int>::push_back (libstdc++.so)
+                 84 operator new (unsigned long) (/opt/lib (debug).so)
+                 85 [unknown] ([unknown])
+                 86 schedule ([kernel.kallsyms])
+                 87 unresolved
+                """)), samples::add);
+
+        assertEquals(List.of(
+                new PerfScriptParser.Frame("io.micronaut.benchmark.Controller::hello [AOT]", "benchmark-aot"),
+                new PerfScriptParser.Frame("JavaMainWrapper::invoke_main [AOT]", "benchmark-aot"),
+                new PerfScriptParser.Frame("Ljava/lang/String;::charAt [JIT]", "jitted-456-1.so"),
+                new PerfScriptParser.Frame("foo;worker+0x12", "libfoo.so"),
+                new PerfScriptParser.Frame("std::vector<int>::push_back", "libstdc++.so"),
+                new PerfScriptParser.Frame("operator new (unsigned long)", "/opt/lib (debug).so"),
+                new PerfScriptParser.Frame("[unknown]", "[unknown]"),
+                new PerfScriptParser.Frame("schedule", "[kernel.kallsyms]"),
+                new PerfScriptParser.Frame("unresolved", "")), samples.getFirst().frames());
     }
 
     @Test

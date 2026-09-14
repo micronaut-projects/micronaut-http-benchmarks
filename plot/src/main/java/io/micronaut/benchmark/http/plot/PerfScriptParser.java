@@ -20,7 +20,7 @@ final class PerfScriptParser {
 
     static void parse(BufferedReader input, SampleConsumer consumer) throws IOException {
         Header header = null;
-        List<String> frames = new ArrayList<>();
+        List<Frame> frames = new ArrayList<>();
         String line;
         int lineNumber = 0;
         while ((line = input.readLine()) != null) {
@@ -38,7 +38,7 @@ final class PerfScriptParser {
                 if (header == null) {
                     throw malformed(lineNumber, "orphan stack frame");
                 }
-                frames.add(normalizeFrame(line));
+                frames.add(parseFrame(line));
             } else {
                 throw malformed(lineNumber, "malformed sample header");
             }
@@ -89,7 +89,7 @@ final class PerfScriptParser {
         }
     }
 
-    private static Header emit(Header header, List<String> frames, SampleConsumer consumer, int lineNumber)
+    private static Header emit(Header header, List<Frame> frames, SampleConsumer consumer, int lineNumber)
             throws IOException {
         if (header == null) {
             return null;
@@ -103,14 +103,30 @@ final class PerfScriptParser {
         return null;
     }
 
-    private static String normalizeFrame(String line) {
+    private static Frame parseFrame(String line) {
         String frame = line.trim();
-        int address = frame.indexOf(' ');
-        if (address >= 0) {
-            frame = frame.substring(address + 1);
+        int addressEnd = 0;
+        while (addressEnd < frame.length() && !Character.isWhitespace(frame.charAt(addressEnd))) {
+            addressEnd++;
         }
-        int symbol = frame.indexOf(" (");
-        return (symbol < 0 ? frame : frame.substring(0, symbol)).replace(';', ':');
+        if (addressEnd < frame.length()) {
+            frame = frame.substring(addressEnd).stripLeading();
+        }
+        if (frame.endsWith(")")) {
+            int depth = 0;
+            for (int index = frame.length() - 1; index >= 0; index--) {
+                char character = frame.charAt(index);
+                if (character == ')') {
+                    depth++;
+                } else if (character == '(' && --depth == 0) {
+                    if (index > 0 && frame.charAt(index - 1) == ' ') {
+                        return new Frame(frame.substring(0, index - 1), frame.substring(index + 1, frame.length() - 1));
+                    }
+                    break;
+                }
+            }
+        }
+        return new Frame(frame, "");
     }
 
     private static IOException malformed(int lineNumber, String message) {
@@ -126,7 +142,10 @@ final class PerfScriptParser {
         void accept(Sample sample) throws IOException;
     }
 
-    record Sample(String command, int tid, int cpu, long timestampNanos, String event, List<String> frames) {
+    record Frame(String symbol, String dso) {
+    }
+
+    record Sample(String command, int tid, int cpu, long timestampNanos, String event, List<Frame> frames) {
     }
 
     record Summary(long count, long firstTimestampNanos, long lastTimestampNanos, long durationNanos) {

@@ -15,8 +15,11 @@ final class PerfStackCollapse {
         PerfScriptParser.parse(input, sample -> writeSample(sample.frames(), output));
     }
 
-    private static void writeSample(List<String> stack, Writer output) throws IOException {
-        List<String> rootFirst = new ArrayList<>(stack);
+    private static void writeSample(List<PerfScriptParser.Frame> stack, Writer output) throws IOException {
+        List<String> rootFirst = new ArrayList<>(stack.size());
+        for (PerfScriptParser.Frame frame : stack) {
+            rootFirst.add(frame.symbol().replace(';', ':'));
+        }
         Collections.reverse(rootFirst);
         output.write(String.join(";", rootFirst));
         output.write(" 1\n");

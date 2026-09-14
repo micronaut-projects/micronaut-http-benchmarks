@@ -1,20 +1,21 @@
 package io.micronaut.benchmark.http.plot;
 
 import jdk.jfr.consumer.RecordedEvent;
-import jdk.jfr.consumer.RecordedObject;
 import jdk.jfr.consumer.RecordingFile;
 import one.convert.Arguments;
 import one.convert.JfrToHeatmap;
 import one.jfr.JfrReader;
 import one.jfr.event.ExecutionSample;
-import org.openjdk.jmc.flightrecorder.writer.api.Recordings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.openjdk.jmc.flightrecorder.writer.api.Recordings;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,36 +30,58 @@ final class PerfJfrWriterTest {
              7f leaf (lib.so)
              80 root (app)
 
-            other worker 200 [003] 10.123456790: cycles:
+            GC Thread#0 100/102 [003] 10.123456790: cycles:
+             ffffffff81000100 tcp_sendmsg ([kernel.kallsyms])
+             ffffffff81000200 __sys_sendto ([kernel.kallsyms])
              81 second-leaf (lib.so)
-             80 root (app)""";
+             80 root (app)
+
+            VM Thread 100/103 [000] 10.223456790: cycles:
+             ffffffff81000300 schedule ([kernel.kallsyms])
+             ffffffff81000400 worker_thread ([kernel.kallsyms])""";
 
     @TempDir
     Path temporaryDirectory;
 
     @Test
     void preservesTimingThreadsAndLeafFirstStacksForJdkAndAsyncProfilerReaders() throws Exception {
+        List<List<String>> expectedStacks = List.of(
+                List.of("leaf", "root"),
+                List.of("tcp_sendmsg", "__sys_sendto", "second-leaf", "root"),
+                List.of("schedule", "worker_thread"));
         Path recording = writeRecording();
 
         List<RecordedEvent> events = RecordingFile.readAllEvents(recording);
-        assertEquals(2, events.size());
+        assertEquals(3, events.size());
         assertEquals(Duration.ofNanos(123_456_789),
                 Duration.between(events.get(0).getStartTime(), events.get(1).getStartTime()));
-        assertEquals("worker pool", events.get(0).getThread("sampledThread").getJavaName());
-        assertEquals(101, events.get(0).getThread("sampledThread").getOSThreadId());
-        assertEquals(List.of("leaf", "root"), events.get(0).getStackTrace().getFrames().stream()
-                .map(frame -> symbolText(frame.getMethod().getValue("name"))).toList());
-        assertEquals("Native", events.get(0).getStackTrace().getFrames().getFirst().getType());
+        assertEquals(List.of("worker pool", "GC Thread#0", "VM Thread"), events.stream()
+                .map(event -> event.getThread("sampledThread").getJavaName()).toList());
+        assertEquals(List.of(101L, 102L, 103L), events.stream()
+                .map(event -> event.getThread("sampledThread").getOSThreadId()).toList());
+        assertEquals(expectedStacks, events.stream()
+                .map(event -> event.getStackTrace().getFrames().stream()
+                        .map(frame -> frame.getMethod().getName()).toList()).toList());
+        assertEquals("C++", events.get(0).getStackTrace().getFrames().getFirst().getType());
+        assertEquals("Kernel", events.get(1).getStackTrace().getFrames().getFirst().getType());
+        assertTrue(events.stream().flatMap(event -> event.getStackTrace().getFrames().stream())
+                .noneMatch(frame -> frame.isJavaFrame()));
         assertEquals("STATE_DEFAULT", events.get(0).getValue("state"));
 
         try (JfrReader reader = new JfrReader(recording.toString())) {
-            assertEquals(123_456_790L, reader.chunkDurationNanos());
+            assertEquals(223_456_790L, reader.chunkDurationNanos());
             List<ExecutionSample> samples = reader.readAllEvents(ExecutionSample.class);
-            assertEquals(2, samples.size());
+            assertEquals(3, samples.size());
             assertNotEquals(0, samples.get(0).stackTraceId);
             assertNotEquals(0, samples.get(0).tid);
+            assertEquals(3L, samples.stream().map(sample -> sample.tid).distinct().count());
+            assertEquals(expectedStacks, samples.stream()
+                    .map(sample -> Arrays.stream(reader.stackTraces.get(sample.stackTraceId).methods)
+                            .mapToObj(method -> new String(reader.symbols.get(reader.methods.get(method).name),
+                                    StandardCharsets.UTF_8)).toList()).toList());
             assertEquals(2, reader.stackTraces.get(samples.get(0).stackTraceId).methods.length);
-            assertEquals(3, reader.stackTraces.get(samples.get(0).stackTraceId).types[0]);
+            assertEquals(4, reader.stackTraces.get(samples.get(0).stackTraceId).types[0]);
+            assertEquals(5, reader.stackTraces.get(samples.get(1).stackTraceId).types[0]);
         }
     }
 
@@ -75,6 +98,11 @@ final class PerfJfrWriterTest {
         assertTrue(html.contains("<html"));
         assertTrue(html.contains("leaf"));
         assertTrue(html.contains("root"));
+        assertTrue(html.contains("tcp_sendmsg"));
+        assertTrue(html.contains("__sys_sendto"));
+        assertTrue(html.contains("second-leaf"));
+        assertTrue(html.contains("schedule"));
+        assertTrue(html.contains("worker_thread"));
     }
 
     @Test
@@ -109,14 +137,5 @@ final class PerfJfrWriterTest {
         PerfJfrWriter.convert(input, recording);
         assertTrue(Files.size(recording) > 0);
         return recording;
-    }
-
-    private static String symbolText(RecordedObject symbol) {
-        Object[] values = symbol.getValue("bytes");
-        byte[] bytes = new byte[values.length];
-        for (int i = 0; i < values.length; i++) {
-            bytes[i] = (byte) values[i];
-        }
-        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
 }

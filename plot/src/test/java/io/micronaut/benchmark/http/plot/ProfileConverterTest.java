@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -34,6 +35,60 @@ final class ProfileConverterTest {
         IOException emptySymbols = assertThrows(IOException.class, () ->
                 ProfileConverter.perfScriptCommand(temporaryDirectory, profiling, temporaryDirectory.resolve("profile.data")));
         assertTrue(emptySymbols.getMessage().contains("non-empty directory"));
+
+        Path kallsyms = temporaryDirectory.resolve("profile-symbols/proc/kallsyms");
+        Files.createDirectory(kallsyms.getParent());
+        IOException missingKallsyms = assertThrows(IOException.class, () ->
+                ProfileConverter.perfScriptCommand(temporaryDirectory, profiling, temporaryDirectory.resolve("profile.data")));
+        assertTrue(missingKallsyms.getMessage().contains("non-empty file"));
+        assertTrue(missingKallsyms.getMessage().contains(kallsyms.toString()));
+
+        Files.createFile(kallsyms);
+        IOException emptyKallsyms = assertThrows(IOException.class, () ->
+                ProfileConverter.perfScriptCommand(temporaryDirectory, profiling, temporaryDirectory.resolve("profile.data")));
+        assertTrue(emptyKallsyms.getMessage().contains("non-empty file"));
+        assertTrue(emptyKallsyms.getMessage().contains(kallsyms.toString()));
+
+        Files.delete(kallsyms);
+        Files.createDirectory(kallsyms);
+        IOException directoryKallsyms = assertThrows(IOException.class, () ->
+                ProfileConverter.perfScriptCommand(temporaryDirectory, profiling, temporaryDirectory.resolve("profile.data")));
+        assertTrue(directoryKallsyms.getMessage().contains("non-empty file"));
+        assertTrue(directoryKallsyms.getMessage().contains(kallsyms.toString()));
+    }
+
+    @Test
+    void supplementalPerfCommandUsesRecordingHostSymbolsAndInjectedArtifact() throws Exception {
+        Path directory = Files.createDirectory(temporaryDirectory.resolve("recording host"));
+        Path raw = directory.resolve("profile.data");
+        Path injected = directory.resolve("profile.jit.data");
+        Path symbols = directory.resolve("profile-symbols");
+        Path kallsyms = symbols.resolve("proc/kallsyms");
+        Files.writeString(injected, "profile");
+        Files.createDirectories(kallsyms.getParent());
+        Files.writeString(kallsyms, "ffffffff81000000 T _stext\n");
+        FrameworkRun.Profiling profiling = new FrameworkRun.Profiling(
+                "perf", "profile.data", "profile.jit.data", "profile-symbols");
+
+        List<String> command = ProfileConverter.perfScriptCommand(directory, profiling, raw);
+
+        assertEquals(List.of(
+                "shell", ".#profiling-perf", "--command", "perf", "script", "--ns",
+                "--symfs", symbols.toAbsolutePath().normalize().toString(),
+                "--kallsyms", kallsyms.toAbsolutePath().normalize().toString(),
+                "-i", injected.toAbsolutePath().normalize().toString()), command);
+    }
+
+    @Test
+    void rawOnlyPerfCommandDoesNotRequireSupplementalArtifacts() throws Exception {
+        Path raw = temporaryDirectory.resolve("profile.data");
+        FrameworkRun.Profiling profiling = new FrameworkRun.Profiling("perf", "profile.data");
+
+        List<String> command = ProfileConverter.perfScriptCommand(temporaryDirectory, profiling, raw);
+
+        assertEquals(List.of(
+                "shell", ".#profiling-perf", "--command", "perf", "script", "--ns",
+                "-i", raw.toAbsolutePath().normalize().toString()), command);
     }
 
     @Test
@@ -44,6 +99,10 @@ final class ProfileConverterTest {
         Files.writeString(perfScript, """
                 command with spaces 123 [001] 1.0: cycles:
                  7f leaf (lib.so)
+                 81 Ljava/lang/String;::charAt [JIT] (jitted-456-1.so)
+                 82 io.micronaut.benchmark.Controller::hello [AOT] (benchmark-aot)
+                 83 JavaMainWrapper::invoke_main [AOT] (benchmark-aot)
+                 84 schedule ([kernel.kallsyms])
                  80 root (app)
                 """);
         FrameworkRun.Profiling profiling = new FrameworkRun.Profiling("perf", "profile.data");
@@ -58,6 +117,18 @@ final class ProfileConverterTest {
         String heatmap = Files.readString(artifacts.heatmap());
         assertTrue(heatmap.contains("<html"));
         assertTrue(heatmap.contains("leaf"));
+        assertTrue(heatmap.contains("\"io.micronaut.benchmark.Controller\""));
+        assertTrue(heatmap.contains("\"hello\""));
+        assertTrue(heatmap.contains("\"JavaMainWrapper\""));
+        assertTrue(heatmap.contains("\"invoke_main\""));
+        assertTrue(heatmap.contains("\"java.lang.String\""));
+        assertTrue(heatmap.contains("\"charAt\""));
+        assertTrue(heatmap.contains("schedule"));
+        String flamegraph = Files.readString(artifacts.flamegraph());
+        assertTrue(flamegraph.contains("io.micronaut.benchmark.Controller::hello [AOT]"));
+        assertTrue(flamegraph.contains("JavaMainWrapper::invoke_main [AOT]"));
+        assertTrue(flamegraph.contains("Ljava/lang/String:::charAt [JIT]"));
+        assertTrue(flamegraph.contains("schedule"));
         try (var files = Files.list(temporaryDirectory)) {
             assertTrue(files.noneMatch(path -> path.getFileName().toString().matches("profile-perf-.*\\.(txt|jfr)")));
         }

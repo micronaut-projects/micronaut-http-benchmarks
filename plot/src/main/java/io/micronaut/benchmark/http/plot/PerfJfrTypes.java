@@ -1,5 +1,6 @@
 package io.micronaut.benchmark.http.plot;
 
+import org.openjdk.jmc.flightrecorder.writer.InlineStringType;
 import org.openjdk.jmc.flightrecorder.writer.api.Type;
 import org.openjdk.jmc.flightrecorder.writer.api.Types;
 
@@ -23,8 +24,7 @@ final class PerfJfrTypes {
                 .addField("virtual", Types.Builtin.BOOLEAN));
 
         Type symbol = types.getOrAdd(Types.JDK.SYMBOL, builder -> builder
-                .addField("encoding", Types.Builtin.BYTE)
-                .addField(types.fieldBuilder("bytes", Types.Builtin.BYTE).asArray().build()));
+                .addField("value", InlineStringType.of(types)));
         Type classLoader = types.getOrAdd(Types.JDK.CLASS_LOADER, builder -> builder
                 .addField("type", Types.JDK.CLASS)
                 .addField("name", symbol));
@@ -51,13 +51,13 @@ final class PerfJfrTypes {
                 .addField("hidden", Types.Builtin.BOOLEAN));
         Type frameType = types.getOrAdd(Types.JDK.FRAME_TYPE,
                 builder -> builder.addField("description", Types.Builtin.STRING));
-        Type stackFrame = types.getOrAdd(Types.JDK.STACK_FRAME.getTypeName(), false, builder -> builder
+        Type stackFrameWithUnknownBci = types.getOrAdd(Types.JDK.STACK_FRAME.getTypeName(), false, builder -> builder
                 .addField("method", method)
                 .addField("lineNumber", Types.Builtin.INT)
-                .addField("bytecodeIndex", Types.Builtin.INT)
+                .addField("javaFrame", Types.Builtin.BOOLEAN)
                 .addField("type", frameType));
         types.getOrAdd(Types.JDK.STACK_TRACE, builder -> builder
                 .addField("truncated", Types.Builtin.BOOLEAN)
-                .addField(types.fieldBuilder("frames", stackFrame).asArray().build()));
+                .addField(types.fieldBuilder("frames", stackFrameWithUnknownBci).asArray().build()));
     }
 }

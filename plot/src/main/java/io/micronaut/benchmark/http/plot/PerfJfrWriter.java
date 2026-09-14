@@ -8,7 +8,6 @@ import org.openjdk.jmc.flightrecorder.writer.api.Types;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -16,6 +15,7 @@ import java.util.Map;
 final class PerfJfrWriter {
     private static final long SYNTHETIC_EPOCH_NANOS = 946_684_800_000_000_000L;
     private static final long FIRST_TICK = 1L;
+    private static final String SYNTHETIC_JAVA_METHOD_DESCRIPTOR = "()V";
 
     private final Recording recording;
     private final Type executionSampleType;
@@ -24,12 +24,15 @@ final class PerfJfrWriter {
     private final Type stackFrameType;
     private final Type methodType;
     private final Type symbolType;
-    private final TypedValue syntheticClass;
-    private final TypedValue frameType;
+    private final Type classType;
+    private final TypedValue compiledFrameType;
+    private final TypedValue cppFrameType;
+    private final TypedValue kernelFrameType;
     private final TypedValue defaultState;
     private final Map<ThreadKey, TypedValue> threads = new HashMap<>();
-    private final Map<String, TypedValue> methods = new HashMap<>();
-    private final Map<String, TypedValue> frames = new HashMap<>();
+    private final Map<MethodKey, TypedValue> methods = new HashMap<>();
+    private final Map<PerfScriptParser.Frame, TypedValue> frames = new HashMap<>();
+    private final Map<String, TypedValue> classes = new HashMap<>();
     private final Map<String, TypedValue> symbols = new HashMap<>();
     private final long firstPerfTimestamp;
     private long previousPerfTimestamp = Long.MIN_VALUE;
@@ -44,11 +47,13 @@ final class PerfJfrWriter {
         stackFrameType = types.getType(Types.JDK.STACK_FRAME);
         methodType = types.getType(Types.JDK.METHOD);
         symbolType = types.getType(Types.JDK.SYMBOL);
-        syntheticClass = types.getType(Types.JDK.CLASS).asValue(value -> value.putField("name", symbol("")));
+        classType = types.getType(Types.JDK.CLASS);
         Type frameTypeDefinition = types.getType(Types.JDK.FRAME_TYPE);
-        frameTypeDefinition.asValue(value -> value.putField("description", "JIT compiled"));
+        compiledFrameType = frameTypeDefinition.asValue(value -> value.putField("description", "JIT compiled"));
         frameTypeDefinition.asValue(value -> value.putField("description", "Inlined"));
-        frameType = frameTypeDefinition.asValue(value -> value.putField("description", "Native"));
+        frameTypeDefinition.asValue(value -> value.putField("description", "Native"));
+        cppFrameType = frameTypeDefinition.asValue(value -> value.putField("description", "C++"));
+        kernelFrameType = frameTypeDefinition.asValue(value -> value.putField("description", "Kernel"));
         Type threadStateType = recording.registerType(
                 "jdk.types.ThreadState", type -> type.addField("name", Types.Builtin.STRING));
         defaultState = threadStateType.asValue(value -> value.putField("name", "STATE_DEFAULT"));
@@ -105,27 +110,61 @@ final class PerfJfrWriter {
                 .putField("virtual", false)));
     }
 
-    private TypedValue frame(String symbol) {
-        return frames.computeIfAbsent(symbol, ignored -> stackFrameType.asValue(value -> value
-                .putField("method", method(symbol))
-                .putField("lineNumber", 0)
-                .putField("bytecodeIndex", 0)
-                .putField("type", frameType)));
+    private TypedValue frame(PerfScriptParser.Frame frame) {
+        return frames.computeIfAbsent(frame, key -> {
+            if (key.dso().equals("[kernel.kallsyms]")) {
+                return stackFrame(new MethodKey("", key.symbol()), kernelFrameType, false);
+            }
+            MethodKey javaMethod = taggedJavaMethod(key.symbol());
+            if (javaMethod != null) {
+                return stackFrame(javaMethod, compiledFrameType, true);
+            }
+            return stackFrame(new MethodKey("", key.symbol()), cppFrameType, false);
+        });
     }
 
-    private TypedValue method(String symbol) {
-        return methods.computeIfAbsent(symbol, ignored -> methodType.asValue(value -> value
-                .putField("type", syntheticClass)
-                .putField("name", symbol(symbol))
-                .putField("descriptor", symbol(""))));
+    private static MethodKey taggedJavaMethod(String symbol) {
+        if (!symbol.endsWith(" [AOT]") && !symbol.endsWith(" [JIT]")) {
+            return null;
+        }
+        String qualifiedMethod = symbol.substring(0, symbol.length() - " [AOT]".length());
+        int separator = qualifiedMethod.lastIndexOf("::");
+        if (separator <= 0 || separator + 2 == qualifiedMethod.length()) {
+            return null;
+        }
+        String owner = qualifiedMethod.substring(0, separator);
+        if (owner.startsWith("L") && owner.endsWith(";")) {
+            owner = owner.substring(1, owner.length() - 1);
+        }
+        if (owner.isEmpty()) {
+            return null;
+        }
+        return new MethodKey(owner.replace('.', '/'), qualifiedMethod.substring(separator + 2));
+    }
+
+    private TypedValue stackFrame(MethodKey method, TypedValue frameType, boolean javaFrame) {
+        return stackFrameType.asValue(value -> value
+                .putField("method", method(method))
+                .putField("lineNumber", -1)
+                .putField("javaFrame", javaFrame)
+                .putField("type", frameType));
+    }
+
+    private TypedValue method(MethodKey method) {
+        return methods.computeIfAbsent(method, key -> methodType.asValue(value -> value
+                .putField("type", classes.computeIfAbsent(key.className(), className ->
+                        classType.asValue(classValue -> classValue.putField("name", symbol(className)))))
+                .putField("name", symbol(key.methodName()))
+                .putField("descriptor", symbol(key.className().isEmpty() ? "" : SYNTHETIC_JAVA_METHOD_DESCRIPTOR))));
     }
 
     private TypedValue symbol(String text) {
-        return symbols.computeIfAbsent(text, ignored -> symbolType.asValue(value -> value
-                .putField("encoding", (byte) 3)
-                .putField("bytes", text.getBytes(StandardCharsets.UTF_8))));
+        return text.isEmpty() ? symbolType.nullValue() : symbols.computeIfAbsent(text, symbolType::asValue);
     }
 
     private record ThreadKey(String command, int tid) {
+    }
+
+    private record MethodKey(String className, String methodName) {
     }
 }

@@ -6,7 +6,9 @@ import one.convert.Arguments;
 import one.convert.FlameGraph;
 import one.convert.JfrToFlame;
 import one.convert.JfrToHeatmap;
+import one.jfr.JfrReader;
 
+import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -14,6 +16,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
 import java.util.List;
 
 final class ProfileConverter {
@@ -100,7 +103,15 @@ final class ProfileConverter {
     }
 
     static void convertHeatmap(Path input, Path output) throws IOException {
-        JfrToHeatmap.convert(input.toString(), output.toString(), new Arguments("--output", "heatmap"));
+        JfrToHeatmap converter;
+        try (JfrReader reader = new JfrReader(input.toString())) {
+            reader.stackTraces.forEach((id, stack) -> Arrays.fill(stack.locations, -1));
+            converter = new JfrToHeatmap(reader, new Arguments("--output", "heatmap", "--dot"));
+            converter.convert();
+        }
+        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(output))) {
+            converter.dump(out);
+        }
         try (BufferedReader reader = Files.newBufferedReader(output)) {
             if ("No samples found".equals(reader.readLine())) {
                 throw new IOException("Heatmap conversion found no samples");
@@ -128,9 +139,13 @@ final class ProfileConverter {
         if (!isNonEmptyDirectory(symbols)) {
             throw new IOException("Declared perf symbol directory must be a non-empty directory: " + symbols);
         }
+        Path kallsyms = symbols.resolve("proc/kallsyms");
+        if (!Files.isRegularFile(kallsyms) || Files.size(kallsyms) == 0) {
+            throw new IOException("Declared perf kallsyms snapshot must be a non-empty file: " + kallsyms);
+        }
         return List.of(
                 "shell", ".#profiling-perf", "--command", "perf", "script", "--ns",
-                "--symfs", symbols.toString(), "-i", injected.toString());
+                "--symfs", symbols.toString(), "--kallsyms", kallsyms.toString(), "-i", injected.toString());
     }
 
     private static boolean isNonEmptyDirectory(Path directory) throws IOException {

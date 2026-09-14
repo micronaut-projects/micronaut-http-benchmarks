@@ -42,4 +42,21 @@ final class PerfStackCollapseTest {
                 "JavaMainWrapper::invoke_main [AOT];io.micronaut.benchmark.Controller::hello [AOT];Ljava/lang/String:::charAt [JIT] 1\n",
                 collapsed.toString());
     }
+
+    @Test
+    void ignoresDsoWhenCollapsingNativeAndKernelFrames() throws Exception {
+        String perfScript = """
+                GC Thread#0 100/102 [003] 10.0: cycles:
+                 7f schedule ([kernel.kallsyms])
+                 80 schedule (app)
+                 81 std::vector<int>::push_back (libstdc++.so)
+                 82 foo;worker+0x12 (libfoo.so)
+                 83 [unknown] ([unknown])
+                """;
+        StringWriter collapsed = new StringWriter();
+
+        PerfStackCollapse.convert(new BufferedReader(new StringReader(perfScript)), collapsed);
+
+        assertEquals("[unknown];foo:worker+0x12;std::vector<int>::push_back;schedule;schedule 1\n", collapsed.toString());
+    }
 }
