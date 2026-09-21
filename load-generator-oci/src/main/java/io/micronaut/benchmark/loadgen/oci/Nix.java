@@ -14,7 +14,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 @Singleton
 public class Nix {
@@ -40,48 +42,52 @@ public class Nix {
     }
 
     public static void run(List<String> args, OutputStream stdout, OutputStream stderr) throws IOException, InterruptedException {
-        Process process = processBuilder(args).start();
-        AtomicReference<IOException> stderrFailure = new AtomicReference<>();
-        Thread stderrThread = Thread.ofVirtual().start(() -> {
-            try (InputStream input = process.getErrorStream()) {
-                input.transferTo(stderr);
-            } catch (IOException e) {
-                stderrFailure.set(e);
-            }
-        });
-        IOException stdoutFailure = null;
-        try (InputStream input = process.getInputStream()) {
-            input.transferTo(stdout);
-        } catch (IOException e) {
-            stdoutFailure = e;
-        }
-        int exit;
-        try {
-            exit = process.waitFor();
-            stderrThread.join();
-        } catch (InterruptedException e) {
-            process.destroyForcibly();
-            process.waitFor();
-            Thread.currentThread().interrupt();
-            throw e;
-        } finally {
-            if (process.isAlive()) {
-                process.destroyForcibly();
-                try {
-                    process.waitFor();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+        run(processBuilder(args), stdout, stderr);
+    }
+
+    static void run(ProcessBuilder builder, OutputStream stdout, OutputStream stderr) throws IOException, InterruptedException {
+        Process process = builder.start();
+        // Keep the caller interruptible even while a build produces no output.
+        try (var streams = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<?> stdoutTask = streams.submit(() -> {
+                forwardOutput(process, process.getInputStream(), stdout);
+                return null;
+            });
+            Future<?> stderrTask = streams.submit(() -> {
+                forwardOutput(process, process.getErrorStream(), stderr);
+                return null;
+            });
+            try {
+                int exit = process.waitFor();
+                stdoutTask.get();
+                stderrTask.get();
+                if (exit != 0) {
+                    throw new IOException("Nix exited with exit code " + exit);
+                }
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof IOException io) {
+                    throw io;
+                }
+                throw new IOException("Failed to forward Nix output", e.getCause());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            } finally {
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                    process.onExit().join();
                 }
             }
         }
-        if (stderrFailure.get() != null) {
-            throw stderrFailure.get();
-        }
-        if (stdoutFailure != null) {
-            throw stdoutFailure;
-        }
-        if (exit != 0) {
-            throw new IOException("Nix exited with exit code " + exit);
+    }
+
+    private static void forwardOutput(Process process, InputStream input, OutputStream output) throws IOException {
+        try (input) {
+            input.transferTo(output);
+        } catch (IOException | RuntimeException | Error failure) {
+            // A failed output destination must not leave a build running unobserved.
+            process.destroyForcibly();
+            throw failure;
         }
     }
 
