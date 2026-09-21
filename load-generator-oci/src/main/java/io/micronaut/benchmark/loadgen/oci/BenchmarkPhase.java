@@ -11,7 +11,6 @@ public enum BenchmarkPhase {
     STARTING_SERVER,
     BENCHMARKING,
     RESTORING_BOOTSTRAP,
-    SHUTTING_DOWN,
     DONE,
     FAILED,
 }

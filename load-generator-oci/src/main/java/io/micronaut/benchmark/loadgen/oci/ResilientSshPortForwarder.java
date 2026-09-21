@@ -20,6 +20,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
 import io.netty.util.concurrent.Promise;
+import jakarta.annotation.PreDestroy;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
@@ -223,6 +224,11 @@ public final class ResilientSshPortForwarder implements Closeable {
         public Factory(@Named(TaskExecutors.IO) Executor blocking) {
             this.blocking = blocking;
             this.loop = new NioEventLoopGroup(1).next();
+        }
+
+        @PreDestroy
+        void close() {
+            loop.parent().shutdownGracefully().syncUninterruptibly();
         }
 
         public ResilientSshPortForwarder create(Callable<CommandRunner> sessionCallable, SshdSocketAddress remote) {

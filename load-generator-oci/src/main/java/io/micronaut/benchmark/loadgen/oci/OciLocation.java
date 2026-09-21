@@ -1,6 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.context.annotation.EachProperty;
+import io.micronaut.context.annotation.ConfigurationProperties;
 
 /**
  * An OCI location to test on.
@@ -9,7 +9,7 @@ import io.micronaut.context.annotation.EachProperty;
  * @param region             The region
  * @param availabilityDomain The AD within the region
  */
-@EachProperty(value = "suite.location", list = true)
+@ConfigurationProperties("suite.location")
 public record OciLocation(
         String compartmentId,
         String region,

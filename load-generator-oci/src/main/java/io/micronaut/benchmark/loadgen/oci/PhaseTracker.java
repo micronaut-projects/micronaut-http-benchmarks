@@ -83,9 +83,41 @@ public final class PhaseTracker {
     }
 
     /**
-     * Regularly log and save benchmark progress.
+     * Start background progress reporting. Closing the returned handle waits for the writer to stop and saves
+     * the final snapshot, even when the caller is interrupted.
      */
-    public void trackLoop() throws IOException {
+    public AutoCloseable start() {
+        Thread thread = Thread.ofVirtual().name("benchmark-progress").start(() -> {
+            try {
+                trackLoop();
+            } catch (IOException e) {
+                LOG.error("Error in phase tracker", e);
+            }
+        });
+        return () -> {
+            thread.interrupt();
+            boolean interrupted = Thread.interrupted();
+            try {
+                while (thread.isAlive()) {
+                    try {
+                        thread.join();
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+                finalizeSnapshot();
+                if (interrupted) {
+                    throw new InterruptedException("Interrupted while stopping benchmark progress reporting");
+                }
+            } finally {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+    }
+
+    private void trackLoop() throws IOException {
         int lastSize = 0;
         while (true) {
             int newSize;
@@ -108,7 +140,6 @@ public final class PhaseTracker {
             try {
                 TimeUnit.SECONDS.sleep(10);
             } catch (InterruptedException e) {
-                finalizeSnapshot();
                 break;
             }
         }

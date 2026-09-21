@@ -5,7 +5,7 @@ import org.slf4j.MDC;
 import java.util.concurrent.Callable;
 
 /**
- * Used for logging the benchmark name during parallel benchmarks.
+ * Used for logging the benchmark name, including from background monitoring tasks.
  */
 public class MdcTracker {
     private static final String KEY = "benchmarkName";

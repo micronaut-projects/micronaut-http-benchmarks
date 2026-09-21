@@ -157,8 +157,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     }
 
     /**
-     * Run the given benchmark on this infrastructure. This method is synchronized, so if multiple benchmarks call
-     * this simultaneously, the infrastructure will run them one-by-one.
+     * Run the given benchmark on this infrastructure. The suite calls this sequentially for each case.
      *
      * @param outputDirectory The benchmark output directory
      * @param run             The framework configuration to run
@@ -166,7 +165,7 @@ public final class Infrastructure extends AbstractInfrastructure {
      * @param configuration   Preselected system for this document/protocol case
      * @param progress        Progress updater
      */
-    public synchronized void run(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, FrameworkRun.NixosConfiguration configuration,
+    public void run(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, FrameworkRun.NixosConfiguration configuration,
                                  PhaseTracker.PhaseUpdater progress) throws Exception {
         if (stopped) {
             throw new InterruptedException("Already stopped");

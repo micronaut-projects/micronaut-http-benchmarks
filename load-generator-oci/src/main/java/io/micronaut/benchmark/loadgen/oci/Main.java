@@ -5,7 +5,8 @@ import io.micronaut.runtime.Micronaut;
 
 public class Main {
     public static void main(String[] args) throws Exception {
-        ApplicationContext ctx = Micronaut.run(args);
-        ctx.getBean(SuiteRunner.class).run();
+        try (ApplicationContext ctx = Micronaut.run(args)) {
+            ctx.getBean(SuiteRunner.class).run();
+        }
     }
 }

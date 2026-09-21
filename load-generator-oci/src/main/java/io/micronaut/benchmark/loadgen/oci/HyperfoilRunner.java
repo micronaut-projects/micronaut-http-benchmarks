@@ -15,6 +15,7 @@ import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
+import jakarta.annotation.PreDestroy;
 import jakarta.inject.Singleton;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.slf4j.Logger;
@@ -392,6 +393,11 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             this.resilientForwarderFactory = resilientForwarderFactory;
             this.vertx = Vertx.vertx();
 
+        }
+
+        @PreDestroy
+        void close() {
+            vertx.close().toCompletionStage().toCompletableFuture().join();
         }
 
         Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol) {
