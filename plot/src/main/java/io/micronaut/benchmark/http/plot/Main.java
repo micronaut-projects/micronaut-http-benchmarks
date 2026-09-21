@@ -65,7 +65,7 @@ public class Main {
             new Discriminator("JSON implementation", p -> compileConfiguration(p, "json")),
             new Discriminator("Netty transport", p -> compileConfiguration(p, "transport")),
             new Discriminator("tcnative support", p -> compileConfiguration(p, "tcnative")),
-            new Discriminator("loom support", p -> compileConfiguration(p, "loom"))
+            new Discriminator("loom support", p -> loomSupport(p.parameters()))
                     .order(List.of("off", "carried", "on")),
             new Discriminator("http client thread affinity mode", p -> compileConfiguration(p, "affinity"))
                     .order(List.of("enforced", "preferred", "off"))
@@ -167,6 +167,18 @@ public class Main {
         }
         Object v = compileConfiguration.get(name);
         return v == null ? "" : v.toString();
+    }
+
+    static String loomSupport(Object parameters) {
+        if (!(parameters instanceof Map<?, ?> map)) {
+            return "off";
+        }
+        return switch (Objects.toString(map.get("threading"), "default")) {
+            case "default" -> "off";
+            case "virtual" -> "on";
+            case "loom-carrier" -> "carried";
+            default -> throw new IllegalArgumentException("Unknown threading mode: " + map.get("threading"));
+        };
     }
 
     private static String loadStatic(String name) {

@@ -49,7 +49,9 @@ public class StatusController {
                 SslContext.defaultServerProvider(),
                 jsonMapper.getClass().getName(),
                 Thread.currentThread().getName(),
-                Thread.currentThread().isVirtual() ? PrivateLoomSupport.getCarrierThread(Thread.currentThread()).getName() : null
+                Thread.currentThread().isVirtual() && PrivateLoomSupport.isSupported()
+                        ? PrivateLoomSupport.getCarrierThread(Thread.currentThread()).getName()
+                        : null
         );
     }
 

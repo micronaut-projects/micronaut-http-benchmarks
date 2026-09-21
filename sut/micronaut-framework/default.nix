@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   codec = config.micronaut-framework.codec;
+  threading = config.micronaut-framework.threading;
   pgoDirectory = if config.benchmark.sut.pgoBuildDirectory == null then config.benchmark.sut.pgoDirectory else config.benchmark.sut.pgoBuildDirectory;
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
@@ -49,6 +50,13 @@ let
       gradleFlags = [ "-Pcodec=${codec}" ] ++ finalAttrs.nativeGradleFlags;
       preBuild = ''
         install -Dm644 ${tls}/server.p12 src/main/resources/server.p12
+      '' + lib.optionalString (threading != "default") ''
+        substituteInPlace src/main/resources/application.yml \
+          --replace-fail $'  server:\n' $'  server:\n    thread-selection: BLOCKING\n'
+        ${lib.optionalString (threading == "loom-carrier") ''
+          substituteInPlace src/main/resources/application.yml \
+            --replace-fail $'      default:\n        prefer-native-transport: true' $'      default:\n        loom-carrier: true\n        prefer-native-transport: true'
+        ''}
       '';
       nativeBuildInputs = [ gradle pkgs.makeWrapper ] ++ lib.optional (config.benchmark.sut.pgoBuildDirectory != null) config.benchmark.sut.pgoBuildDirectory;
       __noChroot = runtime == "native-pgo" && config.benchmark.sut.pgoBuildDirectory == null;
@@ -74,6 +82,11 @@ in {
     default = "jackson-databind";
     description = "The Micronaut Framework JSON codec used by this benchmark run.";
   };
+  options.micronaut-framework.threading = lib.mkOption {
+    type = lib.types.enum [ "default" "virtual" "loom-carrier" ];
+    default = "default";
+    description = "Server threading mode; virtual and loom-carrier use BLOCKING thread selection.";
+  };
   config.benchmark = {
     jvm = {
       enable = runtimeInfo.isJvm;
@@ -92,6 +105,7 @@ in {
         typePrefix = "micronaut-framework";
         typeSuffix = codec;
         parameters.codec = codec;
+        parameters.threading = threading;
       };
     };
   };
