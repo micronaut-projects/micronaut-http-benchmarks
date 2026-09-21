@@ -24,7 +24,7 @@ pkgs.maven.buildMavenPackage {
     export PATH=${pkgs.jdk25}/bin:$PATH
   '';
   mvnHash = "sha256-f8D1+a4BcdHUzwnK8V+gAXFu8IHBuyFFwa4LZJfdf4Q=";
-  mvnParameters = "-pl distribution -am package -DskipTests";
+  mvnParameters = "-pl distribution -am -DskipTests";
   installPhase = ''
     mkdir -p $out
     unzip distribution/target/hyperfoil-*.zip -d $out
