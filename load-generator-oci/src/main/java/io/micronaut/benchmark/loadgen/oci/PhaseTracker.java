@@ -6,16 +6,17 @@ import org.slf4j.LoggerFactory;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -26,14 +27,18 @@ public final class PhaseTracker {
     private static final Logger LOG = LoggerFactory.getLogger(PhaseTracker.class);
 
     private final ObjectMapper objectMapper;
+    private final Path outputTemporary;
     private final Path outputNew;
     private final Path outputOld;
 
     private final Map<String, BenchmarkPhase> phases = new HashMap<>();
-    private final List<Record> records = new CopyOnWriteArrayList<>();
+    private final Map<String, Record> latestRecords = new HashMap<>();
+    private final Map<String, Record> phaseStartedRecords = new HashMap<>();
+    private final List<Record> records = new ArrayList<>();
 
     public PhaseTracker(ObjectMapper objectMapper, Path outputDir) {
         this.objectMapper = objectMapper;
+        this.outputTemporary = outputDir.resolve("phases.new.json.tmp");
         this.outputNew = outputDir.resolve("phases.new.json");
         this.outputOld = outputDir.resolve("phases.json");
     }
@@ -45,14 +50,36 @@ public final class PhaseTracker {
      * @return A progress updater for that benchmark
      */
     public PhaseUpdater updater(String name) {
-        return (phase, percent, msg) -> update(name, phase, percent);
+        return (phase, percent, displayProgress) -> update(name, phase, percent, displayProgress);
     }
 
-    private void update(String name, BenchmarkPhase phase, double phasePercentage) {
+    private void update(String name, BenchmarkPhase phase, double phasePercentage, @Nullable String displayProgress) {
+        Record previous;
+        Record phaseStart;
+        Record record;
         synchronized (phases) {
+            Instant now = Instant.now();
+            previous = latestRecords.get(name);
+            phaseStart = phaseStartedRecords.get(name);
+            record = new Record(
+                    now,
+                    name,
+                    phase,
+                    phasePercentage,
+                    displayProgress,
+                    previous == null ? null : Duration.between(previous.time(), now)
+            );
             phases.put(name, phase);
+            latestRecords.put(name, record);
+            if (previous == null || previous.phase() != phase) {
+                phaseStartedRecords.put(name, record);
+            }
+            records.add(record);
         }
-        records.add(new Record(Instant.now(), name, phase, phasePercentage));
+        if (previous != null && previous.phase() != phase) {
+            LOG.info("Benchmark {} changed phase from {} to {} after {}", name, previous.phase(), phase,
+                    Duration.between(phaseStart.time(), record.time()));
+        }
     }
 
     /**
@@ -61,7 +88,10 @@ public final class PhaseTracker {
     public void trackLoop() throws IOException {
         int lastSize = 0;
         while (true) {
-            int newSize = records.size();
+            int newSize;
+            synchronized (phases) {
+                newSize = records.size();
+            }
             if (newSize != lastSize) {
                 lastSize = newSize;
                 dump();
@@ -78,15 +108,32 @@ public final class PhaseTracker {
             try {
                 TimeUnit.SECONDS.sleep(10);
             } catch (InterruptedException e) {
-                dump();
-                Files.move(outputNew, outputOld, StandardCopyOption.REPLACE_EXISTING);
+                finalizeSnapshot();
                 break;
             }
         }
     }
 
     private void dump() throws IOException {
-        objectMapper.writeValue(outputNew.toFile(), new Dump(Instant.now(), BenchmarkPhase.values(), records));
+        Dump snapshot;
+        synchronized (phases) {
+            snapshot = new Dump(Instant.now(), BenchmarkPhase.values(), List.copyOf(records));
+        }
+        objectMapper.writeValue(outputTemporary.toFile(), snapshot);
+        try {
+            Files.move(outputTemporary, outputNew, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(outputTemporary, outputNew, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    void finalizeSnapshot() throws IOException {
+        dump();
+        try {
+            Files.move(outputNew, outputOld, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(outputNew, outputOld, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     record Dump(
@@ -99,7 +146,9 @@ public final class PhaseTracker {
             Instant time,
             String name,
             BenchmarkPhase phase,
-            double phasePercentage
+            double phasePercentage,
+            @Nullable String displayProgress,
+            @Nullable Duration elapsed
     ) {}
 
     public interface PhaseUpdater {
