@@ -8,6 +8,7 @@ import io.micronaut.core.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -18,7 +19,7 @@ import java.util.function.Supplier;
 
 public abstract class PhasePoller<K, P> implements ResourceContext.Poller {
     private static final Logger LOG = LoggerFactory.getLogger(PhasePoller.class);
-    private final Map<K, Subscription> subscriptions = new HashMap<>();
+    private final Map<K, List<Subscription>> subscriptions = new HashMap<>();
     private int listThreshold = 5;
 
     private PhasePoller() {
@@ -26,47 +27,62 @@ public abstract class PhasePoller<K, P> implements ResourceContext.Poller {
 
     @Override
     public synchronized int size() {
-        return subscriptions.size();
+        return subscriptions.values().stream().mapToInt(List::size).sum();
     }
 
     public final synchronized void subscribeUntil(K key, PhasedResource<P> resource, P until) {
         Subscription subscription = new Subscription(resource, until);
         if (!subscription.isComplete(resource.getCurrentPhase())) {
-            subscriptions.put(key, subscription);
+            subscriptions.computeIfAbsent(key, ignored -> new ArrayList<>()).add(subscription);
         }
     }
 
     @Override
     public final void poll() {
-        Map<K, Subscription> copy;
+        Map<K, List<Subscription>> copy;
         synchronized (this) {
-            copy = new HashMap<>(subscriptions);
+            copy = new HashMap<>();
+            subscriptions.forEach((key, current) -> copy.put(key, List.copyOf(current)));
         }
-        Map<K, Subscription> done = new HashMap<>();
+        Map<K, List<Subscription>> done = new HashMap<>();
         if (copy.size() > listThreshold) {
             listStates(copy.keySet()).forEach((k, p) -> {
-                Subscription subscription = copy.get(k);
-                if (subscription != null) {
-                    subscription.resource.setPhase(p);
-                    if (subscription.isComplete(p)) {
-                        done.put(k, subscription);
+                List<Subscription> current = copy.get(k);
+                if (current != null) {
+                    List<Subscription> completed = completedSubscriptions(current, p);
+                    if (!completed.isEmpty()) {
+                        done.put(k, completed);
                     }
                 }
             });
         } else {
-            copy.forEach((k, s) -> {
+            copy.forEach((k, current) -> {
                 P p = getState(k);
-                s.resource.setPhase(p);
-                if (s.isComplete(p)) {
-                    done.put(k, s);
+                List<Subscription> completed = completedSubscriptions(current, p);
+                if (!completed.isEmpty()) {
+                    done.put(k, completed);
                 }
             });
         }
         if (!done.isEmpty()) {
             synchronized (this) {
-                done.forEach(subscriptions::remove);
+                done.forEach((key, completed) -> subscriptions.computeIfPresent(key, (ignored, current) -> {
+                    current.removeAll(completed);
+                    return current.isEmpty() ? null : current;
+                }));
             }
         }
+    }
+
+    private List<Subscription> completedSubscriptions(List<Subscription> current, P phase) {
+        List<Subscription> completed = new ArrayList<>();
+        for (Subscription subscription : current) {
+            subscription.resource.setPhase(phase);
+            if (subscription.isComplete(phase)) {
+                completed.add(subscription);
+            }
+        }
+        return completed;
     }
 
     public static <K> Builder<K, ?, ?, ?, ?, ?> builder() {

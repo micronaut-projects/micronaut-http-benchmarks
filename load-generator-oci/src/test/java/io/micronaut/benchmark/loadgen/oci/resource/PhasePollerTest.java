@@ -50,6 +50,31 @@ class PhasePollerTest {
         }
     }
 
+    @Test
+    void appliesAListedTerminalPhaseToEveryResourceSubscribedForTheSameKey() throws Exception {
+        PhasePoller<String, Phase> poller = PhasePoller.create(
+                key -> {
+                    throw new AssertionError("Expected the list state branch");
+                },
+                () -> List.of("resource"),
+                summary -> summary,
+                summary -> Phase.COMPLETE
+        );
+        ResourceContext context = new ResourceContext(null);
+        TestResource original = new TestResource(context);
+        TestResource replacement = new TestResource(context);
+        poller.subscribeUntil("resource", original, Phase.COMPLETE);
+        poller.subscribeUntil("resource", replacement, Phase.COMPLETE);
+        for (int i = 0; i < 5; i++) {
+            poller.subscribeUntil("other-" + i, new TestResource(context), Phase.COMPLETE);
+        }
+
+        poller.poll();
+
+        assertEquals(Phase.COMPLETE, original.getCurrentPhase());
+        assertEquals(Phase.COMPLETE, replacement.getCurrentPhase());
+    }
+
     private enum Phase {
         TARGET,
         COMPLETE
