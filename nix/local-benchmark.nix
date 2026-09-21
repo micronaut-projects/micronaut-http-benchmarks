@@ -1,5 +1,6 @@
 { pkgs, lib }:
 let
+  render = import ./render-hyperfoil.nix { inherit lib; };
   hyperfoil = import ./system/hyperfoil.nix { inherit pkgs; };
   target = {
     httpUrl = "http://127.0.0.1";
@@ -10,25 +11,15 @@ let
     httpsPort = 8443;
   };
   definition = { request, protocol, mode ? "local", duration ? "2m" }:
-    let
-      rendered = lib.evalModules {
-        modules = [
-          ./hyperfoil-definitions.nix
-          {
-            benchmark.hyperfoil.pgoDuration = duration;
-            benchmark.hyperfoil.requests.local = {
-              inherit request mode target;
-              protocol = (removeAttrs protocol [ "enable" ]) // {
-                sharedConnections = 1;
-                pipeliningLimit = 1;
-                maxHttp2Streams = 1;
-              };
-            };
-          }
-        ];
+    (pkgs.formats.yaml { }).generate "${mode}-${protocol.protocol}-${request.name}.yaml" (render {
+      inherit request mode target;
+      settings.pgoDuration = duration;
+      protocol = protocol // {
+        sharedConnections = 1;
+        pipeliningLimit = 1;
+        maxHttp2Streams = 1;
       };
-    in (pkgs.formats.yaml { }).generate "${mode}-${protocol.protocol}-${request.name}.yaml"
-      rendered.config.benchmark.hyperfoil.rendered.local;
+    });
   # Aesh restores terminal attributes on exit; detach from the test driver's
   # controlling terminal so job control cannot suspend the standalone JVM.
   # Bound the new process group too; the driver's timeout cannot kill its descendants.

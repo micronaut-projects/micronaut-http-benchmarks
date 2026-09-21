@@ -178,12 +178,10 @@
         yaml = pkgs.formats.yaml { };
       in pkgs.linkFarm "benchmark-definitions" (lib.flatten (lib.mapAttrsToList (suiteName: suite:
         lib.flatten (lib.mapAttrsToList (protocolName: documents:
-          lib.flatten (lib.mapAttrsToList (documentName: definitions: [
-            {
-              name = "${suiteName}/${protocolName}/${documentName}/normal.yaml";
-              path = yaml.generate "${suiteName}-${protocolName}-${documentName}-normal.yaml" definitions.normal;
-            }
-          ]) documents)
+          lib.mapAttrsToList (documentName: definition: {
+            name = "${suiteName}/${protocolName}/${documentName}/normal.yaml";
+            path = yaml.generate "${suiteName}-${protocolName}-${documentName}-normal.yaml" definition;
+          }) documents
         ) suite.benchmarkDefinitions)
       ) metadataSuites));
     benchmarkMetadata = { suites = lib.mapAttrs (_: suite: removeAttrs suite [ "benchmarkDefinitions" ]) metadataSuites; inherit instanceTypes; };
