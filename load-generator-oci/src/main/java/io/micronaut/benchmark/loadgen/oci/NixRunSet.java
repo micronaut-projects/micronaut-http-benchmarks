@@ -4,9 +4,6 @@ import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.event.Level;
 import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
@@ -18,16 +15,17 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 @Singleton
 public final class NixRunSet implements FrameworkRunSet {
     private static final String SUT_SERVICE = "sut.service";
-    private static final Logger LOG = LoggerFactory.getLogger(NixRunSet.class);
 
     private final List<NixFrameworkRun> runs;
 
-    public NixRunSet(BenchmarkMetadata metadata, Nix nix) {
-        runs = metadata.suite().runs().stream().map(run -> new NixFrameworkRun(run, nix)).toList();
+    public NixRunSet(BenchmarkMetadata metadata) {
+        runs = metadata.suite().runs().stream().map(NixFrameworkRun::new).toList();
     }
 
     @Override
@@ -35,7 +33,7 @@ public final class NixRunSet implements FrameworkRunSet {
         return runs;
     }
 
-    private record NixFrameworkRun(NixFrameworkMetadata metadata, Nix nix) implements FrameworkRun {
+    private record NixFrameworkRun(NixFrameworkMetadata metadata) implements FrameworkRun {
         @Override
         public String type() {
             return metadata.type();
@@ -63,41 +61,23 @@ public final class NixRunSet implements FrameworkRunSet {
         }
 
         @Override
-        public List<NixosConfiguration> nixosConfigurations() {
-            NixFrameworkMetadata.PgoMetadata pgo = metadata.pgo();
-            return pgo == null
-                    ? List.of(new NixosConfiguration(metadata.nixosConfiguration(), false))
-                    : List.of(
-                            new NixosConfiguration(metadata.nixosConfiguration(), false),
-                            new NixosConfiguration(pgo.optimizedConfiguration(), true)
-                    );
+        public NixosConfiguration nixosConfiguration(LoadVariant loadVariant) {
+            String protocol = loadVariant.protocol().protocol().name().toLowerCase(Locale.ROOT);
+            Map<String, String> documents = metadata.nixosConfigurations() == null
+                    ? null : metadata.nixosConfigurations().get(protocol);
+            String configuration = documents == null ? null : documents.get(loadVariant.definition().name());
+            if (configuration == null || configuration.isBlank()) {
+                throw new IllegalArgumentException("Missing NixOS configuration for " + metadata.name()
+                        + "/" + protocol + "/" + loadVariant.definition().name());
+            }
+            return new NixosConfiguration(configuration);
         }
 
         @Override
         public void setupAndRun(CommandRunner benchmarkServerClient, Path outputDirectory, OutputListener.Write log,
-                                BenchmarkClosure benchmarkClosure, ConfigurationActivator configurationActivator,
+                                BenchmarkClosure benchmarkClosure,
                                 PhaseTracker.PhaseUpdater progress) throws Exception {
             progress.update(BenchmarkPhase.STARTING_SERVER);
-            NixFrameworkMetadata.PgoMetadata pgo = metadata.pgo();
-            if (pgo != null) {
-                benchmarkServerClient.runAndCheck("systemctl restart -- " + SUT_SERVICE, log);
-                try {
-                    progress.update(BenchmarkPhase.PGO);
-                    benchmarkClosure.pgoLoad(progress);
-                } finally {
-                    benchmarkServerClient.runAndCheck("systemctl stop -- " + SUT_SERVICE, log);
-                }
-                Path localPgoDirectory = outputDirectory.resolve("pgo");
-                deleteRecursively(localPgoDirectory);
-                benchmarkServerClient.downloadRecursive(pgo.pgoDirectory(), localPgoDirectory);
-                NixCacheAccess cache = configurationActivator.resolve(pgo.optimizedConfiguration());
-                OutputListener pgoLog = new OutputListener.Log(LOG, Level.INFO);
-                Path pgoStorePath = nix.addStorePath(pgoLog, localPgoDirectory);
-                Path pgoOutput = nix.buildPgoOutput(pgoLog, pgo.optimizedConfiguration(), pgoStorePath);
-                nix.uploadOutputCache(pgoLog, cache.writeUri(), pgoOutput);
-                configurationActivator.activate(new Activation(pgo.optimizedConfiguration(), pgoOutput.toString(), progress));
-                progress.update(BenchmarkPhase.STARTING_SERVER);
-            }
             benchmarkServerClient.runAndCheck("systemctl restart -- " + SUT_SERVICE, log);
             benchmarkClosure.benchmark(progress);
             Profiling profiling = profiling();
@@ -206,11 +186,9 @@ public final class NixRunSet implements FrameworkRunSet {
     }
 }
 
-record NixFrameworkMetadata(String type, String name, JsonNode parameters, String nixosConfiguration,
-                            ProfilingMetadata profiling, PgoMetadata pgo) {
+record NixFrameworkMetadata(String type, String name, JsonNode parameters, Map<String, Map<String, String>> nixosConfigurations,
+                            ProfilingMetadata profiling) {
     record ProfilingMetadata(String tool, String artifact, @Nullable String injectedArtifact,
                              @Nullable String symbolDirectory) {
-    }
-    record PgoMetadata(String optimizedConfiguration, String pgoDirectory) {
     }
 }

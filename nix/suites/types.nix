@@ -31,7 +31,7 @@ in {
       sharedConnections = mkOption { type = positive; description = "Number of shared Hyperfoil connections."; };
       pipeliningLimit = mkOption { type = positive; default = 1; description = "Maximum HTTP/1 pipeline depth."; };
       maxHttp2Streams = mkOption { type = positive; default = 1; description = "Maximum concurrent HTTP/2 streams."; };
-      compileOps = mkOption { type = positive; description = "Request rate used for PGO compilation."; };
+      compileOps = mkOption { type = positive; description = "Request rate used to size normal benchmark warmup."; };
       ops = mkOption { type = nonEmpty (types.listOf positive); description = "Ordered request rates for normal benchmark phases."; };
       sla = mkOption { type = nonEmpty (types.attrsOf duration); description = "Hyperfoil SLA percentile limits using native duration strings."; };
     };

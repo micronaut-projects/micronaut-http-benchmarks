@@ -25,18 +25,16 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     private final String bucket;
     private final String path;
     private final String installable;
-    private final boolean dynamicPgo;
     private NixCacheAccess cacheAccess;
     private boolean publicationSignaled;
     private boolean publicationCancelled;
 
-    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable, boolean dynamicPgo) {
+    public NixosCacheResource(ResourceContext context, String namespace, String bucket, String path, String installable) {
         super(context);
         this.namespace = namespace;
         this.bucket = bucket;
         this.path = path;
         this.installable = installable;
-        this.dynamicPgo = dynamicPgo;
     }
 
     @Override
@@ -57,17 +55,10 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
         try {
             URI writeCacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite);
             URI readCacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
-            String defaultOutput = dynamicPgo
-                    ? null
-                    : context.clients.nix().resolveOutput(
-                            new OutputListener.Log(LOG, Level.DEBUG),
-                            installable
-                    ).toString();
+            String defaultOutput = context.clients.nix().resolveOutput(
+                    new OutputListener.Log(LOG, Level.DEBUG), installable).toString();
             cacheAccess = new NixCacheAccess(installable, defaultOutput, readCacheUri, writeCacheUri);
             setPhase(Phase.Available);
-            if (dynamicPgo) {
-                return;
-            }
             awaitPublicationSignal();
             NixCacheAccess cache = cacheAccess();
             Path output = context.clients.nix().buildAndUploadOutputCache(
@@ -75,7 +66,7 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
                     cache.writeUri(),
                     cache.installable()
             );
-            if (!output.toString().equals(cache.requireDefaultOutput())) {
+            if (!output.toString().equals(cache.defaultOutput())) {
                 throw new IllegalStateException("Resolved output does not match built output for " + cache.installable());
             }
             setPhase(Phase.Published);
@@ -113,14 +104,6 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
         return cacheAccess;
     }
 
-    public NixCacheAccess awaitAvailable() throws InterruptedException {
-        Phase phase = awaitPhaseOrPast(Phase.Available);
-        if (phase == Phase.Failed) {
-            throw new IllegalStateException("Cache failed");
-        }
-        return cacheAccess;
-    }
-
     public NixCacheAccess awaitPublished() throws InterruptedException {
         Phase phase = awaitPhaseOrPast(Phase.Published);
         if (phase == Phase.Failed) {
@@ -130,15 +113,12 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
     }
 
     public synchronized void signalPublication() {
-        if (dynamicPgo) {
-            throw new IllegalStateException("Dynamic PGO caches have no default output");
-        }
         publicationSignaled = true;
         notifyAll();
     }
 
     public synchronized void cancelPublicationWait() {
-        if (dynamicPgo || publicationSignaled || publicationCancelled) {
+        if (publicationSignaled || publicationCancelled) {
             return;
         }
         publicationCancelled = true;
@@ -155,10 +135,6 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
                 throw new InterruptedException("Cache publication cancelled");
             }
         }
-    }
-
-    public boolean dynamicPgo() {
-        return dynamicPgo;
     }
 
     public enum Phase {

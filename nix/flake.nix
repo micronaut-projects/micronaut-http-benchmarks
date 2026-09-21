@@ -27,7 +27,7 @@
       inherit (request) name method uri host requestType requestHeaders requestBody responseBody responseMatchingMode;
     };
     protocolMetadata = protocol: protocol;
-    evaluateRun = suiteName: suite: runName: runModule: extraModules: metadataOverrides:
+    evaluateRun = suiteName: suite: runName: runModule: extraModules:
       let
         configurationName = "${suiteName}-${runName}";
         system = lib.nixosSystem {
@@ -40,48 +40,55 @@
         };
         cfg = system.config.benchmark;
       in {
-        inherit configurationName runModule runName suite suiteName system;
+        inherit configurationName runModule runName suite suiteName system extraModules;
+        trainingCase = null;
         metadata = {
           name = "${suiteName}-${cfg.run.name}";
           type = cfg.sut.metadata.type;
           parameters = cfg.sut.metadata.parameters;
-          nixosConfiguration = configurationName;
           profiling = if cfg.sut.metadata.profiling == null then null else optionalAttrs cfg.sut.metadata.profiling;
-          pgo = cfg.sut.metadata.pgo;
-        } // metadataOverrides;
+        };
       };
-    pgoStage = runtime: enabled: pgo: lib.optionalAttrs (runtime == "native-pgo-instrument") {
-      benchmark.profiling.enable = lib.mkForce false;
-    } // {
-      benchmark.sut = {
-        runtime = lib.mkForce runtime;
-        metadata.enabled = lib.mkForce enabled;
-        metadata.pgo = lib.mkForce pgo;
-      };
-    };
+    # The probe supplies logical run metadata only. Its native-PGO package is never
+    # built: every deployable variant below receives its own training dependency.
     expandRun = suiteName: suite: runName: runModule:
       let
-        probe = evaluateRun suiteName suite runName runModule [ ] { };
-        collectorConfiguration = "${suiteName}-${runName}-collector";
-        optimizedConfiguration = "${suiteName}-${runName}-optimized";
-        pgo = {
-          inherit optimizedConfiguration;
-          pgoDirectory = probe.system.config.benchmark.sut.pgoDirectory;
+        probe = evaluateRun suiteName suite runName runModule [ ];
+        isPgo = probe.system.config.benchmark.sut.runtime == "native-pgo";
+        localBenchmark = import ./local-benchmark.nix {
+          inherit lib;
+          pkgs = import nixpkgs { system = "x86_64-linux"; config.allowUnfree = true; };
         };
-      in if probe.system.config.benchmark.sut.runtime == "native-pgo" then {
-        "${runName}-collector" = evaluateRun suiteName suite "${runName}-collector" runModule [ (pgoStage "native-pgo-instrument" true pgo) ] {
-          name = "${suiteName}-${runName}";
-          profiling = probe.metadata.profiling;
+        cases = lib.mapAttrs (protocolName: protocol: lib.listToAttrs (map (request:
+          let
+            variantName = "${runName}-${protocolName}-${request.name}";
+            profile = localBenchmark.trainingProfile {
+              inherit suite runName runModule request protocol;
+              name = "${suiteName}-${variantName}";
+            };
+            variant = evaluateRun suiteName suite variantName runModule [
+              { benchmark.sut.pgoProfile = profile; }
+            ];
+          in lib.nameValuePair request.name (if isPgo then variant // {
+            trainingCase = { inherit request protocol; };
+          } else probe)
+        ) suite.config.benchmark.suite.documents)) suite.config.benchmark.suite.resolvedProtocols;
+      in
+      assert lib.assertMsg (probe.system.config.benchmark.sut.runtime != "native-pgo-instrument")
+        "native-pgo-instrument is reserved for build-time training; select native-pgo for ${suiteName}-${runName}.";
+      probe // {
+        variants = if isPgo then lib.concatMap lib.attrValues (lib.attrValues cases) else [ probe ];
+        metadata = probe.metadata // {
+          nixosConfigurations = lib.mapAttrs (_: documents:
+            lib.mapAttrs (_: run: run.configurationName) documents) cases;
         };
-        "${runName}-optimized" = evaluateRun suiteName suite "${runName}-optimized" runModule [ (pgoStage "native-pgo" false null) ] { };
-      } else {
-        "${runName}" = probe;
       };
     evaluatedSuiteRuns = lib.mapAttrs (suiteName: suite:
-      lib.foldl' (runs: runName: runs // expandRun suiteName suite runName suite.config.benchmark.suite.runs.${runName}) { }
-        (lib.attrNames suite.config.benchmark.suite.runs)
+      lib.mapAttrs (runName: runModule: expandRun suiteName suite runName runModule)
+        suite.config.benchmark.suite.runs
     ) evaluatedSuites;
-    suiteRuns = lib.concatMap lib.attrValues (lib.attrValues evaluatedSuiteRuns);
+    suiteRuns = lib.concatMap (run: run.variants)
+      (lib.concatMap lib.attrValues (lib.attrValues evaluatedSuiteRuns));
     metadataSuites = lib.mapAttrs (suiteName: suite:
       let
         suiteConfig = suite.config.benchmark.suite;
@@ -176,10 +183,6 @@
               name = "${suiteName}/${protocolName}/${documentName}/normal.yaml";
               path = yaml.generate "${suiteName}-${protocolName}-${documentName}-normal.yaml" definitions.normal;
             }
-            {
-              name = "${suiteName}/${protocolName}/${documentName}/pgo.yaml";
-              path = yaml.generate "${suiteName}-${protocolName}-${documentName}-pgo.yaml" definitions.pgo;
-            }
           ]) documents)
         ) suite.benchmarkDefinitions)
       ) metadataSuites));
@@ -189,7 +192,7 @@
       text = builtins.toJSON value;
     };
     localSmokeTests = import ./smoke-tests.nix {
-      inherit nixpkgs lib evaluatedSuites evaluatedSuiteRuns pgoStage;
+      inherit nixpkgs lib evaluatedSuites evaluatedSuiteRuns expandRun;
     };
     rolePackage = role: lib.nameValuePair "${role.packageName or role.name}-system" (mkHost {
       system = role.instance.platform;
@@ -227,20 +230,6 @@
       // lib.listToAttrs (map rolePackage activatableRoles)
       // lib.listToAttrs (map runPackage systemRuns);
   in {
-    lib.pgoToplevel = optimizedConfiguration: pgoBuildDirectory:
-      let
-        run = lib.findFirst (candidate: candidate.configurationName == optimizedConfiguration)
-          (throw "Unknown optimized PGO configuration: ${optimizedConfiguration}") suiteRuns;
-        pgoRun = evaluateRun run.suiteName run.suite run.runName run.runModule [
-          (pgoStage "native-pgo" false null)
-          { benchmark.sut.pgoBuildDirectory = pgoBuildDirectory; }
-        ] { };
-      in
-      assert lib.assertMsg (builtins.match "^/nix/store/[^/]+$" (toString pgoBuildDirectory) != null)
-        "PGO directory is not a Nix store path: ${toString pgoBuildDirectory}";
-      assert lib.assertMsg (run.system.config.benchmark.sut.runtime == "native-pgo")
-        "Configuration is not a native-PGO optimized run: ${optimizedConfiguration}";
-      pgoRun.system.config.system.build.toplevel;
     packages = lib.genAttrs supportedSystems packagesFor;
     checks = lib.genAttrs supportedSystems (system: {
       benchmark-suite-shape = metadataPackage system "benchmark-suite-shape.json" benchmarkMetadata;

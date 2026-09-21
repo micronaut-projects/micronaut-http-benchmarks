@@ -62,7 +62,7 @@ public final class Infrastructure extends AbstractInfrastructure {
         hyperfoilLock = hyperfoilRunner.require();
         BenchmarkMetadata.InstanceType instanceType = factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE);
         List<FrameworkRun.NixosConfiguration> declaredConfigurations = new ArrayList<>(this.configurations);
-        declaredConfigurations.add(new FrameworkRun.NixosConfiguration(BENCHMARK_BOOTSTRAP, false));
+        declaredConfigurations.add(new FrameworkRun.NixosConfiguration(BENCHMARK_BOOTSTRAP));
         Map<String, FrameworkRun.NixosConfiguration> normalizedConfigurations = normalizeConfigurations(declaredConfigurations);
         Map<String, NixosCacheResource> resources = new LinkedHashMap<>();
         for (FrameworkRun.NixosConfiguration configuration : normalizedConfigurations.values()) {
@@ -80,10 +80,7 @@ public final class Infrastructure extends AbstractInfrastructure {
     private static Map<String, FrameworkRun.NixosConfiguration> normalizeConfigurations(Iterable<FrameworkRun.NixosConfiguration> configurations) {
         Map<String, FrameworkRun.NixosConfiguration> normalized = new LinkedHashMap<>();
         for (FrameworkRun.NixosConfiguration configuration : configurations) {
-            FrameworkRun.NixosConfiguration previous = normalized.putIfAbsent(configuration.name(), configuration);
-            if (previous != null && previous.dynamicPgo() != configuration.dynamicPgo()) {
-                throw new IllegalArgumentException("Conflicting NixOS configuration modes for " + configuration.name());
-            }
+            normalized.putIfAbsent(configuration.name(), configuration);
         }
         return Collections.unmodifiableMap(normalized);
     }
@@ -132,7 +129,7 @@ public final class Infrastructure extends AbstractInfrastructure {
         }
 
         for (Map.Entry<String, NixosCacheResource> entry : nixosConfigurations.entrySet().stream()
-                .filter(entry -> !entry.getKey().equals(BENCHMARK_BOOTSTRAP) && !entry.getValue().dynamicPgo())
+                .filter(entry -> !entry.getKey().equals(BENCHMARK_BOOTSTRAP))
                 .toList()) {
             if (stopped || Thread.currentThread().isInterrupted()) {
                 return;
@@ -174,9 +171,11 @@ public final class Infrastructure extends AbstractInfrastructure {
      * @param outputDirectory The benchmark output directory
      * @param run             The framework configuration to run
      * @param loadVariant     The benchmark load (HTTP protocol settings, request info)
+     * @param configuration   Preselected system for this document/protocol case
      * @param progress        Progress updater
      */
-    public synchronized void run(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, PhaseTracker.PhaseUpdater progress) throws Exception {
+    public synchronized void run(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, FrameworkRun.NixosConfiguration configuration,
+                                 PhaseTracker.PhaseUpdater progress) throws Exception {
         if (stopped) {
             throw new InterruptedException("Already stopped");
         }
@@ -192,7 +191,7 @@ public final class Infrastructure extends AbstractInfrastructure {
                 try {
                     switchOutput(marker("START"), log);
                     benchmarkLogActive = true;
-                    activate(log, configuration(run), progress);
+                    activate(log, configuration.name(), progress);
                     retry(() -> {
                         try {
                             run0(log, outputDirectory, run, loadVariant, progress);
@@ -223,10 +222,6 @@ public final class Infrastructure extends AbstractInfrastructure {
             stopped = true;
             throw e;
         }
-    }
-
-    private String configuration(FrameworkRun run) {
-        return run.nixosConfigurations().getFirst().name();
     }
 
     private void switchOutput(String marker, OutputListener target) {
@@ -260,30 +255,21 @@ public final class Infrastructure extends AbstractInfrastructure {
         if (resource == null) {
             throw new IllegalArgumentException("NixOS configuration was not prepared: " + configuration);
         }
-        return resource.dynamicPgo() ? resource.awaitAvailable() : resource.awaitPublished();
-    }
-
-    private void activate(OutputListener.Write log, FrameworkRun.Activation request) throws Exception {
-        NixCacheAccess cache = cacheAccess(request.configuration());
-        activate(log, request, cache);
-    }
-
-    private void activate(OutputListener.Write log, FrameworkRun.Activation request, NixCacheAccess cache) throws Exception {
-        request.progress().update(request.configuration().equals(BENCHMARK_BOOTSTRAP)
-                ? BenchmarkPhase.RESTORING_BOOTSTRAP
-                : BenchmarkPhase.ACTIVATING_CONFIGURATION);
-        log.println("----------------- NixOS deployment target: " + request.configuration());
-        retry(() -> {
-            try (CommandRunner client = benchmarkServer.connectSsh()) {
-                client.runAndCheck(Nix.activate(cache.readUri(), request.output()), log);
-            }
-            return null;
-        });
+        return resource.awaitPublished();
     }
 
     private void activate(OutputListener.Write log, String configuration, PhaseTracker.PhaseUpdater progress) throws Exception {
         NixCacheAccess cache = cacheAccess(configuration);
-        activate(log, new FrameworkRun.Activation(configuration, cache.requireDefaultOutput(), progress), cache);
+        progress.update(configuration.equals(BENCHMARK_BOOTSTRAP)
+                ? BenchmarkPhase.RESTORING_BOOTSTRAP
+                : BenchmarkPhase.ACTIVATING_CONFIGURATION);
+        log.println("----------------- NixOS deployment target: " + configuration);
+        retry(() -> {
+            try (CommandRunner client = benchmarkServer.connectSsh()) {
+                client.runAndCheck(Nix.activate(cache.readUri(), cache.defaultOutput()), log);
+            }
+            return null;
+        });
     }
 
     private void run0(OutputListener.Write log, Path outputDirectory, FrameworkRun run, LoadVariant loadVariant,
@@ -313,17 +299,6 @@ public final class Infrastructure extends AbstractInfrastructure {
                                  outputDirectory,
                                  log,
                                  hyperfoilRunner.benchmarkClosure(outputDirectory, loadVariant.protocol(), loadVariant.definition()),
-                                 new FrameworkRun.ConfigurationActivator() {
-                                     @Override
-                                     public NixCacheAccess resolve(String configuration) throws Exception {
-                                         return Infrastructure.this.cacheAccess(configuration);
-                                     }
-
-                                     @Override
-                                     public void activate(FrameworkRun.Activation request) throws Exception {
-                                         Infrastructure.this.activate(log, request);
-                                     }
-                                 },
                                  finalProgress);
                         return null;
                     }

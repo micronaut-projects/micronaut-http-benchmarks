@@ -2,11 +2,12 @@
 let
   codec = config.micronaut-framework.codec;
   threading = config.micronaut-framework.threading;
-  pgoDirectory = if config.benchmark.sut.pgoBuildDirectory == null then config.benchmark.sut.pgoDirectory else config.benchmark.sut.pgoBuildDirectory;
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
   tls = import ../../nix/tls.nix { inherit pkgs; };
   package =
+    assert lib.assertMsg (runtime != "native-pgo" || config.benchmark.sut.pgoProfile != null)
+      "Micronaut native-pgo requires a build-time training profile.";
     let
       gradle = pkgs.gradle_9.override {
         java = runtimeInfo.buildPackage;
@@ -37,7 +38,7 @@ let
       dontStrip = runtimeInfo.keepDebugSymbols;
       nativeGradleFlags = lib.optionals (runtime != "hotspot") [ "-PnativeBuild" "-PnativeImageArgs=${lib.concatStringsSep "," (runtimeInfo.nativeImageArgs
         ++ lib.optionals (runtime == "native-pgo-instrument") [ "--pgo-instrument" ]
-        ++ lib.optionals (runtime == "native-pgo") [ "--pgo=${pgoDirectory}/default.iprof" ])}" ];
+        ++ lib.optionals (runtime == "native-pgo") [ "--pgo=${config.benchmark.sut.pgoProfile}/default.iprof" ])}" ];
       gradleUpdateTaskSuffix = lib.optionalString (runtime != "hotspot") " --dry-run";
       gradleUpdateScript = ''
         gradle nixDownloadDeps -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
@@ -58,8 +59,7 @@ let
             --replace-fail $'      default:\n        prefer-native-transport: true' $'      default:\n        loom-carrier: true\n        prefer-native-transport: true'
         ''}
       '';
-      nativeBuildInputs = [ gradle pkgs.makeWrapper ] ++ lib.optional (config.benchmark.sut.pgoBuildDirectory != null) config.benchmark.sut.pgoBuildDirectory;
-      __noChroot = runtime == "native-pgo" && config.benchmark.sut.pgoBuildDirectory == null;
+      nativeBuildInputs = [ gradle pkgs.makeWrapper ];
       doCheck = false;
 
       installPhase = ''

@@ -5,7 +5,6 @@ import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.core.annotation.Nullable;
 
 import java.nio.file.Path;
-import java.util.List;
 
 /**
  * This interface represents a particular choice of framework and framework options that a HTTP benchmark can run
@@ -38,9 +37,9 @@ public interface FrameworkRun {
     @Nullable
     Profiling profiling();
 
-    List<NixosConfiguration> nixosConfigurations();
+    NixosConfiguration nixosConfiguration(LoadVariant loadVariant);
 
-    record NixosConfiguration(String name, boolean dynamicPgo) {
+    record NixosConfiguration(String name) {
     }
 
     record Profiling(String tool, String artifact, @Nullable String injectedArtifact, @Nullable String symbolDirectory) {
@@ -86,17 +85,7 @@ public interface FrameworkRun {
             Path outputDirectory,
             OutputListener.Write log,
             BenchmarkClosure benchmarkClosure,
-            ConfigurationActivator configurationActivator,
             PhaseTracker.PhaseUpdater progress) throws Exception;
-
-    interface ConfigurationActivator {
-        NixCacheAccess resolve(String configuration) throws Exception;
-
-        void activate(Activation request) throws Exception;
-    }
-
-    record Activation(String configuration, String output, PhaseTracker.PhaseUpdater progress) {
-    }
 
     /**
      * Called by {@link #setupAndRun} once the server has been set up, to run the benchmark load.
@@ -108,12 +97,5 @@ public interface FrameworkRun {
          * @param progress The progress updater
          */
         void benchmark(PhaseTracker.PhaseUpdater progress) throws Exception;
-
-        /**
-         * Run a non-measuring benchmark load for profile-guided optimization before the actual benchmark run.
-         *
-         * @param progress The progress updater
-         */
-        void pgoLoad(PhaseTracker.PhaseUpdater progress) throws Exception;
     }
 }

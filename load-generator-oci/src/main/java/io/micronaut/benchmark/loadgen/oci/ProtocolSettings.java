@@ -12,7 +12,7 @@ import java.util.Objects;
  * @param pipeliningLimit   Pipelining limit. Only {@code 1} is realistic, but a higher value can be used to stress the
  *                          HTTP parsing stack. HTTP/1.1 only
  * @param maxHttp2Streams   Maximum number of concurrent streams. HTTP/2 only
- * @param compileOps        Ops/s to use during JVM warmup, and during PGO runs
+ * @param compileOps        Request rate used to size benchmark warmup
  * @param ops               Ops/s ramp for main benchmarking runs
  */
 public record ProtocolSettings(

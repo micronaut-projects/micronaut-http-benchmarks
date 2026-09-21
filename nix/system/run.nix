@@ -178,14 +178,11 @@ in {
         default = null;
       };
 
-      pgoDirectory = mkOption {
-        type = types.str;
-        default = "/var/lib/sut/pgo";
-      };
-
-      pgoBuildDirectory = mkOption {
-        type = types.nullOr types.path;
+      pgoProfile = mkOption {
+        type = types.nullOr types.package;
         default = null;
+        internal = true;
+        description = "Build-time training output containing default.iprof.";
       };
 
       executable = mkOption {
@@ -230,16 +227,6 @@ in {
         parameters = mkOption {
           type = types.attrsOf types.str;
           default = { };
-        };
-
-        pgo = mkOption {
-          type = types.nullOr (types.submodule {
-            options = {
-              optimizedConfiguration = mkOption { type = types.str; };
-              pgoDirectory = mkOption { type = types.str; };
-            };
-          });
-          default = null;
         };
 
         profiling = mkOption {
@@ -352,16 +339,8 @@ in {
         User = "sut";
         StateDirectory = "sut";
         StateDirectoryMode = "0755";
-        ExecStartPre = lib.optional cfg.profiling.enable (if cfg.sut.runtimeInfo.isNative then nativeProfileCleanup else "${pkgs.coreutils}/bin/rm -f ${profilingPath}")
-          ++ lib.optionals (cfg.sut.runtime == "native-pgo-instrument") [
-            "${pkgs.coreutils}/bin/mkdir -p /var/lib/sut/pgo"
-            "${pkgs.findutils}/bin/find /var/lib/sut/pgo -mindepth 1 -delete"
-            "${pkgs.coreutils}/bin/rm -f /var/lib/sut/default.iprof"
-          ];
-        ExecStopPost = lib.optionals (cfg.sut.runtime == "native-pgo-instrument") [
-          "${pkgs.coreutils}/bin/install -m 0644 /var/lib/sut/default.iprof /var/lib/sut/pgo/default.iprof"
-        ] ++ lib.optional (cfg.profiling.enable && cfg.sut.runtimeInfo.isNative) nativeProfileFinalizer;
-        WorkingDirectory = lib.optional (cfg.sut.runtime == "native-pgo-instrument") "/var/lib/sut";
+        ExecStartPre = lib.optional cfg.profiling.enable (if cfg.sut.runtimeInfo.isNative then nativeProfileCleanup else "${pkgs.coreutils}/bin/rm -f ${profilingPath}");
+        ExecStopPost = lib.optional (cfg.profiling.enable && cfg.sut.runtimeInfo.isNative) nativeProfileFinalizer;
         Restart = "no";
         StandardOutput = "journal";
         StandardError = "journal";

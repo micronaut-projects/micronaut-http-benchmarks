@@ -68,7 +68,6 @@ public final class SuiteRunner {
         try {
             Files.createDirectories(outputDir);
         } catch (FileAlreadyExistsException ignored) {}
-        clean();
 
         List<LoadVariant> loadVariants = loadManager.getLoadVariants();
         List<BenchmarkSpec> benchmarkSpecs = new ArrayList<>();
@@ -79,6 +78,7 @@ public final class SuiteRunner {
             OciLocation location = locations.get(repetition % locations.size());
             for (FrameworkRun run : runs) {
                 for (LoadVariant loadVariant : loadVariants) {
+                    FrameworkRun.NixosConfiguration configuration = run.nixosConfiguration(loadVariant);
                     String name = run.name() + "-" + loadVariant.name() + "-" + repetition;
                     index.add(new BenchmarkParameters(
                             name,
@@ -91,12 +91,13 @@ public final class SuiteRunner {
                     ));
                     PhaseTracker.PhaseUpdater phaseUpdater = phaseTracker.updater(name);
                     phaseUpdater.update(BenchmarkPhase.QUEUED);
-                    benchmarkSpecs.add(new BenchmarkSpec(repetition, location, run, loadVariant, name,
+                    benchmarkSpecs.add(new BenchmarkSpec(repetition, location, run, loadVariant, configuration, name,
                             outputDir.resolve(name), phaseUpdater));
                 }
             }
         }
         Collections.shuffle(benchmarkSpecs);
+        clean();
 
         Infrastructure[] sharedInfrastructure;
         if (suiteConfiguration.infrastructureMode == InfrastructureMode.REUSE) {
@@ -105,7 +106,7 @@ public final class SuiteRunner {
                 List<FrameworkRun.NixosConfiguration> configurations = new ArrayList<>();
                 for (BenchmarkSpec benchmarkSpec : benchmarkSpecs) {
                     if (benchmarkSpec.repetition() == repetition) {
-                        configurations.addAll(benchmarkSpec.run().nixosConfigurations());
+                        configurations.add(benchmarkSpec.configuration());
                     }
                 }
                 sharedInfrastructure[repetition] = infraFactory.create(
@@ -125,15 +126,15 @@ public final class SuiteRunner {
                         try {
                             if (suiteConfiguration.infrastructureMode == InfrastructureMode.REUSE) {
                                 sharedInfrastructure[benchmarkSpec.repetition()].run(
-                                        benchmarkSpec.output(), benchmarkSpec.run(), benchmarkSpec.loadVariant(), benchmarkSpec.phaseUpdater());
+                                        benchmarkSpec.output(), benchmarkSpec.run(), benchmarkSpec.loadVariant(), benchmarkSpec.configuration(), benchmarkSpec.phaseUpdater());
                                 benchmarkSpec.phaseUpdater().update(BenchmarkPhase.DONE);
                             } else {
                                 semaphore.acquire();
                                 // create a new infra just for us.
                                 try (Infrastructure infra = infraFactory.create(
                                         benchmarkSpec.location(), benchmarkSpec.output(),
-                                        List.copyOf(benchmarkSpec.run().nixosConfigurations()))) {
-                                    infra.run(benchmarkSpec.output(), benchmarkSpec.run(), benchmarkSpec.loadVariant(), benchmarkSpec.phaseUpdater());
+                                        List.of(benchmarkSpec.configuration()))) {
+                                    infra.run(benchmarkSpec.output(), benchmarkSpec.run(), benchmarkSpec.loadVariant(), benchmarkSpec.configuration(), benchmarkSpec.phaseUpdater());
                                     benchmarkSpec.phaseUpdater().update(BenchmarkPhase.SHUTTING_DOWN);
                                 }
                                 benchmarkSpec.phaseUpdater().update(BenchmarkPhase.DONE);
@@ -201,6 +202,7 @@ public final class SuiteRunner {
             OciLocation location,
             FrameworkRun run,
             LoadVariant loadVariant,
+            FrameworkRun.NixosConfiguration configuration,
             String name,
             Path output,
             PhaseTracker.PhaseUpdater phaseUpdater

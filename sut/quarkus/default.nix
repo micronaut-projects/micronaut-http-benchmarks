@@ -1,10 +1,12 @@
 { config, pkgs, ... }:
 let
   runtime = config.benchmark.sut.runtime;
-  pgoDirectory = if config.benchmark.sut.pgoBuildDirectory == null then config.benchmark.sut.pgoDirectory else config.benchmark.sut.pgoBuildDirectory;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
   tls = import ../../nix/tls.nix { inherit pkgs; };
-  package = pkgs.maven.buildMavenPackage {
+  package =
+    assert pkgs.lib.assertMsg (runtime != "native-pgo" || config.benchmark.sut.pgoProfile != null)
+      "Quarkus native-pgo requires a build-time training profile.";
+    pkgs.maven.buildMavenPackage {
     pname = "quarkus-${runtime}";
     version = "1.0.0";
 
@@ -25,13 +27,11 @@ let
       ++ pkgs.lib.optionals (runtime != "hotspot") [ "-Pnative" ]
       ++ pkgs.lib.optionals (runtime != "hotspot") [ "-Dquarkus.native.additional-build-args=${builtins.concatStringsSep "," (runtimeInfo.nativeImageArgs
         ++ pkgs.lib.optionals (runtime == "native-pgo-instrument") [ "--pgo-instrument" ]
-        ++ pkgs.lib.optionals (runtime == "native-pgo") [ "--pgo=${pgoDirectory}/default.iprof" ])}" ]);
+        ++ pkgs.lib.optionals (runtime == "native-pgo") [ "--pgo=${config.benchmark.sut.pgoProfile}/default.iprof" ])}" ]);
 
     nativeBuildInputs = [
       pkgs.makeWrapper
-    ] ++ pkgs.lib.optional (config.benchmark.sut.pgoBuildDirectory != null) config.benchmark.sut.pgoBuildDirectory;
-
-    __noChroot = runtime == "native-pgo" && config.benchmark.sut.pgoBuildDirectory == null;
+    ];
 
     doCheck = false;
     preBuild = ''

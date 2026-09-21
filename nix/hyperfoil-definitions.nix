@@ -89,31 +89,30 @@ let
           else if request.responseMatchingMode == "REGEX" then { regex = request.responseBody; }
           else { json = request.responseBody; };
       };
-    in if mode == "local" then {
-      name = "local-${protocol.protocol}-${request.name}";
+    in if mode == "local" || mode == "pgo" then {
+      name = "${mode}-${protocol.protocol}-${request.name}";
       failurePolicy = "CANCEL";
       http = http // { requestTimeout = "30s"; };
-      phases = [{ local.atOnce = { users = 1; scenario = scenario { withSla = false; handler = responseHandler; }; }; }];
+      phases = if mode == "local" then [{
+        local.atOnce = { users = 1; scenario = scenario { withSla = false; handler = responseHandler; }; };
+      }] else [{
+        pgo.always = {
+          users = 1;
+          duration = config.benchmark.hyperfoil.pgoDuration;
+          scenario = scenario { withSla = false; handler = responseHandler; };
+        };
+      }];
     } else
       let
         warmupDuration = config.benchmark.hyperfoil.warmupDuration;
         benchmarkDuration = config.benchmark.hyperfoil.benchmarkDuration;
-        pgoDuration = config.benchmark.hyperfoil.pgoDuration;
         sessionLimitFactor = config.benchmark.hyperfoil.sessionLimitFactor;
       in {
       name = "benchmark";
       failurePolicy = "CANCEL";
       agents = { };
       http = http;
-      phases = if mode == "pgo" then [{
-        pgo.constantRate = {
-          usersPerSec = protocol.compileOps;
-          maxSessions = builtins.floor (protocol.compileOps * sessionLimitFactor);
-          duration = pgoDuration;
-          isWarmup = false;
-          scenario = scenario { withSla = false; handler = null; };
-        };
-      }] else [{
+      phases = [{
         warmup.always = {
           users = builtins.floor (protocol.compileOps * sessionLimitFactor);
           duration = warmupDuration;
@@ -150,12 +149,6 @@ let
         request = request;
         target = benchmarkTarget;
       })
-      (lib.nameValuePair (suiteRequestName { protocolName = protocolName; mode = "pgo"; requestName = request.name; }) {
-        mode = "pgo";
-        protocol = protocol;
-        request = request;
-        target = benchmarkTarget;
-      })
     ]) suite.documents) suite.resolvedProtocols));
   definitions = if suiteName == null then { } else
     assert lib.assertMsg (validArtifactComponent suiteName) "Unsafe suite name in Hyperfoil artifact path: ${suiteName}";
@@ -168,7 +161,6 @@ let
       assert lib.assertMsg (validArtifactComponent request.name) "Unsafe request name in Hyperfoil artifact path: ${request.name}";
       lib.nameValuePair request.name {
         normal = config.benchmark.hyperfoil.rendered.${suiteRequestName { protocolName = protocolName; requestName = request.name; mode = "normal"; }};
-        pgo = config.benchmark.hyperfoil.rendered.${suiteRequestName { protocolName = protocolName; requestName = request.name; mode = "pgo"; }};
       }) suite.documents)) suite.resolvedProtocols;
 in {
   options.benchmark.hyperfoil = {
@@ -185,7 +177,7 @@ in {
     pgoDuration = mkOption {
       type = benchmarkTypes.duration;
       default = "2m";
-      description = "Duration of the Hyperfoil PGO phase.";
+      description = "Duration of build-time Hyperfoil PGO training.";
     };
     sessionLimitFactor = mkOption {
       type = types.addCheck types.number (value: value > 0);
@@ -205,7 +197,7 @@ in {
     definitions = mkOption {
       type = types.attrs;
       readOnly = true;
-      description = "Generated normal and PGO Hyperfoil benchmark definitions for this suite.";
+      description = "Generated normal Hyperfoil benchmark definitions for this suite.";
     };
   };
 

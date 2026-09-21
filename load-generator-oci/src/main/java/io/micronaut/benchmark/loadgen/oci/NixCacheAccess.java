@@ -1,14 +1,10 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.core.annotation.Nullable;
-
 import java.net.URI;
+import java.util.Objects;
 
-public record NixCacheAccess(String installable, @Nullable String defaultOutput, URI readUri, URI writeUri) {
-    public String requireDefaultOutput() {
-        if (defaultOutput == null) {
-            throw new IllegalStateException("No default output for " + installable);
-        }
-        return defaultOutput;
+public record NixCacheAccess(String installable, String defaultOutput, URI readUri, URI writeUri) {
+    public NixCacheAccess {
+        Objects.requireNonNull(defaultOutput, "defaultOutput");
     }
 }

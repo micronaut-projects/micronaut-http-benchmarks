@@ -161,7 +161,6 @@ class NixRunSetTest {
                 outputDirectory,
                 new OutputListener.Write(OutputStream.nullOutputStream()),
                 noOpBenchmarkClosure(),
-                null,
                 (phase, percent, displayProgress) -> { }
         );
     }
@@ -175,7 +174,7 @@ class NixRunSetTest {
                         "type": "test",
                         "name": "test",
                         "parameters": {},
-                        "nixosConfiguration": "test-configuration",
+                        "nixosConfigurations": {},
                         "profiling": %s
                       }],
                       "documents": [],
@@ -188,18 +187,13 @@ class NixRunSetTest {
                 }
                 """.formatted(profilingJson);
         BenchmarkMetadata metadata = BenchmarkMetadata.parse(JSON_MAPPER, metadataJson, "test");
-        return new NixRunSet(metadata, new Nix(JSON_MAPPER)).getRuns().getFirst();
+        return new NixRunSet(metadata).getRuns().getFirst();
     }
 
     private static FrameworkRun.BenchmarkClosure noOpBenchmarkClosure() {
         return new FrameworkRun.BenchmarkClosure() {
             @Override
             public void benchmark(PhaseTracker.PhaseUpdater progress) {
-            }
-
-            @Override
-            public void pgoLoad(PhaseTracker.PhaseUpdater progress) {
-                throw new AssertionError("Unexpected PGO load");
             }
         };
     }

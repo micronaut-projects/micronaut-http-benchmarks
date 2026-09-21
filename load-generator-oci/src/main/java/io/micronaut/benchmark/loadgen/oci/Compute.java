@@ -178,7 +178,7 @@ public final class Compute {
         }
 
         public Launch nixosConfiguration(String configurationName) {
-            nixosConfiguration = cacheResource(instanceType, new FrameworkRun.NixosConfiguration(configurationName, false));
+            nixosConfiguration = cacheResource(instanceType, new FrameworkRun.NixosConfiguration(configurationName));
             AbstractInfrastructure.launch(nixosConfiguration, nixosConfiguration::manage);
             nixosConfiguration.signalPublication();
             return nixosConfiguration(nixosConfiguration);
@@ -186,9 +186,6 @@ public final class Compute {
 
         public Launch nixosConfiguration(NixosCacheResource nixosConfiguration) {
             this.nixosConfiguration = Objects.requireNonNull(nixosConfiguration, "nixosConfiguration");
-            if (nixosConfiguration.dynamicPgo()) {
-                throw new IllegalArgumentException("Dynamic PGO configurations cannot be used as default instance configurations");
-            }
             computeResource.dependOn(nixosConfiguration.requirePublished());
             return this;
         }
@@ -293,8 +290,7 @@ public final class Compute {
                 computeConfiguration.storageBucketNamespace,
                 computeConfiguration.storageBucketName,
                 "nixos-cache",
-                installable,
-                configuration.dynamicPgo()
+                installable
             );
     }
 
@@ -516,7 +512,7 @@ public final class Compute {
                 }
                 if (launch.nixosConfiguration != null) {
                     NixCacheAccess cache = launch.nixosConfiguration.cacheAccess();
-                    userDataScript += Nix.activate(cache.readUri(), cache.requireDefaultOutput());
+                    userDataScript += Nix.activate(cache.readUri(), cache.defaultOutput());
                 }
                 userDataScript += "systemctl start benchmark-role-ready.target\n";
 

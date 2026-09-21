@@ -58,8 +58,8 @@ public final class BenchmarkMetadata {
         return selectedSuite;
     }
 
-    public Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) {
-        return definitionPath(protocol, request.name(), forPgo ? "pgo.yaml" : "normal.yaml");
+    public Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol) {
+        return definitionPath(protocol, request.name(), "normal.yaml");
     }
 
     private Path definitionPath(ProtocolSettings protocol, String requestName, String fileName) {

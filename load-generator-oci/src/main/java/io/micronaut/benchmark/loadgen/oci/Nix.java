@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -147,34 +146,6 @@ public class Nix {
         nix(log, List.of("copy", "--to", cache + "?compression=zstd", outputPath(output.toString()).toString()));
     }
 
-    public Path addStorePath(OutputListener log, Path localDirectory) throws Exception {
-        if (!Files.isDirectory(localDirectory)) {
-            throw new IllegalArgumentException("PGO path is not a directory: " + localDirectory);
-        }
-        return nixStoreAdd(log, List.of("store", "add", localDirectory.toAbsolutePath().normalize().toString()));
-    }
-
-    public Path buildPgoOutput(OutputListener log, String optimizedConfiguration, Path pgoStorePath) throws Exception {
-        Path validatedPgoStorePath = outputPath(pgoStorePath.toString());
-        JsonNode value = nixJson(log, List.of("eval", "--json", "--impure", "--expr",
-                "(let flake = builtins.getFlake \"path:${toString ../.}?dir=nix\"; in flake.lib.pgoToplevel "
-                        + nixString(optimizedConfiguration) + " (builtins.storePath " + nixString(validatedPgoStorePath.toString()) + ")).drvPath"));
-        Path derivation = derivationPath(value.stringValue());
-        return build(log, derivation + "^out");
-    }
-
-    private Path nixStoreAdd(OutputListener log, List<String> args) throws Exception {
-        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
-        try (OutputStream stderr = new OutputListener.Stream(List.of(log))) {
-            run(args, stdout, stderr);
-        }
-        String storePath = new String(stdout.toByteArray(), StandardCharsets.UTF_8).strip();
-        if (storePath.lines().count() != 1) {
-            throw new IllegalStateException("Malformed Nix store path: " + storePath);
-        }
-        return outputPath(storePath);
-    }
-
     private static OutputStream synchronizedOutputStream(OutputStream delegate) {
         return new OutputStream() {
             @Override
@@ -200,23 +171,11 @@ public class Nix {
     }
 
     private static Path outputPath(String value) {
-        return storePath(value, false);
-    }
-
-    private static Path derivationPath(String value) {
-        return storePath(value, true);
-    }
-
-    private static Path storePath(String value, boolean derivation) {
         Path path = Path.of(value);
         Path store = Path.of("/nix/store");
-        if (!path.startsWith(store) || path.getNameCount() != store.getNameCount() + 1 || derivation != path.getFileName().toString().endsWith(".drv")) {
+        if (!path.startsWith(store) || path.getNameCount() != store.getNameCount() + 1 || path.getFileName().toString().endsWith(".drv")) {
             throw new IllegalStateException("Malformed Nix store path: " + value);
         }
         return path;
-    }
-
-    private static String nixString(String value) {
-        return '"' + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("${", "\\${") + '"';
     }
 }

@@ -169,37 +169,22 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
      * @return The benchmark closure
      */
     public FrameworkRun.BenchmarkClosure benchmarkClosure(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body) {
-        return new FrameworkRun.BenchmarkClosure() {
-            @Override
-            public void benchmark(PhaseTracker.PhaseUpdater progress) throws Exception {
-                HyperfoilRunner.this.benchmark(outputDirectory, protocol, body, progress, false);
-            }
-
-            @Override
-            public void pgoLoad(PhaseTracker.PhaseUpdater progress) throws Exception {
-                HyperfoilRunner.this.benchmark(outputDirectory, protocol, body, progress, true);
-            }
-        };
+        return progress -> benchmark(outputDirectory, protocol, body, progress);
     }
 
-    private void benchmark(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body, PhaseTracker.PhaseUpdater progress, boolean forPgo) throws Exception {
+    private void benchmark(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body, PhaseTracker.PhaseUpdater progress) throws Exception {
         awaitPhase(HyperfoilPhase.READY);
 
-        BenchmarkPhase benchmarkPhase = forPgo ? BenchmarkPhase.PGO : BenchmarkPhase.BENCHMARKING;
+        BenchmarkPhase benchmarkPhase = BenchmarkPhase.BENCHMARKING;
 
         progress.update(benchmarkPhase);
         List<String> phaseNames = new ArrayList<>();
-        if (!forPgo) {
-            phaseNames.add("warmup");
-            for (int i = 0; i < protocol.ops().size(); i++) {
-                String phaseName = "main/" + i;
-                phaseNames.add(phaseName);
-            }
-        } else {
-            phaseNames.add("pgo");
+        phaseNames.add("warmup");
+        for (int i = 0; i < protocol.ops().size(); i++) {
+            phaseNames.add("main/" + i);
         }
 
-        Client.BenchmarkRef benchmarkRef = client.register(benchmarkDefinition(body, protocol, forPgo), Map.of(), null, null);
+        Client.BenchmarkRef benchmarkRef = client.register(benchmarkDefinition(body, protocol), Map.of(), null, null);
         Client.RunRef runRef = benchmarkRef.start("run", Map.of());
         long startTime = System.nanoTime();
         String lastPhase = null;
@@ -213,7 +198,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                     throw new TimeoutException("Benchmark stuck too long in INITIALIZING state");
                 }
             }
-            StringBuilder log = new StringBuilder("Benchmark progress").append(forPgo ? " (PGO): " : ": ").append(recentStats.status);
+            StringBuilder log = new StringBuilder("Benchmark progress: ").append(recentStats.status);
             for (RequestStats statistic : recentStats.statistics) {
                 log.append(' ').append(statistic.metric).append(':').append(statistic.phase).append(":mean=").append(statistic.summary.meanResponseTime);
                 if (!Objects.equals(statistic.phase, lastPhase)) {
@@ -243,7 +228,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         }
         for (StatsAll.SlaFailure failure : wrapper.statsAll.failures) {
             LOG.info("SLA failure: {}", failure);
-            if (failure.phase.equals("pgo") || failure.phase.equals("warmup")) {
+            if (failure.phase.equals("warmup")) {
                 benchmarkFailures.add("SLA failure in " + failure.phase + " phase: " + failure.message);
                 invalidatesBenchmark = true;
             }
@@ -260,36 +245,34 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             }
         }
 
-        if (!forPgo || !benchmarkFailures.isEmpty()) {
-            LOG.info("Downloading agent logs…");
-            try {
-                for (String agent : Infrastructure.retry(client::agents, controllerPortForward::disconnect)) {
-                    Infrastructure.retry(() -> {
-                        Path dest = outputDirectory.resolve(agent.replaceAll("[^0-9a-zA-Z]", "") + ".log");
-                        client.downloadLog(agent, null, 0, MAX_AGENT_LOG_SIZE, dest.toFile());
-                        try {
-                            if (Files.size(dest) >= MAX_AGENT_LOG_SIZE) {
-                                LOG.warn("Agent log {} size exceeded limit of {} bytes", dest, MAX_AGENT_LOG_SIZE);
-                            }
-                        } catch (IOException e) {
-                            LOG.warn("Failed to get agent log size", e);
+        LOG.info("Downloading agent logs…");
+        try {
+            for (String agent : Infrastructure.retry(client::agents, controllerPortForward::disconnect)) {
+                Infrastructure.retry(() -> {
+                    Path dest = outputDirectory.resolve(agent.replaceAll("[^0-9a-zA-Z]", "") + ".log");
+                    client.downloadLog(agent, null, 0, MAX_AGENT_LOG_SIZE, dest.toFile());
+                    try {
+                        if (Files.size(dest) >= MAX_AGENT_LOG_SIZE) {
+                            LOG.warn("Agent log {} size exceeded limit of {} bytes", dest, MAX_AGENT_LOG_SIZE);
                         }
-                        return null;
-                    }, controllerPortForward::disconnect);
-                }
-            } catch (Exception e) {
-                LOG.warn("Failed to download agent logs", e);
+                    } catch (IOException e) {
+                        LOG.warn("Failed to get agent log size", e);
+                    }
+                    return null;
+                }, controllerPortForward::disconnect);
             }
+        } catch (Exception e) {
+            LOG.warn("Failed to download agent logs", e);
+        }
 
-            LOG.info("Benchmark complete, writing output");
-            Path outputPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "output.json" : "output-failed.json");
-            Files.write(outputPath, wrapper.resultBytes);
-            Path metaPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "meta.json" : "meta-failed.json");
-            Files.write(metaPath, factory.objectMapper.writeValueAsBytes(new Metadata(factory.config)));
-            if (!benchmarkFailures.isEmpty()) {
-                String msg = String.join("\n", benchmarkFailures) + "\nOutput written at: " + outputPath;
-                throw invalidatesBenchmark ? new InvalidatesBenchmarkException(msg) : new Exception(msg);
-            }
+        LOG.info("Benchmark complete, writing output");
+        Path outputPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "output.json" : "output-failed.json");
+        Files.write(outputPath, wrapper.resultBytes);
+        Path metaPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "meta.json" : "meta-failed.json");
+        Files.write(metaPath, factory.objectMapper.writeValueAsBytes(new Metadata(factory.config)));
+        if (!benchmarkFailures.isEmpty()) {
+            String msg = String.join("\n", benchmarkFailures) + "\nOutput written at: " + outputPath;
+            throw invalidatesBenchmark ? new InvalidatesBenchmarkException(msg) : new Exception(msg);
         }
     }
 
@@ -313,8 +296,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         return agents;
     }
 
-    private String benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) throws Exception {
-        Map<String, Object> definition = yamlMap(yaml().load(Files.readString(factory.benchmarkDefinition(request, protocol, forPgo))), "Hyperfoil benchmark definition");
+    private String benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol) throws Exception {
+        Map<String, Object> definition = yamlMap(yaml().load(Files.readString(factory.benchmarkDefinition(request, protocol))), "Hyperfoil benchmark definition");
         if (!(definition.get("name") instanceof String)) {
             throw new IllegalArgumentException("Expected Hyperfoil benchmark name to be a string");
         }
@@ -413,8 +396,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
         }
 
-        Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol, boolean forPgo) {
-            return metadata.benchmarkDefinition(request, protocol, forPgo);
+        Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol) {
+            return metadata.benchmarkDefinition(request, protocol);
         }
 
         public HyperfoilRunner create(Path outputDirectory, AbstractInfrastructure infrastructure) throws Exception {
