@@ -12,7 +12,7 @@ let
     }
   ) [ "native" "native-pgo" ]) [ "micronaut" "quarkus" ];
   enabledRuns = lib.concatMap (run: run.variants)
-    ((lib.filter (run: run.system.config.benchmark.sut.metadata.enabled) (lib.attrValues standardRuns))
+    ((lib.attrValues standardRuns)
       ++ lib.filter (run: !(builtins.hasAttr run.runName standardRuns)) checkRuns);
   statusRequest = standard.config.benchmark.suite.statusRequest;
   localBenchmark = import ./local-benchmark.nix { inherit pkgs lib; };

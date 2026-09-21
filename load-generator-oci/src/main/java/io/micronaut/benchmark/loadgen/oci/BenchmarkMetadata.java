@@ -17,11 +17,10 @@ import java.util.Objects;
 public final class BenchmarkMetadata {
     private static final Logger LOG = LoggerFactory.getLogger(BenchmarkMetadata.class);
 
-    private final Map<String, Suite> suites;
     private final Map<String, InstanceType> instanceTypes;
     private final Path benchmarkDefinitions;
-    private Suite selectedSuite;
-    private String selectedSuiteName;
+    private final Suite selectedSuite;
+    private final String selectedSuiteName;
 
     public BenchmarkMetadata(Nix nix, JsonMapper objectMapper, SuiteRunner.SuiteConfiguration suiteConfiguration) throws Exception {
         this(objectMapper.readValue(
@@ -31,10 +30,14 @@ public final class BenchmarkMetadata {
     }
 
     BenchmarkMetadata(Document document, String suiteName) {
-        suites = Map.copyOf(document.suites());
+        Map<String, Suite> suites = Map.copyOf(document.suites());
         instanceTypes = Map.copyOf(document.instanceTypes());
         benchmarkDefinitions = Objects.requireNonNull(document.benchmarkDefinitions());
-        selectSuite(suiteName);
+        selectedSuite = suites.get(suiteName);
+        if (selectedSuite == null) {
+            throw new IllegalArgumentException("Unknown benchmark suite: " + suiteName);
+        }
+        selectedSuiteName = suiteName;
     }
 
     static BenchmarkMetadata parse(ObjectMapper objectMapper, String json, String suiteName) {
@@ -46,15 +49,6 @@ public final class BenchmarkMetadata {
     }
 
     public Suite suite() {
-        return selectedSuite;
-    }
-
-    public Suite selectSuite(String name) {
-        selectedSuite = suites.get(name);
-        if (selectedSuite == null) {
-            throw new IllegalArgumentException("Unknown benchmark suite: " + name);
-        }
-        selectedSuiteName = name;
         return selectedSuite;
     }
 

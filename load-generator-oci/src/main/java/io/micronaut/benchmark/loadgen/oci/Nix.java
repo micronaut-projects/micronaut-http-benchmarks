@@ -99,10 +99,6 @@ public class Nix {
         return jsonMapper.readTree(stdout.toByteArray());
     }
 
-    public Path build(OutputListener log, String installable) throws Exception {
-        return build(log, installable, List.of());
-    }
-
     public Path resolveOutput(OutputListener log, String installable) throws Exception {
         JsonNode answer = nixJson(log, outputResolutionArguments(installable));
         return outputPath(answer.get(0).get("outputs").get("out").stringValue());
@@ -112,13 +108,8 @@ public class Nix {
         return List.of("build", installable, "--dry-run", "--json", "--no-link");
     }
 
-    public Path build(OutputListener log, String installable, List<String> extraArgs) throws Exception {
-        List<String> args = new ArrayList<>();
-        args.add("build");
-        args.add(installable);
-        args.addAll(extraArgs);
-        args.addAll(List.of("--json", "--no-link"));
-        JsonNode answer = nixJson(log, args);
+    public Path build(OutputListener log, String installable) throws Exception {
+        JsonNode answer = nixJson(log, List.of("build", installable, "--json", "--no-link"));
         return outputPath(answer.get(0).get("outputs").get("out").stringValue());
     }
 

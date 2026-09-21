@@ -93,7 +93,7 @@
       let
         suiteConfig = suite.config.benchmark.suite;
       in {
-        runs = map (run: run.metadata) (lib.filter (run: run.system.config.benchmark.sut.metadata.enabled) (lib.attrValues evaluatedSuiteRuns.${suiteName}));
+        runs = map (run: run.metadata) (lib.attrValues evaluatedSuiteRuns.${suiteName});
         documents = map requestMetadata suiteConfig.documents;
         statusRequest = requestMetadata suiteConfig.statusRequest;
         protocols = lib.mapAttrs (_: protocolMetadata) suiteConfig.resolvedProtocols;

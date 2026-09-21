@@ -375,7 +375,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final Compute compute;
         private final SshFactory sshFactory;
         private final HyperfoilConfiguration config;
-        private final SuiteRequest statusRequest;
         private final BenchmarkMetadata metadata;
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
@@ -386,7 +385,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             this.compute = compute;
             this.sshFactory = sshFactory;
             this.config = config;
-            this.statusRequest = metadata.suite().statusRequest();
             this.metadata = metadata;
             this.objectMapper = objectMapper.rebuild()
                     .registerSubtypes(HttpStats.class)
