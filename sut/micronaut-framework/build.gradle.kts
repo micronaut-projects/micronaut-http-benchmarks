@@ -30,7 +30,7 @@ if (nativeBuild) {
         binaries {
             named("main") {
                 buildArgs.add("--initialize-at-run-time=io.netty")
-                if (nativeImageArgs != null) {
+                if (!nativeImageArgs.isNullOrEmpty()) {
                     buildArgs.addAll(nativeImageArgs.split(","))
                 }
             }
