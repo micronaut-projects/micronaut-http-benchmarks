@@ -19,17 +19,16 @@ import java.util.Locale;
 import java.util.Map;
 
 @Singleton
-public final class NixRunSet implements FrameworkRunSet {
+public final class NixRunSet {
     private static final String SUT_SERVICE = "sut.service";
 
-    private final List<NixFrameworkRun> runs;
+    private final List<FrameworkRun> runs;
 
     public NixRunSet(BenchmarkMetadata metadata) {
-        runs = metadata.suite().runs().stream().map(NixFrameworkRun::new).toList();
+        runs = metadata.suite().runs().stream().<FrameworkRun>map(NixFrameworkRun::new).toList();
     }
 
-    @Override
-    public List<? extends FrameworkRun> getRuns() {
+    public List<FrameworkRun> getRuns() {
         return runs;
     }
 

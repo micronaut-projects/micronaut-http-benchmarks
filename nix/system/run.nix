@@ -246,11 +246,6 @@ in {
           });
           default = null;
         };
-
-        enabled = mkOption {
-          type = types.bool;
-          default = true;
-        };
       };
     };
 

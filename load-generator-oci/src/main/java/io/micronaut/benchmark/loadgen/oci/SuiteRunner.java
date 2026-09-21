@@ -44,13 +44,12 @@ public final class SuiteRunner {
                        NixRunSet runSet,
                        @Named(TaskExecutors.IO) ExecutorService executor,
                        SuiteConfiguration suiteConfiguration,
-                       ObjectMapper objectMapper,
-                       Compute compute) {
+                       ObjectMapper objectMapper) {
         this.compartmentCleaner = compartmentCleaner;
         this.locations = locations;
         this.infraFactory = infraFactory;
         this.loadManager = loadManager;
-        this.runs = runSet.getRuns().stream().map(FrameworkRun.class::cast).toList();
+        this.runs = runSet.getRuns();
         this.executor = executor;
         this.suiteConfiguration = suiteConfiguration;
         this.objectMapper = objectMapper;
