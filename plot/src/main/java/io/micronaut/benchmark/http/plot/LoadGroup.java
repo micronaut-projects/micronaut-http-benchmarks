@@ -130,13 +130,13 @@ final class LoadGroup {
             } else {
                 double hv, sv = 1, vv = 1;
                 hv = List.of(
-                        278. / 255,
-                        230. / 255,
-                        157. / 255,
-                        70. / 255,
-                        0. / 255,
-                        300. / 255,
-                        180. / 255
+                        278. / 360, // purple
+                        230. / 360, // blue
+                        157. / 360, // turqoise
+                        70. / 360, // yellow
+                        0. / 360, // red
+                        25. / 360, // orange
+                        120. / 360 // green
                 ).get(optionsByDiscriminator.get(h).indexOf(d.label.values().get(h)));
                 if (s != null) {
                     sv = 1 - (double) optionsByDiscriminator.get(s).indexOf(d.label.values().get(s)) / optionsByDiscriminator.get(s).size();
@@ -304,10 +304,14 @@ final class LoadGroup {
                             disc.add(optionsByDiscriminator.get(j).getFirst());
                         }
                     }
-                    Discriminated wrap = discriminated.stream().filter(d -> d.label.values.equals(disc)).findAny().orElseThrow();
-                    html.append("<td style='background-color: ").append(wrap.color).append("' onclick='");
-                    detailDialogSelector.emitSelectSpecific(html, wrap.detailDialogAttribute);
-                    html.append("'></td>");
+                    Discriminated wrap = discriminated.stream().filter(d -> d.label.values.equals(disc)).findAny().orElse(null);
+                    if (wrap != null) {
+                        html.append("<td style='background-color: ").append(wrap.color).append("' onclick='");
+                        detailDialogSelector.emitSelectSpecific(html, wrap.detailDialogAttribute);
+                        html.append("'></td>");
+                    } else {
+                        html.append("<td></td>");
+                    }
                 }
                 html.append("</tr>");
             }
