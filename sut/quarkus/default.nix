@@ -18,7 +18,12 @@ let
       ];
     };
 
-    mvnHash = "sha256-Rp1lib42AaivT7PlIoxWL3O7NS1fTgOfPSHHNHBHA/M=";
+    # Resolve Maven plugins and Quarkus deployment dependencies without building
+    # a native image. All native modes share this profile-independent cache.
+    buildOffline = true;
+    mvnDepsParameters = "-Pnative quarkus:go-offline";
+    mvnFetchExtraArgs.pname = "maven-deps-quarkus";
+    mvnHash = "sha256-+U4NHWGlS4mayN4Xcn7OoA4XA41HUvnRFm/rqRkWdT4=";
 
     mvnJdk = runtimeInfo.buildPackage;
     dontStrip = runtimeInfo.keepDebugSymbols;
