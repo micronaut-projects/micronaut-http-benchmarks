@@ -11,7 +11,7 @@ nix=(nix --extra-experimental-features 'nix-command flakes')
 export NIXPKGS_ALLOW_UNFREE=1
 
 cd "$root"
-for file in nix/system/relay-agent-deps.json sut/micronaut-framework/deps.json; do
+for file in nix/system/relay-agent-deps.json sut/micronaut-framework/deps.json sut/pyronaut/deps.json; do
   git ls-files --error-unmatch -- "$file" >/dev/null || {
     printf 'tracked file required: %s\n' "$file" >&2
     exit 1
@@ -71,4 +71,5 @@ update_maven() {
 
 update_gradle relay-agent
 update_gradle update-micronaut-framework
+update_gradle update-pyronaut
 for sut in pure-netty quarkus vertx helidon-nima spring-boot; do update_maven "$sut"; done

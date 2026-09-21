@@ -22,6 +22,8 @@
       micronaut.imports = [ ../../sut/micronaut-framework ];
       micronaut-native = { imports = [ ../../sut/micronaut-framework ]; benchmark.sut.runtime = "native"; };
       micronaut-pgo = { imports = [ ../../sut/micronaut-framework ]; benchmark.sut.runtime = "native-pgo"; };
+      pyronaut.imports = [ ../../sut/pyronaut ];
+      pyronaut-native = { imports = [ ../../sut/pyronaut ]; benchmark.sut.runtime = "native"; };
       pure-netty.imports = [ ../../sut/pure-netty ];
       #helidon-nima.imports = [ ../../sut/helidon-nima ];
       #spring-boot.imports = [ ../../sut/spring-boot ];

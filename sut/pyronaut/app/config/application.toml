@@ -1,0 +1,25 @@
+[micronaut.application]
+name = "pyronaut-benchmark"
+
+[micronaut.server]
+host = "0.0.0.0"
+port = 8080
+http-version = 2.0
+date-header = false
+idle-timeout = "5m"
+dual-protocol = true
+
+[micronaut.server.ssl]
+enabled = true
+port = 8443
+key-name = "benchmark"
+ciphers = ["TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "TLS_AES_128_GCM_SHA256"]
+handshake-timeout = "1m"
+
+[micronaut.server.ssl.key]
+password = "password"
+
+[micronaut.certificate.resource.benchmark]
+resource = "classpath:server.p12"
+password = "password"
+format = "PKCS12"

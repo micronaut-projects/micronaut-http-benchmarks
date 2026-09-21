@@ -1,0 +1,17 @@
+[project]
+name = "pyronaut-benchmark"
+version = "1.0.0"
+
+[tool.pyronaut]
+repositories = [
+  "https://central.sonatype.com/repository/maven-snapshots/",
+  "mavenCentral",
+]
+
+[tool.pyronaut.dependencies]
+runtime = [
+  "io.micronaut:micronaut-http-server-netty",
+  "io.micronaut.serde:micronaut-serde-jackson",
+  "io.micronaut.pyronaut:micronaut-pyronaut-logback",
+]
+build = []
