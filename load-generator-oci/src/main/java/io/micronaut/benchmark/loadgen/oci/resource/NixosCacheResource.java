@@ -42,10 +42,6 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
         return Arrays.asList(Phase.values());
     }
 
-    public List<PhaseLock> require() {
-        return List.of(lock(Phase.Available));
-    }
-
     public List<PhaseLock> requirePublished() {
         return List.of(lock(Phase.Published));
     }
@@ -57,17 +53,17 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
             URI readCacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
             String defaultOutput = context.clients.nix().resolveOutput(
                     new OutputListener.Log(LOG, Level.DEBUG), installable).toString();
-            cacheAccess = new NixCacheAccess(installable, defaultOutput, readCacheUri, writeCacheUri);
+            cacheAccess = new NixCacheAccess(defaultOutput, readCacheUri);
             setPhase(Phase.Available);
             awaitPublicationSignal();
             NixCacheAccess cache = cacheAccess();
             Path output = context.clients.nix().buildAndUploadOutputCache(
                     new OutputListener.Log(LOG, Level.DEBUG),
-                    cache.writeUri(),
-                    cache.installable()
+                    writeCacheUri,
+                    installable
             );
             if (!output.toString().equals(cache.defaultOutput())) {
-                throw new IllegalStateException("Resolved output does not match built output for " + cache.installable());
+                throw new IllegalStateException("Resolved output does not match built output for " + installable);
             }
             setPhase(Phase.Published);
         } catch (InterruptedException e) {

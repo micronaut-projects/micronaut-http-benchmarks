@@ -21,7 +21,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * Infrastructure for hyperfoil benchmarks, with a single server-under-test, and a hyperfoil cluster sending HTTP
@@ -42,7 +41,6 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final HyperfoilRunner hyperfoilRunner;
     private final PhasedResource.PhaseLock hyperfoilLock;
     private final Map<String, NixosCacheResource> nixosConfigurations;
-    private final Map<String, PhasedResource.PhaseLock> nixosConfigurationLocks;
     private final List<FrameworkRun.NixosConfiguration> configurations;
     private final OutputListener.Write benchmarkServerLog;
     private final TokenRoutingOutputListener benchmarkServerConsoleHistory;
@@ -69,11 +67,6 @@ public final class Infrastructure extends AbstractInfrastructure {
             resources.put(configuration.name(), factory.compute.cacheResource(instanceType, configuration));
         }
         nixosConfigurations = Collections.unmodifiableMap(resources);
-        nixosConfigurationLocks = nixosConfigurations.entrySet().stream()
-                .collect(Collectors.toUnmodifiableMap(
-                        Map.Entry::getKey,
-                        entry -> PhasedResource.PhaseLock.combine(entry.getValue().require())
-                ));
         nixosConfigurations.values().forEach(resource -> launch(resource, resource::manage));
     }
 
@@ -158,7 +151,6 @@ public final class Infrastructure extends AbstractInfrastructure {
         try (AutoCloseable _ = super::close;
              AutoCloseable _ = benchmarkServer;
              benchmarkServerLog;
-             AutoCloseable _ = PhasedResource.PhaseLock.combine(nixosConfigurationLocks.values().stream().toList());
              hyperfoilLock
         ) {
         }
