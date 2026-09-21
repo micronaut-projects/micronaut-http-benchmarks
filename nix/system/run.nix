@@ -26,9 +26,6 @@ let
         "-g"
         "-H:+PreserveFramePointer"
         "-H:-DeleteLocalSymbols"
-        "-H:+RuntimeDebugInfo"
-        "-H:RuntimeDebugInfoFormat=jitdump"
-        "-R:RuntimeJitdumpDir=/var/lib/sut/jitdump"
       ];
     };
   profilingTool = if runtimeProjection.isJvm then "async-profiler" else if runtimeProjection.isNative then "perf" else "py-spy";
@@ -61,6 +58,8 @@ let
     rm -f "$injected_profile"
     rm -rf "$symbol_directory"
     install -d -m 0755 "$symbol_directory"
+    install -D -m 0644 /proc/kallsyms "$symbol_directory/proc/kallsyms"
+    test -s "$symbol_directory/proc/kallsyms"
     perf inject -j -i "$raw_profile" -o "$injected_profile"
 
     elf_manifest=$(mktemp)

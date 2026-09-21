@@ -84,6 +84,11 @@ let
   verifyNativeProfile = sutPackage: ''
     machine.succeed("test -s /var/lib/sut/profile.jit.data")
     machine.succeed("test -d /var/lib/sut/profile-symbols")
+    machine.succeed("test -s /var/lib/sut/profile-symbols/proc/kallsyms")
+    machine.succeed("${pkgs.gnugrep}/bin/grep -Eq '^[0-9a-fA-F]*[1-9a-fA-F][0-9a-fA-F]* [tT] ' /var/lib/sut/profile-symbols/proc/kallsyms")
+    machine.succeed("runuser -u sut -- ${pkgs.linuxPackages.perf}/bin/perf script --ns --symfs /var/lib/sut/profile-symbols --kallsyms /var/lib/sut/profile-symbols/proc/kallsyms -i /var/lib/sut/profile.jit.data > /tmp/profile.txt")
+    machine.succeed("test -s /tmp/profile.txt")
+    machine.succeed("${pkgs.gnugrep}/bin/grep -Fq '([kernel.kallsyms])' /tmp/profile.txt")
     machine.succeed(${builtins.toJSON ''
       elf_found=false
       while IFS= read -r -d "" source; do
@@ -91,7 +96,7 @@ let
           elf_found=true
           staged="/var/lib/sut/profile-symbols$source"
           test -f "$staged"
-          ${pkgs.coreutils}/bin/cmp "$source" "$staged"
+          ${pkgs.diffutils}/bin/cmp "$source" "$staged"
         fi
       done < <(${pkgs.findutils}/bin/find -L ${lib.escapeShellArg (toString sutPackage)} -type f -perm /111 -print0)
       test "$elf_found" = true
@@ -99,7 +104,7 @@ let
       while IFS= read -r -d "" source; do
         staged="/var/lib/sut/profile-symbols$source"
         test -f "$staged"
-        ${pkgs.coreutils}/bin/cmp "$source" "$staged"
+        ${pkgs.diffutils}/bin/cmp "$source" "$staged"
       done < <(${pkgs.findutils}/bin/find /var/lib/sut/jitdump -type f -print0)
     ''})
   '';
@@ -123,6 +128,10 @@ let
   serviceTest = { name, tlsHttp2, profiling, pySpy, artifact, nativeProfile ? null, modules }: pkgs.testers.runNixOSTest {
     inherit name;
     nodes.machine.imports = modules;
+    nodes.machine.boot.kernel.sysctl = lib.mkIf (nativeProfile != null) {
+      "kernel.perf_event_paranoid" = 1;
+      "kernel.kptr_restrict" = 0;
+    };
     testScript = ''
       start_all()
       machine.wait_for_unit("multi-user.target")
