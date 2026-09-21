@@ -121,6 +121,7 @@ let
           "-Xmx1G"
         ];
       };
+      environment.etc."benchmark-tls".source = import ./tls.nix { inherit pkgs; };
       environment.systemPackages = [ hyperfoil pkgs.jdk25_headless ];
     }
     runModule

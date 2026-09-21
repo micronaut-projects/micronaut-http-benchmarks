@@ -15,8 +15,8 @@
       responseBody = ''{"listIndex":3,"stringIndex":2}'';
     }];
     protocols = {
-      http1.enable = true;
-      #https2.enable = true;
+      #http1.enable = true;
+      https2.enable = true;
     };
     runs = {
       micronaut.imports = [ ../../sut/micronaut-framework ];
