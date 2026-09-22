@@ -32,7 +32,7 @@ import java.util.concurrent.Callable;
                 "Run benchmarks on a shared OCI daemon and analyze saved results.",
                 "Use 'cases' to discover suite, run, protocol, and document selectors.",
                 "The daemon starts automatically when needed and exits after two idle hours.",
-                "Summary, comparison, and plotting work without the daemon."
+                "Summary, comparison, plotting, and profile queries work without the daemon."
         },
         footerHeading = "%nExamples:%n",
         footer = {
@@ -46,7 +46,7 @@ import java.util.concurrent.Callable;
         },
         subcommands = {Bench.Run.class, Bench.Submit.class, Bench.Suite.class, Bench.Cases.class,
                 Bench.Status.class, Bench.Wait.class, Bench.Cancel.class, Bench.Stop.class,
-                Bench.Summary.class, Bench.Compare.class, Bench.Plot.class})
+                Bench.Summary.class, Bench.Compare.class, Bench.Plot.class, Bench.Profile.class})
 public final class Bench implements Runnable {
     static final JsonMapper JSON = JsonMapper.builder().build();
     private final Nix nix;
@@ -307,6 +307,46 @@ public final class Bench implements Runnable {
         @Override
         public Integer call() throws Exception {
             print(Results.compare(baseline, candidate));
+            return 0;
+        }
+    }
+
+    @Command(name = "profile", mixinStandardHelpOptions = true,
+            description = {
+                    "Import a saved JFR profile into a cached DuckDB database using the Nix-packaged jfr-query CLI.",
+                    "Without a query or --context, print the database and tool paths as JSON. No daemon is started.",
+                    "Queries cover the full recording; use WHERE benchmark_measured(startTime) to exclude warmup."
+            })
+    static final class Profile extends Subcommand implements Callable<Integer> {
+        @Parameters(index = "0", paramLabel = "RUN_DIR", description = "Completed run directory with a declared JFR artifact.")
+        Path directory;
+        @Mixin
+        SourceOptions source;
+        @Option(names = "--stack-depth", defaultValue = "256", description = "Maximum imported stack depth, 1–4096 (default: ${DEFAULT-VALUE}).")
+        int stackDepth;
+        @Option(names = "--query", paramLabel = "SQL", description = "Execute arbitrary SQL or an upstream named view on the imported database.")
+        String query;
+        @Option(names = "--query-file", paramLabel = "FILE", description = "Read SQL from a UTF-8 file instead of --query.")
+        Path queryFile;
+        @Option(names = "--context", description = "Print the imported schema, views, and macros for writing SQL.")
+        boolean context;
+        @Option(names = "--csv", description = "Use jfr-query's CSV output for --query or --query-file.")
+        boolean csv;
+
+        @Override
+        public Integer call() throws Exception {
+            if ((context ? 1 : 0) + (query != null ? 1 : 0) + (queryFile != null ? 1 : 0) > 1) {
+                throw new IllegalArgumentException("Choose one of --query, --query-file, or --context");
+            }
+            if (queryFile != null) query = java.nio.file.Files.readString(queryFile);
+            if (csv && query == null) throw new IllegalArgumentException("--csv requires --query or --query-file");
+            if (stackDepth < 1 || stackDepth > 4096) throw new IllegalArgumentException("Stack depth must be between 1 and 4096");
+            Path tool = ProfileQuery.buildTool(parent.nix, source.flake, source.inputs);
+            ProfileQuery profile = new ProfileQuery(tool);
+            Path database = profile.prepare(directory, stackDepth);
+            if (context) profile.context(database, System.out);
+            else if (query != null) profile.query(database, query, csv, System.out);
+            else print(Map.of("database", database.toString(), "tool", tool.toString(), "stackDepth", stackDepth));
             return 0;
         }
     }

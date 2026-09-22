@@ -216,6 +216,7 @@
       {
         benchmark-tls = import ./tls.nix { inherit pkgs; };
         profiling-perf = pkgs.linuxPackages.perf;
+        jfr-query = import ./jfr-query { inherit pkgs; };
         oci-bootstrap-image = ociBootstrapImage system;
         benchmark-metadata = metadataPackage system "benchmark-metadata.json" (benchmarkMetadata // { benchmarkDefinitions = benchmarkDefinitionsPackage system; });
         benchmark-definitions = benchmarkDefinitionsPackage system;

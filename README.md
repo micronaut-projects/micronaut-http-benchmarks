@@ -86,6 +86,15 @@ Plotting reads completed run directories and uses the existing raw profile forma
 process lifetime, including warmup and shutdown. Perf conversion uses the tooling retained in `.nix/experiment/perf`.
 Uploading requires explicit `plot --upload`.
 
+## Profile queries
+
+`bench profile RUN_DIR` imports a saved JFR recording with the pinned Nix-packaged jfr-query CLI
+and caches a DuckDB database. Use `--context` to discover the schema, `--query SQL` for exploratory
+queries, or `--query-file FILE --csv` for a saved analysis. Add `WHERE benchmark_measured(startTime)`
+to restrict event queries to measurement phases; upstream views otherwise cover the full recording.
+
+See [profile query documentation](docs/profile-queries.md) for examples, cache behavior, and validation.
+
 ## Suites and experiment contract
 
 `bench suite standard --wait` resolves and shuffles all selected cases, then submits an exclusive batch on the daemon's

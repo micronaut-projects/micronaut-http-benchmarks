@@ -1,0 +1,82 @@
+--- a/core/src/main/java/me/bechberger/jfr/duckdb/util/JdbcAppender.java
++++ b/core/src/main/java/me/bechberger/jfr/duckdb/util/JdbcAppender.java
+@@ -1,8 +1,5 @@
+ package me.bechberger.jfr.duckdb.util;
+
+-import java.lang.reflect.Field;
+-import java.lang.reflect.Method;
+-import java.nio.ByteBuffer;
+ import java.sql.SQLException;
+ import java.time.Instant;
+ import java.time.LocalDateTime;
+@@ -13,25 +10,10 @@
+ public final class JdbcAppender implements Appender {
+
+     private final DuckDBAppender delegate;
+-    private final Method appendNullMethod;
+-    private final Field appenderRefField;
+
+     public JdbcAppender(DuckDBAppender delegate) {
+         this.delegate = delegate;
+-        // DuckDB 1.2.x removed the public appendNull() method; call it via reflection.
+-        Method nullMethod = null;
+-        Field refField = null;
+-        try {
+-            Class<?> nativeClass = Class.forName("org.duckdb.DuckDBNative");
+-            nullMethod = nativeClass.getDeclaredMethod("duckdb_jdbc_appender_append_null", ByteBuffer.class);
+-            nullMethod.setAccessible(true);
+-            refField = DuckDBAppender.class.getDeclaredField("appender_ref");
+-            refField.setAccessible(true);
+-        } catch (Exception e) {
+-            // fall back to append(String) null
+-        }
+-        this.appendNullMethod = nullMethod;
+-        this.appenderRefField = refField;
++
+     }
+
+     @Override
+@@ -46,16 +28,7 @@
+
+     @Override
+     public void appendNull() throws SQLException {
+-        if (appendNullMethod != null && appenderRefField != null) {
+-            try {
+-                ByteBuffer ref = (ByteBuffer) appenderRefField.get(delegate);
+-                appendNullMethod.invoke(null, ref);
+-            } catch (Exception e) {
+-                delegate.append((String) null);
+-            }
+-        } else {
+-            delegate.append((String) null);
+-        }
++        delegate.appendNull();
+     }
+
+     @Override
+@@ -112,23 +85,12 @@
+                         : v.isAfter(INSTANT_MAX_SAFE)  ? INSTANT_MAX_SAFE
+                         : v;
+         LocalDateTime ldt = LocalDateTime.ofInstant(clamped, ZoneOffset.UTC);
+-        delegate.appendLocalDateTime(ldt);
++        delegate.append(ldt);
+     }
+
+     @Override
+     public void append(int[] arr) throws SQLException {
+-        if (arr == null) {
+-            appendNull();
+-            return;
+-        }
+-        // DuckDB 1.2.x removed append(int[]) — encode as a string literal instead.
+-        StringBuilder sb = new StringBuilder("[");
+-        for (int i = 0; i < arr.length; i++) {
+-            if (i > 0) sb.append(", ");
+-            sb.append(arr[i]);
+-        }
+-        sb.append("]");
+-        delegate.append(sb.toString());
++        delegate.append(arr);
+     }
+
+     @Override
