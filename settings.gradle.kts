@@ -16,3 +16,6 @@ include("load-generator-oci")
 include("plot")
 include("relay-agent")
 include("relay-api")
+
+include("benchmark-api")
+include("benchmark-cli")

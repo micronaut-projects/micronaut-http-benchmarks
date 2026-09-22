@@ -1,26 +1,115 @@
 # Micronaut HTTP server benchmarks
 
-Benchmark suites, workloads, SUT builds, and deployable NixOS systems are defined in `nix/`. The OCI load generator consumes the `benchmark-metadata` and `benchmark-definitions` packages from that flake.
+Suites, workloads, and deployable NixOS systems are defined in `nix/`. The Micronaut CLI resolves experiment
+derivations; the Micronaut daemon executes them on warm OCI infrastructure.
+
+## Usage
+
+Both applications require Java 25 and Nix with flakes enabled.
+
+```sh
+./gradlew :benchmark-cli:installDist :load-generator-oci:installDist
+alias bench="$PWD/benchmark-cli/build/install/benchmark-cli/bin/benchmark-cli"
+bench cases
+bench run --suite standard --run pure-netty --protocol https2 --document 6-6 \
+  --rate 1000 --wait
+```
+
+Focused runs require an explicit rate and default to 60 seconds warmup plus 60 seconds measurement. `--warmup` and
+`--duration` override these durations. `--flake` defaults to `nix`, relative to the CLI's working directory;
+`--override-input NAME=REFERENCE` can be repeated.
+
+Concurrent agents should use separate worktrees and select their flakes directly:
+
+```sh
+bench run --flake /path/to/agent-worktree/nix \
+  --suite standard --run pure-netty --protocol https2 --document 6-6 --rate 1000
+```
+
+Preparation uses normal Nix flake evaluation. Git flakes include dirty tracked files; add new source files to Git before
+using them. The CLI does not copy source trees, modify Git, or write lock files. Keep the selected worktree and inputs
+unchanged during preparation. Later edits cannot change a resolved derivation.
+
+```sh
+bench submit /nix/store/HASH-benchmark-experiment.drv --output out --wait
+bench status [RUN_ID]
+bench wait RUN_ID
+bench wait --batch BATCH_ID
+bench cancel RUN_ID
+bench stop
+```
+
+`submit` accepts an existing derivation and optional repeated `--annotation KEY=VALUE` arguments. Each accepted
+submission returns its run ID and absolute result path. Without `--wait`, the CLI returns after acceptance;
+disconnecting leaves work queued. Cancellation preserves partial results and attempts collection and bootstrap reset.
+Infrastructure startup or reset failure triggers cleanup and stops the daemon.
+
+## Daemon and infrastructure
+
+Commands that need the daemon start it implicitly. It runs from the installation project's root at `127.0.0.1:7075`;
+state and infrastructure logs live under `output/daemon`. Logback writes the daemon application log to `output/log`.
+After two idle hours it tears down infrastructure and exits.
+`bench stop` cancels queued/active work, attempts cleanup, and stops the process. Local preparation and analysis
+commands do not start it.
+
+Configure OCI credentials, `[suite.location]`, storage buckets, Hyperfoil agent count, and monitoring in
+`load-generator-oci/src/main/resources/application.toml` or `MICRONAUT_CONFIG_FILES`. The daemon owns the whole
+compartment and cleans it before provisioning and at teardown. Use one daemon per compartment and stop it before
+replacing its installed JARs. There is no recovery or adoption after restart.
+
+One daemon owns one infrastructure lifetime. Its settings remain fixed, and experiments requiring a different shape,
+kernel, or attachments are rejected. Enable the `loop` or `db` Micronaut environment for nginx or PostgreSQL
+attachments. The daemon evaluates
+`lib.infrastructure` independently of benchmark suites.
+
+## Results and analysis
+
+`--output-root` defaults to `./output/runs`, relative to the CLI's working directory. Every measurement, including
+repeated submissions of the same derivation, gets a fresh UUID directory. Clients may share a root.
+
+Each directory contains `run.json`, experiment metadata and workload, environment/machine information, the existing raw
+benchmark output and logs (`output.json`, `server.log`, `agent0.log`, etc.), and declared profiling artifacts.
+Completion is recorded only after collection and reset. Failed and cancelled runs retain their available diagnostics.
+
+`.nix/experiment` links to the built experiment. There is no automatic result deletion. Rerun the derivation recorded in
+`run.json` with `submit` while it remains available in the Nix store.
+
+```sh
+bench summary output/runs/RUN_ID
+bench compare output/runs/BASELINE_ID output/runs/CANDIDATE_ID
+bench plot output/runs/RUN_ID
+bench plot output/runs
+```
+
+Analysis works with the daemon stopped. Summary and comparison emit JSON for measurement phases, excluding warmup.
+Plotting reads completed run directories and uses the existing raw profile formats. Current profiles cover the SUT
+process lifetime, including warmup and shutdown. Perf conversion uses the tooling retained in `.nix/experiment/perf`.
+Uploading requires explicit `plot --upload`.
+
+## Suites and experiment contract
+
+`bench suite standard --wait` resolves and shuffles all selected cases, then submits an exclusive batch on the daemon's
+existing infrastructure. Batches do not replace it. Results use the same per-invocation directory layout and
+`--output-root` option. Keep the selected worktree stable while preparation runs.
+
+Benchmark flakes expose `lib.catalog` for discovery and
+`lib.mkExperiment { suite; run; protocol; document; rate; warmupDuration ? "60s"; benchmarkDuration ? "60s"; full ? false; }`.
+The output contains `system`, `hyperfoil.yaml`, `artifacts.json`, `requirements.json`, and opaque `metadata.json`; perf
+experiments also retain `perf`.
+
+The daemon accepts `{ derivation, output, outputRoot, annotations }` and builds that derivation without reevaluating the
+caller's checkout. It serializes deployment, execution, collection, and bootstrap reset. Artifact entries declare
+`remote`, relative `path`, and `directory`; they cannot overwrite runner-owned files or escape the run directory.
+Activation and `sut.service` retain their existing conventions.
 
 ## Building systems
 
-From `nix/`, build a normal run with:
+Existing system outputs remain available:
 
 ```sh
+cd nix
 nix build .#standard-micronaut-system
 ```
-
-Suite definitions in `nix/suites/` select framework configurations, documents, and protocols. The load generator builds and publishes the selected system outputs through the ordinary Nix cache before activating them on benchmark infrastructure.
-
-## Running the OCI suite
-
-Configure `suite.name` and one `[suite.location]` table in `load-generator-oci/src/main/resources/application.toml`. Each framework/load combination runs once, in shuffled order, on one reused infrastructure. The SUT is restarted for each case and the bootstrap configuration is restored between cases.
-
-Results are written to `output/<run>-<load>/`, with infrastructure logs in `output/infra/`. The index contains no repetition field; `output/index.new.json` is promoted to `output/index.json` only after the suite and cleanup succeed. Failures during execution stop the suite and retain the staging index and final progress snapshot for diagnosis.
-
-For independent measurements, invoke the suite again and archive `output` between invocations. The runner clears the selected compartment before and after the suite, so do not run concurrent suites in that compartment. Resources in previously configured locations must be cleaned separately.
-
-The former `suite.repetitions`, `suite.max-concurrent-runs`, and `suite.infrastructure-mode` options and `[[suite.location]]` array are removed. Output names no longer have repetition suffixes such as `-0` or `infra-0`; update external scripts accordingly. Historical output compatibility is not maintained.
 
 ## Profile-guided optimization
 

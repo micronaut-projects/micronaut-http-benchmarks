@@ -28,6 +28,8 @@ import com.oracle.bmc.core.requests.DeleteImageRequest;
 import com.oracle.bmc.core.requests.GetVnicRequest;
 import com.oracle.bmc.core.requests.ListComputeGlobalImageCapabilitySchemasRequest;
 import com.oracle.bmc.core.requests.ListVnicAttachmentsRequest;
+import io.micronaut.benchmark.api.InstanceType;
+import io.micronaut.benchmark.api.Nix;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
@@ -69,7 +71,7 @@ public final class Compute {
 
     private final ResourceContext context;
     private final ComputeConfiguration computeConfiguration;
-    private final BenchmarkMetadata metadata;
+    private final InfrastructureMetadata metadata;
     private final RegionalClient<ComputeClient> computeClient;
     private final RegionalClient<VirtualNetworkClient> vcnClient;
     private final SshFactory sshFactory;
@@ -80,7 +82,7 @@ public final class Compute {
 
     public Compute(ResourceContext context,
                    ComputeConfiguration computeConfiguration,
-                   BenchmarkMetadata metadata,
+                   InfrastructureMetadata metadata,
                    RegionalClient<ComputeClient> computeClient,
                    RegionalClient<VirtualNetworkClient> vcnClient,
                    SshFactory sshFactory, Nix nix, ComputeConsoleHistoryCollector.Factory consoleHistoryCollectorFactory) {
@@ -120,7 +122,7 @@ public final class Compute {
      * @param instanceType The instance type config key
      * @return The configuration
      */
-    public BenchmarkMetadata.InstanceType getInstanceType(String instanceType) {
+    public InstanceType getInstanceType(String instanceType) {
         return metadata.instanceType(instanceType);
     }
 
@@ -128,7 +130,7 @@ public final class Compute {
         private final InstanceResource resource = new InstanceResource(context, this);
         final ComputeResource computeResource = new ComputeResource(context);
         private final String displayName;
-        private final BenchmarkMetadata.InstanceType instanceType;
+        private final InstanceType instanceType;
         private final OciLocation location;
         private final SubnetResource subnet;
         private OutputListener consoleHistory;
@@ -140,7 +142,7 @@ public final class Compute {
 
         private final Map<Path, byte[]> systemdCredentials = new HashMap<>();
 
-        private Launch(String displayName, BenchmarkMetadata.InstanceType instanceType, OciLocation location, SubnetResource subnet) {
+        private Launch(String displayName, InstanceType instanceType, OciLocation location, SubnetResource subnet) {
             this.displayName = displayName;
             this.instanceType = Objects.requireNonNull(instanceType, "instanceType");
             this.location = location;
@@ -178,7 +180,7 @@ public final class Compute {
         }
 
         public Launch nixosConfiguration(String configurationName) {
-            nixosConfiguration = cacheResource(instanceType, new FrameworkRun.NixosConfiguration(configurationName));
+            nixosConfiguration = cacheResource(instanceType, configurationName);
             AbstractInfrastructure.launch(nixosConfiguration, nixosConfiguration::manage);
             nixosConfiguration.signalPublication();
             return nixosConfiguration(nixosConfiguration);
@@ -282,9 +284,9 @@ public final class Compute {
         }
     }
 
-    NixosCacheResource cacheResource(BenchmarkMetadata.InstanceType instanceType, FrameworkRun.NixosConfiguration configuration) {
+    NixosCacheResource cacheResource(InstanceType instanceType, String configuration) {
         String platform = instanceType.platform();
-        String installable = ".#packages." + platform + "." + configuration.name() + "-system";
+        String installable = "./nix#lib.infrastructure." + platform + ".systems." + configuration + "-system";
         return new NixosCacheResource(
                 context,
                 computeConfiguration.storageBucketNamespace,
@@ -292,6 +294,11 @@ public final class Compute {
                 "nixos-cache",
                 installable
             );
+    }
+
+    NixosCacheResource outputCache(Path output) {
+        return new NixosCacheResource(context, computeConfiguration.storageBucketNamespace,
+                computeConfiguration.storageBucketName, "nixos-cache", output.toString());
     }
 
     private final class NixosImageResource extends AbstractDecoratedResource {
@@ -312,8 +319,10 @@ public final class Compute {
                     objectName(platform),
                     upload -> {
                         LOG.info("Building nixos image for {}", platform);
-                        Path path = nix.build(new OutputListener.Log(LOG, Level.DEBUG), ".#packages." + platform + ".oci-bootstrap-image").resolve("nixos.qcow2");
-                        upload.accept(path);
+                        try (var log = new OutputListener.Stream(List.of(new OutputListener.Log(LOG, Level.DEBUG)))) {
+                            Path path = nix.build(log, "./nix#lib.infrastructure." + platform + ".bootstrapImage").resolve("nixos.qcow2");
+                            upload.accept(path);
+                        }
                     }
             );
         }

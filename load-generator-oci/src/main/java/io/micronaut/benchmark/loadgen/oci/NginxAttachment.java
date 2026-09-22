@@ -21,6 +21,11 @@ final class NginxAttachment implements Infrastructure.Attachment {
     }
 
     @Override
+    public String name() {
+        return "nginx";
+    }
+
+    @Override
     public void setUp(Infrastructure infrastructure) throws Exception {
         Compute.Launch launch = infrastructure.computeBuilder("nginx").privateIp(NGINX_IP);
         NginxResource resource = new NginxResource(context, infrastructure, launch);

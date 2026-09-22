@@ -1,5 +1,6 @@
 package io.micronaut.benchmark.loadgen.oci.cmd;
 
+import io.micronaut.benchmark.api.Nix;
 import io.micronaut.core.annotation.Nullable;
 
 import java.io.ByteArrayOutputStream;
@@ -34,6 +35,7 @@ public interface CommandRunner extends Closeable {
         try (ProcessHandle handle = run(command, log)) {
             handle.waitFor().check();
         } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new InterruptedIOException();
         }
     }
@@ -85,6 +87,7 @@ public interface CommandRunner extends Closeable {
                 throw new NoSuchFileException("ls: '" + listing.toString(StandardCharsets.UTF_8) + "'");
             }
         } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new InterruptedIOException();
         }
         String[] parts = listing.toString(StandardCharsets.UTF_8).split("\n");
@@ -97,7 +100,7 @@ public interface CommandRunner extends Closeable {
 
     default void downloadRecursive(String remote, Path local) throws IOException {
         ByteArrayOutputStream listing = new ByteArrayOutputStream();
-        runAndCheck("ls --literal --almost-all --indicator-style=none -1 -- " + remote, new OutputListener.Write(listing));
+        runAndCheck("ls --literal --almost-all --indicator-style=none -1 -- " + Nix.shellQuote(remote), new OutputListener.Write(listing));
         String[] parts = listing.toString(StandardCharsets.UTF_8).split("\n");
         if (parts.length == 1 && parts[0].equals(remote)) {
             download(remote, local);

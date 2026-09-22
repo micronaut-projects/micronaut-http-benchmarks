@@ -3,6 +3,7 @@
   imports = [ ./common.nix ./jvm-defaults.nix ];
 
   benchmark.suite = {
+    attachments = [ "nginx" ];
     documents = [{
       name = "loop";
       method = "GET";

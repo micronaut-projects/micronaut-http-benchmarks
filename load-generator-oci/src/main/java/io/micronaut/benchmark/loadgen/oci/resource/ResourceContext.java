@@ -8,11 +8,13 @@ import com.oracle.bmc.core.VirtualNetworkClient;
 import com.oracle.bmc.identity.IdentityClient;
 import com.oracle.bmc.objectstorage.ObjectStorageClient;
 import com.oracle.bmc.psql.PostgresqlClient;
-import io.micronaut.benchmark.loadgen.oci.Nix;
+import io.micronaut.benchmark.api.Nix;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
 import io.micronaut.benchmark.loadgen.oci.RegionalClient;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.scheduling.annotation.Scheduled;
+import jakarta.annotation.PreDestroy;
+import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,10 +23,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
@@ -40,14 +42,15 @@ public final class ResourceContext {
     private final OutputStream eventLog;
     private final JsonMapper eventLogMapper;
 
+    @Inject
     ResourceContext(Clients clients) throws IOException {
-        this.clients = clients;
+        this(clients, Path.of("output/daemon/logs"));
+    }
 
-        try {
-            Files.createDirectories(Path.of("output"));
-        } catch (FileAlreadyExistsException _) {
-        }
-        eventLog = Files.newOutputStream(Path.of("output/events.log"));
+    ResourceContext(Clients clients, Path logDirectory) throws IOException {
+        this.clients = clients;
+        Files.createDirectories(logDirectory);
+        eventLog = Files.newOutputStream(logDirectory.resolve("events-" + UUID.randomUUID() + ".log"));
         eventLogMapper = JsonMapper.builder()
                 .registerSubtypes(LogEvent.class.getPermittedSubclasses())
                 .disable(StreamWriteFeature.AUTO_CLOSE_TARGET)
@@ -87,6 +90,11 @@ public final class ResourceContext {
         } catch (IOException e) {
             LOG.error("Error logging event", e);
         }
+    }
+
+    @PreDestroy
+    synchronized void closeLog() throws IOException {
+        eventLog.close();
     }
 
     private record PollerKey(OciLocation location, Class<?> discriminator) {

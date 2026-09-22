@@ -1,6 +1,6 @@
 package io.micronaut.benchmark.http.plot;
 
-import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
+import io.micronaut.benchmark.api.BenchmarkStats;
 import io.micronaut.core.annotation.Nullable;
 import software.xdev.chartjs.model.charts.BarChart;
 import software.xdev.chartjs.model.charts.MixedChart;
@@ -161,18 +161,18 @@ final class PhaseGraph {
         html.append("</div></div>");
     }
 
-    private static HyperfoilRunner.StatsAll.Histogram combineHistograms(List<HyperfoilRunner.StatsAll.Histogram> histograms) {
+    private static BenchmarkStats.Histogram combineHistograms(List<BenchmarkStats.Histogram> histograms) {
         List<Double> bucketTo = histograms.stream()
                 .flatMap(h -> h.percentiles().stream())
-                .map(HyperfoilRunner.StatsAll.Percentile::to)
+                .map(BenchmarkStats.Percentile::to)
                 .distinct()
                 .sorted()
                 .collect(Collectors.toList());
         bucketTo.addFirst(0.0);
         long[] bucketCount = new long[bucketTo.size()];
         long totalCount = 0;
-        for (HyperfoilRunner.StatsAll.Histogram histogram : histograms) {
-            for (HyperfoilRunner.StatsAll.Percentile percentile : histogram.percentiles()) {
+        for (BenchmarkStats.Histogram histogram : histograms) {
+            for (BenchmarkStats.Percentile percentile : histogram.percentiles()) {
                 int fromBucket = bucketTo.indexOf(percentile.from());
                 int toBucket = bucketTo.indexOf(percentile.to());
                 totalCount += percentile.count();
@@ -182,11 +182,11 @@ final class PhaseGraph {
             }
         }
         assert bucketCount[0] == 0;
-        List<HyperfoilRunner.StatsAll.Percentile> out = new ArrayList<>();
+        List<BenchmarkStats.Percentile> out = new ArrayList<>();
         long countSoFar = 0;
         for (int i = 1; i < bucketTo.size(); i++) {
             countSoFar += bucketCount[i];
-            out.add(new HyperfoilRunner.StatsAll.Percentile(
+            out.add(new BenchmarkStats.Percentile(
                     bucketTo.get(i - 1),
                     bucketTo.get(i),
                     (double) countSoFar / totalCount,
@@ -194,12 +194,12 @@ final class PhaseGraph {
                     countSoFar
             ));
         }
-        return new HyperfoilRunner.StatsAll.Histogram(out);
+        return new BenchmarkStats.Histogram(out);
     }
 
-    private static void addHistogram(MixedData destPlot, HyperfoilRunner.StatsAll.Histogram histogram, String color) {
+    private static void addHistogram(MixedData destPlot, BenchmarkStats.Histogram histogram, String color) {
         LineDataset dataset = new LineDataset();
-        for (HyperfoilRunner.StatsAll.Percentile percentile : histogram.percentiles()) {
+        for (BenchmarkStats.Percentile percentile : histogram.percentiles()) {
             if (percentile.percentile() == 1.0) {
                 continue;
             }
@@ -213,7 +213,7 @@ final class PhaseGraph {
 
     class Group {
         private final int groupIndex = nextGroupIndex++;
-        private List<HyperfoilRunner.StatsAll.Histogram> percentiles = COMBINE_HISTOGRAMS ? new ArrayList<>() : null;
+        private List<BenchmarkStats.Histogram> percentiles = COMBINE_HISTOGRAMS ? new ArrayList<>() : null;
         private final ScatterDataset medians = new ScatterDataset();
         private final ScatterDataset averages = new ScatterDataset();
         private String color;
@@ -226,8 +226,8 @@ final class PhaseGraph {
             return this;
         }
 
-        public boolean add(HyperfoilRunner.StatsAll benchmark, @Nullable JfrSummary jfrSummary) {
-            HyperfoilRunner.StatsAll.Stats stats = benchmark.findPhase(phase);
+        public boolean add(BenchmarkStats benchmark, @Nullable JfrSummary jfrSummary) {
+            BenchmarkStats.Stats stats = benchmark.findPhase(phase);
             if (stats == null) {
                 percentiles = null;
                 return false;
@@ -259,7 +259,7 @@ final class PhaseGraph {
             medians.addData(new ScatterDataPoint((double) groupIndex, stats.histogram()
                     .percentiles().stream()
                     .filter(p -> p.percentile() >= 0.5)
-                    .mapToDouble(HyperfoilRunner.StatsAll.Percentile::to)
+                    .mapToDouble(BenchmarkStats.Percentile::to)
                     .findFirst().orElseThrow()));
             medians.addPointBorderColor(color);
             medians.addPointStyle("crossRot");

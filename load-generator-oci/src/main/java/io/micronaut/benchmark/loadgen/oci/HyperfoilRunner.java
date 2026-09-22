@@ -1,12 +1,12 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import io.hyperfoil.api.statistics.StatisticsSummary;
 import io.hyperfoil.client.RestClient;
 import io.hyperfoil.controller.Client;
 import io.hyperfoil.controller.model.RequestStatisticsResponse;
 import io.hyperfoil.controller.model.RequestStats;
 import io.hyperfoil.http.statistics.HttpStats;
+import io.micronaut.benchmark.api.BenchmarkStats;
+import io.micronaut.benchmark.api.InstanceType;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
@@ -14,7 +14,6 @@ import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.vertx.core.Vertx;
-import jakarta.annotation.Nullable;
 import jakarta.annotation.PreDestroy;
 import jakarta.inject.Singleton;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
@@ -31,7 +30,6 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -162,31 +160,56 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     }
 
     /**
-     * Create a new benchmark closure to run benchmarks for a given request definition.
-     *
-     * @param outputDirectory The output directory for benchmark results
-     * @param protocol        The HTTP protocol settings to use
-     * @param body            The HTTP request
-     * @return The benchmark closure
+     * Execute exactly one supplied workload; cancellation must stop its remote load.
      */
-    public FrameworkRun.BenchmarkClosure benchmarkClosure(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body) {
-        return progress -> benchmark(outputDirectory, protocol, body, progress);
+    public void benchmark(Path outputDirectory, Path workload, PhaseTracker.PhaseUpdater progress) throws Exception {
+        awaitPhase(HyperfoilPhase.READY);
+        String effective = benchmarkDefinition(workload);
+        Files.writeString(outputDirectory.resolve("hyperfoil-effective.yaml"), effective);
+        Client.BenchmarkRef benchmarkRef = client.register(effective, Map.of(), null, null);
+        Client.RunRef runRef = benchmarkRef.start("run", Map.of());
+        try {
+            collectRun(outputDirectory, runRef, progress);
+        } finally {
+            // A disconnected CLI does not interrupt this thread; explicit cancellation does.
+            boolean interrupted = Thread.interrupted();
+            try {
+                try {
+                    if (!"TERMINATED".equals(runRef.statsRecent().status)) {
+                        runRef.kill();
+                        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(2);
+                        while (!"TERMINATED".equals(runRef.statsRecent().status)) {
+                            if (System.nanoTime() > deadline) {
+                                throw new TimeoutException("Remote load did not terminate");
+                            }
+                            TimeUnit.SECONDS.sleep(1);
+                        }
+                    }
+                } catch (Exception e) {
+                    throw new EnvironmentInvalidException("Cannot confirm that the remote load stopped", e);
+                }
+            } finally {
+                try {
+                    byte[] bytes = runRef.statsAll("json");
+                    if (!Files.exists(outputDirectory.resolve("output.json")) && !Files.exists(outputDirectory.resolve("output-failed.json"))) {
+                        Files.write(outputDirectory.resolve("output-failed.json"), bytes);
+                    }
+                } catch (Exception e) {
+                    LOG.warn("Could not salvage Hyperfoil statistics", e);
+                }
+                downloadAgentLogs(outputDirectory);
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
-    private void benchmark(Path outputDirectory, ProtocolSettings protocol, SuiteRequest body, PhaseTracker.PhaseUpdater progress) throws Exception {
-        awaitPhase(HyperfoilPhase.READY);
+    private void collectRun(Path outputDirectory, Client.RunRef runRef, PhaseTracker.PhaseUpdater progress) throws Exception {
 
         BenchmarkPhase benchmarkPhase = BenchmarkPhase.BENCHMARKING;
 
         progress.update(benchmarkPhase);
-        List<String> phaseNames = new ArrayList<>();
-        phaseNames.add("warmup");
-        for (int i = 0; i < protocol.ops().size(); i++) {
-            phaseNames.add("main/" + i);
-        }
-
-        Client.BenchmarkRef benchmarkRef = client.register(benchmarkDefinition(body, protocol), Map.of(), null, null);
-        Client.RunRef runRef = benchmarkRef.start("run", Map.of());
         long startTime = System.nanoTime();
         String lastPhase = null;
         while (true) {
@@ -204,48 +227,60 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                 log.append(' ').append(statistic.metric).append(':').append(statistic.phase).append(":mean=").append(statistic.summary.meanResponseTime);
                 if (!Objects.equals(statistic.phase, lastPhase)) {
                     lastPhase = statistic.phase;
-                    double progressPercent = (phaseNames.indexOf(statistic.phase) + 1.0) / (phaseNames.size() + 1);
-                    progress.update(benchmarkPhase, progressPercent, statistic.phase);
+                    progress.update(benchmarkPhase, 0, statistic.phase);
                 }
             }
             LOG.info("{}", log);
             TimeUnit.SECONDS.sleep(5);
         }
 
-        record StatsAllWrapper(byte[] resultBytes, StatsAll statsAll) {}
+        record StatsAllWrapper(byte[] resultBytes, BenchmarkStats statsAll) {
+        }
 
         StatsAllWrapper wrapper = Infrastructure.retry(() -> {
             byte[] bytes = runRef.statsAll("json");
-            return new StatsAllWrapper(bytes, factory.objectMapper.readValue(bytes, StatsAll.class));
+            return new StatsAllWrapper(bytes, factory.objectMapper.readValue(bytes, BenchmarkStats.class));
         }, controllerPortForward::disconnect);
         List<String> benchmarkFailures = new ArrayList<>();
         boolean invalidatesBenchmark = false;
-        for (StatsAll.Info.Error error : wrapper.statsAll.info.errors) {
-            if (error.msg.contains("Jitter watchdog was not invoked")) {
-                LOG.warn("Jitter in watchdog agent. Log message: {}", error.msg);
+        for (BenchmarkStats.Info.Error error : wrapper.statsAll.info().errors()) {
+            if (error.msg().contains("Jitter watchdog was not invoked")) {
+                LOG.warn("Jitter in watchdog agent. Log message: {}", error.msg());
                 continue;
             }
-            benchmarkFailures.add(error.agent + ": " + error.msg);
+            benchmarkFailures.add(error.agent() + ": " + error.msg());
         }
-        for (StatsAll.SlaFailure failure : wrapper.statsAll.failures) {
+        for (BenchmarkStats.SlaFailure failure : wrapper.statsAll.failures()) {
             LOG.info("SLA failure: {}", failure);
-            if (failure.phase.equals("warmup")) {
-                benchmarkFailures.add("SLA failure in " + failure.phase + " phase: " + failure.message);
+            if (failure.phase().equals("warmup")) {
+                benchmarkFailures.add("SLA failure in " + failure.phase() + " phase: " + failure.message());
                 invalidatesBenchmark = true;
             }
         }
-        for (StatsAll.Stats stats : wrapper.statsAll.stats) {
-            if (stats.total.summary.responseCount == 0) {
-                benchmarkFailures.add("No responses in phase " + stats.name);
+        for (BenchmarkStats.Stats stats : wrapper.statsAll.stats()) {
+            if (stats.total().summary().responseCount == 0) {
+                benchmarkFailures.add("No responses in phase " + stats.name());
                 invalidatesBenchmark = true;
             }
-            if (stats.total.summary.invalid > 0 || stats.total.summary.requestTimeouts > 0
-                    || stats.total.summary.connectionErrors > 0 || stats.total.summary.internalErrors > 0) {
-                benchmarkFailures.add("Request failures in phase " + stats.name);
+            if (stats.total().summary().invalid > 0 || stats.total().summary().requestTimeouts > 0
+                    || stats.total().summary().connectionErrors > 0 || stats.total().summary().internalErrors > 0) {
+                benchmarkFailures.add("Request failures in phase " + stats.name());
                 invalidatesBenchmark = true;
             }
         }
 
+        LOG.info("Benchmark complete, writing output");
+        Path outputPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "output.json" : "output-failed.json");
+        Files.write(outputPath, wrapper.resultBytes);
+        Path metaPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "meta.json" : "meta-failed.json");
+        Files.write(metaPath, factory.objectMapper.writeValueAsBytes(new Metadata(factory.config)));
+        if (!benchmarkFailures.isEmpty()) {
+            String msg = String.join("\n", benchmarkFailures) + "\nOutput written at: " + outputPath;
+            throw invalidatesBenchmark ? new InvalidatesBenchmarkException(msg) : new Exception(msg);
+        }
+    }
+
+    private void downloadAgentLogs(Path outputDirectory) {
         LOG.info("Downloading agent logs…");
         try {
             for (String agent : Infrastructure.retry(client::agents, controllerPortForward::disconnect)) {
@@ -265,16 +300,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         } catch (Exception e) {
             LOG.warn("Failed to download agent logs", e);
         }
-
-        LOG.info("Benchmark complete, writing output");
-        Path outputPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "output.json" : "output-failed.json");
-        Files.write(outputPath, wrapper.resultBytes);
-        Path metaPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "meta.json" : "meta-failed.json");
-        Files.write(metaPath, factory.objectMapper.writeValueAsBytes(new Metadata(factory.config)));
-        if (!benchmarkFailures.isEmpty()) {
-            String msg = String.join("\n", benchmarkFailures) + "\nOutput written at: " + outputPath;
-            throw invalidatesBenchmark ? new InvalidatesBenchmarkException(msg) : new Exception(msg);
-        }
     }
 
     private static String agentIp(int i) {
@@ -282,7 +307,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
     }
 
     private Map<String, Object> runtimeAgents() {
-        BenchmarkMetadata.InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
+        InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
         Map<String, Object> agents = new LinkedHashMap<>();
         for (int i = 0; i < factory.config.agentCount; i++) {
             String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
@@ -297,8 +322,8 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         return agents;
     }
 
-    private String benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol) throws Exception {
-        Map<String, Object> definition = yamlMap(yaml().load(Files.readString(factory.benchmarkDefinition(request, protocol))), "Hyperfoil benchmark definition");
+    private String benchmarkDefinition(Path workload) throws Exception {
+        Map<String, Object> definition = yamlMap(yaml().load(Files.readString(workload)), "Hyperfoil benchmark definition");
         if (!(definition.get("name") instanceof String)) {
             throw new IllegalArgumentException("Expected Hyperfoil benchmark name to be a string");
         }
@@ -376,17 +401,15 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         private final Compute compute;
         private final SshFactory sshFactory;
         private final HyperfoilConfiguration config;
-        private final BenchmarkMetadata metadata;
         private final ObjectMapper objectMapper;
         private final ResilientSshPortForwarder.Factory resilientForwarderFactory;
         private final Vertx vertx;
 
-        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, HyperfoilConfiguration config, BenchmarkMetadata metadata, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
+        Factory(ResourceContext context, Compute compute, SshFactory sshFactory, HyperfoilConfiguration config, ObjectMapper objectMapper, ResilientSshPortForwarder.Factory resilientForwarderFactory) {
             this.context = context;
             this.compute = compute;
             this.sshFactory = sshFactory;
             this.config = config;
-            this.metadata = metadata;
             this.objectMapper = objectMapper.rebuild()
                     .registerSubtypes(HttpStats.class)
                     .build();
@@ -400,10 +423,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             vertx.close().toCompletionStage().toCompletableFuture().join();
         }
 
-        Path benchmarkDefinition(SuiteRequest request, ProtocolSettings protocol) {
-            return metadata.benchmarkDefinition(request, protocol);
-        }
-
         public HyperfoilRunner create(Path outputDirectory, AbstractInfrastructure infrastructure) throws Exception {
             return new HyperfoilRunner(this, outputDirectory, infrastructure);
         }
@@ -411,79 +430,6 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
     @ConfigurationProperties("hyperfoil")
     public record HyperfoilConfiguration(int agentCount) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record StatsAll(
-            Info info,
-            List<SlaFailure> failures,
-            List<Stats> stats
-    ) {
-        @JsonIgnoreProperties(ignoreUnknown = true)
-        public record Info(
-                List<Error> errors
-        ) {
-            @JsonIgnoreProperties(ignoreUnknown = true)
-            public record Error(
-                    String agent,
-                    String msg
-            ) {
-
-            }
-        }
-
-        @JsonIgnoreProperties(ignoreUnknown = true)
-        public record SlaFailure(
-                String phase,
-                String message
-        ) {}
-
-        @JsonIgnoreProperties(ignoreUnknown = true)
-        public record Stats(
-                String phase,
-                String name,
-                Total total,
-                Histogram histogram
-        ) {
-            @JsonIgnoreProperties(ignoreUnknown = true)
-            public record Total(StatisticsSummary summary) {
-            }
-        }
-
-        @JsonIgnoreProperties(ignoreUnknown = true)
-        public record Histogram(
-                List<Percentile> percentiles
-        ) {
-        }
-
-        public record Percentile(
-                double from,
-                double to,
-                double percentile,
-                long count,
-                long totalCount
-        ) {
-        }
-
-        @Nullable
-        public Stats findPhase(String name) {
-            for (Stats phase : stats) {
-                if (phase.name.equals(name)) {
-                    return phase;
-                }
-            }
-            return null;
-        }
-
-        @Nullable
-        public Stats findPhaseContaining(Instant time) {
-            for (Stats phase : stats) {
-                if (phase.total.summary.startTime < time.toEpochMilli() && phase.total.summary.endTime > time.toEpochMilli()) {
-                    return phase;
-                }
-            }
-            return null;
-        }
     }
 
     private record Metadata(HyperfoilConfiguration hyperfoilConfiguration) {}

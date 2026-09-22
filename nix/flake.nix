@@ -44,6 +44,7 @@
         trainingCase = null;
         metadata = {
           name = "${suiteName}-${cfg.run.name}";
+          selector = runName;
           type = cfg.sut.metadata.type;
           parameters = cfg.sut.metadata.parameters;
           profiling = if cfg.sut.metadata.profiling == null then null else optionalAttrs cfg.sut.metadata.profiling;
@@ -197,6 +198,14 @@
       definition = role.definition;
     }).config.system.build.toplevel;
     runPackage = run: lib.nameValuePair "${run.configurationName}-system" run.system.config.system.build.toplevel;
+    infrastructureFor = system: {
+      metadata = metadataPackage system "benchmark-infrastructure.json" {
+        inherit instanceTypes;
+        kernel = toString (mkHost { system = "x86_64-linux"; definition = ./system/benchmark-bootstrap.nix; }).config.boot.kernelPackages.kernel;
+      };
+      systems = lib.listToAttrs (map rolePackage (lib.filter (role: role.activatable && role.instance.platform == system) rolesWithMetadata));
+      bootstrapImage = ociBootstrapImage system;
+    };
     packagesFor = system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -227,7 +236,77 @@
       }
       // lib.listToAttrs (map rolePackage activatableRoles)
       // lib.listToAttrs (map runPackage systemRuns);
+    mkExperiment = { suite, run, protocol, document, rate ? null,
+                     warmupDuration ? "60s", benchmarkDuration ? "60s", full ? false }:
+      let
+        selectedSuite = evaluatedSuites.${suite};
+        selectedRun = evaluatedSuiteRuns.${suite}.${run};
+        request = lib.findFirst (r: r.name == document)
+          (throw "Unknown document ${document}") selectedSuite.config.benchmark.suite.documents;
+        baseProtocol = selectedSuite.config.benchmark.suite.resolvedProtocols.${protocol};
+        effectiveProtocol = baseProtocol // lib.optionalAttrs (!full) { ops = [ rate ]; };
+        configuration = selectedRun.metadata.nixosConfigurations.${protocol}.${document};
+        selectedSystem = lib.findFirst (r: r.configurationName == configuration)
+          (throw "Missing system ${configuration}") selectedRun.variants;
+        pkgs = selectedSystem.system.pkgs;
+        profiling = selectedRun.metadata.profiling;
+        artifacts = if profiling == null then [ ] else [
+          { remote = "/var/lib/sut/${profiling.artifact}"; path = profiling.artifact; directory = false; }
+        ] ++ lib.optionals (profiling ? injectedArtifact) [
+          { remote = "/var/lib/sut/${profiling.injectedArtifact}"; path = profiling.injectedArtifact; directory = false; }
+          { remote = "/var/lib/sut/${profiling.symbolDirectory}"; path = profiling.symbolDirectory; directory = true; }
+        ];
+        workload = if full then selectedSuite.config.benchmark.hyperfoil.definitions.${protocol}.${document}
+          else (import ./render-hyperfoil.nix { inherit lib; }) {
+            mode = "normal";
+            protocol = effectiveProtocol;
+            inherit request;
+            target = {
+              httpUrl = "http://10.0.0.2"; httpAuthority = "10.0.0.2"; httpPort = 8080;
+              httpsUrl = "https://10.0.0.2"; httpsAuthority = "10.0.0.2"; httpsPort = 8443;
+            };
+            settings = {
+              inherit warmupDuration benchmarkDuration;
+              inherit (selectedSuite.config.benchmark.hyperfoil) sessionLimitFactor;
+            };
+          };
+        json = name: value: pkgs.writeText name (builtins.toJSON value);
+      in
+      assert lib.assertMsg (full || (builtins.isInt rate && rate > 0)) "Focused experiments require a positive request rate";
+      assert lib.assertMsg (builtins.match "^[1-9][0-9]*(s|m|h)$" warmupDuration != null
+        && builtins.match "^[1-9][0-9]*(s|m|h)$" benchmarkDuration != null) "Invalid experiment duration";
+      pkgs.linkFarm "benchmark-experiment" ([
+        # Analysis tooling is part of the retained closure, independent of a checkout.
+        { name = "system"; path = selectedSystem.system.config.system.build.toplevel; }
+        { name = "hyperfoil.yaml"; path = (pkgs.formats.yaml { }).generate "hyperfoil.yaml" workload; }
+        { name = "artifacts.json"; path = json "artifacts.json" artifacts; }
+        { name = "requirements.json"; path = json "requirements.json" {
+            version = 1;
+            instanceType = instanceTypes.benchmark-server;
+            kernel = toString selectedSystem.system.config.boot.kernelPackages.kernel;
+            attachments = selectedSuite.config.benchmark.suite.attachments;
+          }; }
+        { name = "metadata.json"; path = json "metadata.json" {
+            name = "${suite}-${run}-${protocol}-${document}";
+            inherit (selectedRun.metadata) type parameters profiling;
+            profileCoverage = if profiling == null then "none" else "process-lifetime";
+            load = {
+              name = "${protocol}-${document}";
+              protocol = effectiveProtocol;
+              definition = requestMetadata request;
+            };
+            sutSpecs = instanceTypes.benchmark-server;
+          }; }
+      ] ++ lib.optional (profiling != null && profiling.tool == "perf") {
+        name = "perf"; path = pkgs.linuxPackages.perf;
+      });
   in {
+    lib = {
+      inherit mkExperiment;
+      catalog = assert metadataAssertions; benchmarkMetadata;
+      # This namespace never evaluates suites or SUTs, even while they are being edited.
+      infrastructure = lib.genAttrs supportedSystems infrastructureFor;
+    };
     packages = lib.genAttrs supportedSystems packagesFor;
     checks = lib.genAttrs supportedSystems (system: {
       benchmark-suite-shape = metadataPackage system "benchmark-suite-shape.json" benchmarkMetadata;

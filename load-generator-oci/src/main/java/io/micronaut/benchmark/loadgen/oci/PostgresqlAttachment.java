@@ -5,6 +5,7 @@ import com.oracle.bmc.psql.model.Credentials;
 import com.oracle.bmc.psql.model.ManagementPolicyDetails;
 import com.oracle.bmc.psql.model.NoneBackupPolicy;
 import com.oracle.bmc.psql.model.PlainTextPasswordDetails;
+import io.micronaut.benchmark.api.InstanceType;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PostgresqlResource;
 import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
@@ -38,10 +39,15 @@ final class PostgresqlAttachment implements Infrastructure.Attachment {
     }
 
     @Override
+    public String name() {
+        return "postgresql";
+    }
+
+    @Override
     public void setUp(Infrastructure infrastructure) throws Exception {
         PostgresqlResource resource = new PostgresqlResource(context);
         resource.networkDetails(infrastructure.getPrivateSubnet(), POSTGRES_IP);
-        BenchmarkMetadata.InstanceType instanceType = compute.getInstanceType("postgresql");
+        InstanceType instanceType = compute.getInstanceType("postgresql");
         Compute.Instance benchmarkServer = infrastructure.benchmarkServer;
         DbWithSchema dbWithSchema = new DbWithSchema(context, resource, benchmarkServer);
         dbWithSchema.dependOn(benchmarkServer.resource().require());

@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -314,7 +315,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
             try {
                 return callable.get();
             } catch (Exception e) {
-                if (e instanceof InvalidatesBenchmarkException) {
+                if (e instanceof InterruptedException || e instanceof InterruptedIOException || Thread.currentThread().isInterrupted() || e instanceof InvalidatesBenchmarkException) {
                     throw e;
                 }
 

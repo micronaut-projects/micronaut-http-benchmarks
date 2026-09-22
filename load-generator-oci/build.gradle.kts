@@ -1,5 +1,6 @@
 plugins {
     id("io.micronaut.library")
+    application
 }
 
 group = "org.example"
@@ -15,6 +16,9 @@ java {
 }
 
 dependencies {
+    annotationProcessor("io.micronaut.serde:micronaut-serde-processor")
+    api(project(":benchmark-api"))
+    implementation("io.micronaut:micronaut-http-server-netty")
     implementation("org.yaml:snakeyaml")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-sdk")
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-identity")
@@ -51,4 +55,9 @@ micronaut {
         incremental(true)
         annotations("io.micronaut.benchmark.loadgen.oci.*")
     }
+}
+
+application {
+    applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
+    mainClass.set("io.micronaut.benchmark.loadgen.oci.Main")
 }

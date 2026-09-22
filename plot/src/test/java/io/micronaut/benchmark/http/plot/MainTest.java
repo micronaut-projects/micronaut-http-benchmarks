@@ -1,12 +1,11 @@
 package io.micronaut.benchmark.http.plot;
 
-import io.micronaut.benchmark.loadgen.oci.SuiteRunner;
+import io.micronaut.benchmark.api.BenchmarkResult;
 import org.junit.jupiter.api.Test;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
-
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -17,7 +16,7 @@ final class MainTest {
     @Test
     void readsAndWritesIndexWithoutRepetition() {
         JsonMapper mapper = JsonMapper.builder().build();
-        List<SuiteRunner.BenchmarkParameters> index = mapper.readValue("""
+        List<BenchmarkResult> index = mapper.readValue("""
                 [{
                   "name":"micronaut-http1-small", "type":"micronaut", "parameters":{}, "profiling":null,
                   "load": {
@@ -35,7 +34,8 @@ final class MainTest {
         assertEquals("x86_64-linux", index.getFirst().sutSpecs().platform());
         String json = mapper.writeValueAsString(index);
         assertFalse(mapper.readTree(json).get(0).has("repetition"));
-        assertEquals(index, mapper.readValue(json, new TypeReference<List<SuiteRunner.BenchmarkParameters>>() { }));
+        assertEquals(index, mapper.readValue(json, new TypeReference<List<BenchmarkResult>>() {
+        }));
     }
 
     @Test

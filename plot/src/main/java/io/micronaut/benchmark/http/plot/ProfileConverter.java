@@ -1,7 +1,7 @@
 package io.micronaut.benchmark.http.plot;
 
-import io.micronaut.benchmark.loadgen.oci.FrameworkRun;
-import io.micronaut.benchmark.loadgen.oci.Nix;
+import io.micronaut.benchmark.api.Nix;
+import io.micronaut.benchmark.api.ProfileMetadata;
 import one.convert.Arguments;
 import one.convert.FlameGraph;
 import one.convert.JfrToFlame;
@@ -23,7 +23,7 @@ final class ProfileConverter {
     private ProfileConverter() {
     }
 
-    static ProfileArtifacts convert(Path directory, FrameworkRun.Profiling profiling) throws IOException, InterruptedException {
+    static ProfileArtifacts convert(Path directory, ProfileMetadata profiling) throws IOException, InterruptedException {
         Path raw = directory.resolve(profiling.artifact());
         if (!Files.isRegularFile(raw) || Files.size(raw) == 0) {
             return ProfileArtifacts.absent(profiling);
@@ -43,14 +43,14 @@ final class ProfileConverter {
         }
     }
 
-    private static ProfileArtifacts convertJfr(Path directory, FrameworkRun.Profiling profiling, Path raw) throws IOException {
+    private static ProfileArtifacts convertJfr(Path directory, ProfileMetadata profiling, Path raw) throws IOException {
         Path flamegraph = convert(directory, "flamegraph.html", output -> JfrToFlame.convert(raw.toString(), output.toString(), new Arguments("--output", "html")));
         Path reverse = convert(directory, "flamegraph-reverse.html", output -> JfrToFlame.convert(raw.toString(), output.toString(), new Arguments("-r", "--output", "html")));
         Path heatmap = convert(directory, "heatmap.html", output -> JfrToHeatmap.convert(raw.toString(), output.toString(), new Arguments("--output", "heatmap")));
         return new ProfileArtifacts(profiling, raw, flamegraph, reverse, heatmap);
     }
 
-    private static ProfileArtifacts convertPerf(Path directory, FrameworkRun.Profiling profiling, Path raw) throws IOException, InterruptedException {
+    private static ProfileArtifacts convertPerf(Path directory, ProfileMetadata profiling, Path raw) throws IOException, InterruptedException {
         Path perfScript = Files.createTempFile(directory, "profile-perf-script-", ".txt");
         try {
             try (OutputStream output = Files.newOutputStream(perfScript)) {
@@ -63,7 +63,7 @@ final class ProfileConverter {
     }
 
     static ProfileArtifacts convertPerfScript(
-            Path directory, FrameworkRun.Profiling profiling, Path raw, Path perfScript) throws IOException {
+            Path directory, ProfileMetadata profiling, Path raw, Path perfScript) throws IOException {
         try {
             Path collapsed = Files.createTempFile(directory, "profile-perf-", ".txt");
             Path flamegraph;
@@ -119,12 +119,12 @@ final class ProfileConverter {
         }
     }
 
-    static List<String> perfScriptCommand(Path directory, FrameworkRun.Profiling profiling, Path raw) throws IOException {
+    static List<String> perfScriptCommand(Path directory, ProfileMetadata profiling, Path raw) throws IOException {
         String injectedArtifact = profiling.injectedArtifact();
         String symbolDirectory = profiling.symbolDirectory();
         if (injectedArtifact == null && symbolDirectory == null) {
             return List.of(
-                    "shell", ".#profiling-perf", "--command", "perf", "script", "--ns", "-i",
+                    "shell", perfInstallable(directory), "--command", "perf", "script", "--ns", "-i",
                     raw.toAbsolutePath().normalize().toString());
         }
         if (injectedArtifact == null || symbolDirectory == null) {
@@ -144,8 +144,12 @@ final class ProfileConverter {
             throw new IOException("Declared perf kallsyms snapshot must be a non-empty file: " + kallsyms);
         }
         return List.of(
-                "shell", ".#profiling-perf", "--command", "perf", "script", "--ns",
+                "shell", perfInstallable(directory), "--command", "perf", "script", "--ns",
                 "--symfs", symbols.toString(), "--kallsyms", kallsyms.toString(), "-i", injected.toString());
+    }
+
+    private static String perfInstallable(Path directory) throws IOException {
+        return directory.resolve(".nix/experiment/perf").toRealPath().toString();
     }
 
     private static boolean isNonEmptyDirectory(Path directory) throws IOException {
@@ -157,7 +161,7 @@ final class ProfileConverter {
         }
     }
 
-    private static ProfileArtifacts convertCollapsed(Path directory, FrameworkRun.Profiling profiling, Path raw) throws IOException {
+    private static ProfileArtifacts convertCollapsed(Path directory, ProfileMetadata profiling, Path raw) throws IOException {
         Path merged = Files.createTempFile(directory, "profile-py-spy-merged-", ".txt");
         try {
             try (BufferedReader input = Files.newBufferedReader(raw);
@@ -191,12 +195,13 @@ final class ProfileConverter {
         void convert(Path output) throws IOException;
     }
 
-    record ProfileArtifacts(FrameworkRun.Profiling profiling, Path raw, Path flamegraph, Path reverseFlamegraph, Path heatmap) {
-        static ProfileArtifacts absent(FrameworkRun.Profiling profiling) {
+    record ProfileArtifacts(ProfileMetadata profiling, Path raw, Path flamegraph, Path reverseFlamegraph,
+                            Path heatmap) {
+        static ProfileArtifacts absent(ProfileMetadata profiling) {
             return new ProfileArtifacts(profiling, null, null, null, null);
         }
 
-        static ProfileArtifacts failed(FrameworkRun.Profiling profiling, Path raw) {
+        static ProfileArtifacts failed(ProfileMetadata profiling, Path raw) {
             return new ProfileArtifacts(profiling, raw, null, null, null);
         }
 

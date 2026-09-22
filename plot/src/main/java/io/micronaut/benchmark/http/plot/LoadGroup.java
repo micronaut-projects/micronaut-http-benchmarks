@@ -1,9 +1,9 @@
 package io.micronaut.benchmark.http.plot;
 
-import io.micronaut.benchmark.loadgen.oci.BenchmarkMetadata;
-import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
-import io.micronaut.benchmark.loadgen.oci.ProtocolSettings;
-import io.micronaut.benchmark.loadgen.oci.SuiteRunner;
+import io.micronaut.benchmark.api.BenchmarkResult;
+import io.micronaut.benchmark.api.BenchmarkStats;
+import io.micronaut.benchmark.api.InstanceType;
+import io.micronaut.benchmark.api.ProtocolSettings;
 import io.micronaut.core.annotation.Nullable;
 
 import java.awt.*;
@@ -71,12 +71,12 @@ final class LoadGroup {
         return this;
     }
 
-    void add(SuiteRunner.BenchmarkParameters parameters, HyperfoilRunner.StatsAll result, @Nullable JfrSummary jfrSummary,
+    void add(BenchmarkResult parameters, BenchmarkStats result, @Nullable JfrSummary jfrSummary,
              @Nullable ProfileConverter.ProfileArtifacts profile) {
         index.add(new Entry(parameters, result, jfrSummary, profile));
     }
 
-    private static DiscriminatorLabel getDiscriminator(SuiteRunner.BenchmarkParameters p) {
+    private static DiscriminatorLabel getDiscriminator(BenchmarkResult p) {
         return new DiscriminatorLabel(
                 DISCRIMINATORS.stream().map(f -> f.extractor().apply(p)).toList());
     }
@@ -89,7 +89,7 @@ final class LoadGroup {
         }
     }
 
-    static String formatSut(BenchmarkMetadata.InstanceType sut) {
+    static String formatSut(InstanceType sut) {
         StringBuilder html = new StringBuilder()
                 .append(sut.shape()).append(" ")
                 .append(roundIfWhole(sut.ocpus())).append("CPU&nbsp;")
@@ -242,7 +242,7 @@ final class LoadGroup {
             }
         }
         if (children == null) {
-            BenchmarkMetadata.InstanceType sut = index.getFirst().parameters.sutSpecs();
+            InstanceType sut = index.getFirst().parameters.sutSpecs();
             html.append("<dt").append(htmlAttr()).append(">SUT</dt><dd").append(htmlAttr()).append(">")
                     .append(formatSut(sut))
                     .append("</dd>");
@@ -342,7 +342,7 @@ final class LoadGroup {
                     if (!getDiscriminator(entry.parameters).equals(d.label)) {
                         continue;
                     }
-                    HyperfoilRunner.StatsAll benchmark = entry.result;
+                    BenchmarkStats benchmark = entry.result;
                     if (!group.add(benchmark, entry.jfrSummary)) {
                         break;
                     }
@@ -391,8 +391,8 @@ final class LoadGroup {
      * @param profile    The converted profile artifacts, if any
      */
     private record Entry(
-            SuiteRunner.BenchmarkParameters parameters,
-            HyperfoilRunner.StatsAll result,
+            BenchmarkResult parameters,
+            BenchmarkStats result,
             @Nullable JfrSummary jfrSummary,
             @Nullable ProfileConverter.ProfileArtifacts profile
     ) {

@@ -1,260 +1,190 @@
 package io.micronaut.benchmark.loadgen.oci;
 
+import io.micronaut.benchmark.api.Nix;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.cmd.TokenRoutingOutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.NixosCacheResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
-import io.micronaut.benchmark.loadgen.oci.resource.ResourceContext;
 import io.micronaut.core.annotation.Indexed;
-import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.UUID;
 
 /**
- * Infrastructure for hyperfoil benchmarks, with a single server-under-test, and a hyperfoil cluster sending HTTP
- * requests to it.
+ * One exclusively used environment. Its lifetime is independent of experiment submissions.
  */
-@Singleton
 public final class Infrastructure extends AbstractInfrastructure {
     private static final Logger LOG = LoggerFactory.getLogger(Infrastructure.class);
-
     static final String SERVER_IP = "10.0.0.2";
     static final String BENCHMARK_SERVER_INSTANCE_TYPE = "benchmark-server";
     public static final String BENCHMARK_BOOTSTRAP = "benchmark-bootstrap";
     private static final Duration CONSOLE_STOP_TIMEOUT = Duration.ofMinutes(5);
-
     private final Factory factory;
-
     Compute.Instance benchmarkServer;
     private final HyperfoilRunner hyperfoilRunner;
     private final PhasedResource.PhaseLock hyperfoilLock;
-    private final Map<String, NixosCacheResource> nixosConfigurations;
-    private final List<FrameworkRun.NixosConfiguration> configurations;
+    private final NixosCacheResource bootstrap;
+    private final Map<Path, NixosCacheResource> publications = new HashMap<>();
     private final OutputListener.Write benchmarkServerLog;
     private final TokenRoutingOutputListener benchmarkServerConsoleHistory;
     private boolean started;
-    private volatile boolean stopped;
-    private volatile Thread publicationThread;
+    private boolean usable = true;
 
-    private Infrastructure(Factory factory, OciLocation location, Path logDirectory, List<FrameworkRun.NixosConfiguration> configurations) throws Exception {
+    private Infrastructure(Factory factory, OciLocation location, Path logDirectory) throws Exception {
         super(factory.baseFactory, location, logDirectory);
         this.factory = factory;
-        this.configurations = List.copyOf(Objects.requireNonNull(configurations, "configurations"));
         Files.createDirectories(logDirectory);
         benchmarkServerLog = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("benchmark-server.log")));
         benchmarkServerConsoleHistory = new TokenRoutingOutputListener(benchmarkServerLog);
-
         hyperfoilRunner = factory.hyperfoilRunnerFactory.create(logDirectory, this);
         hyperfoilLock = hyperfoilRunner.require();
-        BenchmarkMetadata.InstanceType instanceType = factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE);
-        List<FrameworkRun.NixosConfiguration> declaredConfigurations = new ArrayList<>(this.configurations);
-        declaredConfigurations.add(new FrameworkRun.NixosConfiguration(BENCHMARK_BOOTSTRAP));
-        Map<String, FrameworkRun.NixosConfiguration> normalizedConfigurations = normalizeConfigurations(declaredConfigurations);
-        Map<String, NixosCacheResource> resources = new LinkedHashMap<>();
-        for (FrameworkRun.NixosConfiguration configuration : normalizedConfigurations.values()) {
-            resources.put(configuration.name(), factory.compute.cacheResource(instanceType, configuration));
-        }
-        nixosConfigurations = Collections.unmodifiableMap(resources);
-        nixosConfigurations.values().forEach(resource -> launch(resource, resource::manage));
+        bootstrap = factory.compute.cacheResource(factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE), BENCHMARK_BOOTSTRAP);
     }
 
-    private static Map<String, FrameworkRun.NixosConfiguration> normalizeConfigurations(Iterable<FrameworkRun.NixosConfiguration> configurations) {
-        Map<String, FrameworkRun.NixosConfiguration> normalized = new LinkedHashMap<>();
-        for (FrameworkRun.NixosConfiguration configuration : configurations) {
-            normalized.putIfAbsent(configuration.name(), configuration);
+    public void start(PhaseTracker.PhaseUpdater progress) throws Exception {
+        if (started) {
+            return;
         }
-        return Collections.unmodifiableMap(normalized);
-    }
-
-    private void start(PhaseTracker.PhaseUpdater progress) throws Exception {
-        NixosCacheResource bootstrap = nixosConfigurations.get(BENCHMARK_BOOTSTRAP);
+        launch(bootstrap, bootstrap::manage);
         bootstrap.signalPublication();
-        publicationThread = Thread.ofVirtual()
-                .name("publish-nixos-configurations")
-                .start(this::sequencePublications);
-
         setupBase(progress);
-        if (stopped) {
-            throw new InterruptedException("Already stopped");
-        }
-
         launch(hyperfoilRunner, hyperfoilRunner::manage);
-
-        Compute.Launch benchmarkServerLaunch = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE)
-                .privateIp(SERVER_IP)
-                .nixosConfiguration(nixosConfigurations.get(BENCHMARK_BOOTSTRAP))
-                .consoleHistory(benchmarkServerConsoleHistory);
         bootstrap.awaitPublished();
-        benchmarkServer = benchmarkServerLaunch.launch();
-
-        for (Attachment attachment : factory.attachments) {
-            attachment.setUp(this);
-        }
-
+        benchmarkServer = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE).privateIp(SERVER_IP)
+                .nixosConfiguration(bootstrap).consoleHistory(benchmarkServerConsoleHistory).launch();
+        for (Attachment attachment : factory.attachments) attachment.setUp(this);
         benchmarkServer.awaitStartup();
         PhasedResource.PhaseLock.awaitAll(lifecycleLocks);
-
         started = true;
     }
 
-    private void sequencePublications() {
-        NixosCacheResource bootstrap = nixosConfigurations.get(BENCHMARK_BOOTSTRAP);
-        try {
-            bootstrap.awaitPublished();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return;
-        } catch (Exception e) {
-            LOG.warn("Failed to publish NixOS configuration {}", BENCHMARK_BOOTSTRAP, e);
-            return;
-        }
-
-        for (Map.Entry<String, NixosCacheResource> entry : nixosConfigurations.entrySet().stream()
-                .filter(entry -> !entry.getKey().equals(BENCHMARK_BOOTSTRAP))
-                .toList()) {
-            if (stopped || Thread.currentThread().isInterrupted()) {
-                return;
-            }
-            try {
-                entry.getValue().signalPublication();
-                entry.getValue().awaitPublished();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            } catch (Exception e) {
-                LOG.warn("Failed to publish NixOS configuration {}", entry.getKey(), e);
-            }
-        }
+    public boolean usable() {
+        return usable;
     }
 
-    @SuppressWarnings("EmptyTryBlock")
     @Override
     public void close() throws Exception {
-        stopped = true;
-        Thread publisher = publicationThread;
-        if (publisher != null) {
-            publisher.interrupt();
-        }
-        nixosConfigurations.values().forEach(NixosCacheResource::cancelPublicationWait);
-        try (AutoCloseable _ = super::close;
-             AutoCloseable _ = benchmarkServer;
-             benchmarkServerLog;
-             hyperfoilLock
-        ) {
+        usable = false;
+        bootstrap.cancelPublicationWait();
+        try (AutoCloseable base = super::close;
+             AutoCloseable server = benchmarkServer;
+             var log = benchmarkServerLog;
+             var lock = hyperfoilLock) {
         }
     }
 
-    /**
-     * Run the given benchmark on this infrastructure. The suite calls this sequentially for each case.
-     *
-     * @param outputDirectory The benchmark output directory
-     * @param run             The framework configuration to run
-     * @param loadVariant     The benchmark load (HTTP protocol settings, request info)
-     * @param configuration   Preselected system for this document/protocol case
-     * @param progress        Progress updater
-     */
-    public void run(Path outputDirectory, FrameworkRun run, LoadVariant loadVariant, FrameworkRun.NixosConfiguration configuration,
-                                 PhaseTracker.PhaseUpdater progress) throws Exception {
-        if (stopped) {
-            throw new InterruptedException("Already stopped");
+    private NixCacheAccess publish(Path system) throws Exception {
+        NixosCacheResource publication = publications.get(system);
+        if (publication == null) {
+            publication = factory.compute.outputCache(system);
+            publication.signalPublication();
+            // Publication belongs to the experiment thread so cancellation stops the build/copy too.
+            publication.manage();
+            publications.put(system, publication);
         }
-        try {
-            if (!started) {
-                start(progress);
-            }
+        return publication.awaitPublished();
+    }
 
-            Files.createDirectories(outputDirectory);
-            try (OutputListener.Write log = new OutputListener.Write(
-                    Files.newOutputStream(outputDirectory.resolve("server.log")))) {
-                boolean benchmarkLogActive = false;
-                try {
-                    switchOutput(marker("START"), log);
-                    benchmarkLogActive = true;
-                    activate(log, configuration.name(), progress);
-                    retry(() -> {
-                        try {
-                            run0(log, outputDirectory, run, loadVariant, progress);
-                        } catch (Exception e) {
-                            LOG.error("Benchmark run failed, may retry", e);
-                            throw e;
+    public void run(Path directory, PreparedExperiment experiment, PhaseTracker.PhaseUpdater progress) throws Exception {
+        if (!usable) {
+            throw new IllegalStateException("Environment requires recreation");
+        }
+        progress.update(BenchmarkPhase.PUBLISHING_CLOSURE);
+        NixCacheAccess cache = publish(experiment.system());
+        try (OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(directory.resolve("server.log")))) {
+            Exception failure = null;
+            boolean cleared = false;
+            try {
+                switchOutput(marker("START"), log);
+                progress.update(BenchmarkPhase.ACTIVATING_CONFIGURATION);
+                activate(cache, log);
+                try (CommandRunner client = benchmarkServer.connectSsh()) {
+                    try (var information = Files.newOutputStream(directory.resolve("machine-info.txt"))) {
+                        for (String file : List.of("/proc/version", "/proc/cpuinfo", "/proc/meminfo")) {
+                            information.write((file + "\n").getBytes(StandardCharsets.UTF_8));
+                            client.runAndCheck("cat -- " + Nix.shellQuote(file), new OutputListener.Write(information));
                         }
+                    }
+                    ArtifactCollector.clear(client, experiment.artifacts(), log);
+                    cleared = true;
+                    progress.update(BenchmarkPhase.STARTING_SERVER);
+                    client.runAndCheck("systemctl restart -- sut.service", log);
+                    factory.sutMonitor.monitorAndRun(client, directory, () -> {
+                        hyperfoilRunner.benchmark(directory, directory.resolve("hyperfoil.yaml"), progress);
                         return null;
                     });
-                } finally {
-                    if (benchmarkLogActive) {
-                        try {
-                            switchOutput(marker("STOP"), benchmarkServerLog);
+                }
+            } catch (Exception e) {
+                failure = e;
+                if (e instanceof EnvironmentInvalidException) {
+                    usable = false;
+                }
+            } finally {
+                boolean interrupted = Thread.interrupted();
+                try {
+                    if (cleared) {
+                        try (CommandRunner client = benchmarkServer.connectSsh()) {
+                            try {
+                                client.runAndCheck("systemctl stop -- sut.service", log);
+                            } catch (Exception e) {
+                                failure = combine(failure, e);
+                            }
+                            progress.update(BenchmarkPhase.COLLECTING_ARTIFACTS);
+                            try {
+                                ArtifactCollector.collect(client, directory, experiment.artifacts(), log);
+                            } catch (Exception e) {
+                                failure = combine(failure, e);
+                            }
                         } catch (Exception e) {
-                            LOG.warn("Failed to switch benchmark server output back to the central log", e);
+                            failure = combine(failure, e);
                         }
                     }
                     try {
-                        activate(log, BENCHMARK_BOOTSTRAP, progress);
+                        progress.update(BenchmarkPhase.RESTORING_BOOTSTRAP);
+                        activate(bootstrap.awaitPublished(), log);
                     } catch (Exception e) {
-                        stopped = true;
-                        LOG.warn("Failed to restore benchmark server bootstrap configuration", e);
+                        usable = false;
+                        failure = combine(failure, e);
+                    }
+                    try {
+                        switchOutput(marker("STOP"), benchmarkServerLog);
+                    } catch (Exception e) {
+                        LOG.warn("Could not finish console log routing", e);
+                    }
+                } finally {
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
                     }
                 }
             }
-        } catch (Exception e) {
-            // prevent reuse
-            stopped = true;
-            throw e;
+            if (failure != null) {
+                if (!usable) {
+                    throw new EnvironmentInvalidException("Infrastructure is unusable", failure);
+                }
+                throw failure;
+            }
         }
     }
 
-    private void switchOutput(String marker, OutputListener target) {
-        TokenRoutingOutputListener.Switch outputSwitch = benchmarkServerConsoleHistory.switchOn(marker, target);
-        try {
-            emitConsoleMarker(marker);
-        } catch (Exception e) {
-            LOG.debug("Marker command failed; waiting for console output", e);
+    private static Exception combine(Exception original, Exception next) {
+        if (original == null) {
+            return next;
         }
-        try {
-            outputSwitch.await(CONSOLE_STOP_TIMEOUT);
-        } catch (Exception e) {
-            outputSwitch.cancel(benchmarkServerLog);
-            throw e;
-        }
+        original.addSuppressed(next);
+        return original;
     }
 
-    private static String marker(String state) {
-        return "MICRONAUT_BENCHMARK_CONSOLE_" + state + "_" + java.util.UUID.randomUUID();
-    }
-
-    private void emitConsoleMarker(String marker) throws Exception {
-        String quotedMarker = "'" + marker.replace("'", "'\"'\"'") + "'";
-        try (CommandRunner client = benchmarkServer.connectSsh()) {
-            client.runAndCheck("printf '%s\\n' " + quotedMarker + " | systemd-cat");
-        }
-    }
-
-    private NixCacheAccess cacheAccess(String configuration) throws Exception {
-        NixosCacheResource resource = nixosConfigurations.get(configuration);
-        if (resource == null) {
-            throw new IllegalArgumentException("NixOS configuration was not prepared: " + configuration);
-        }
-        return resource.awaitPublished();
-    }
-
-    private void activate(OutputListener.Write log, String configuration, PhaseTracker.PhaseUpdater progress) throws Exception {
-        NixCacheAccess cache = cacheAccess(configuration);
-        progress.update(configuration.equals(BENCHMARK_BOOTSTRAP)
-                ? BenchmarkPhase.RESTORING_BOOTSTRAP
-                : BenchmarkPhase.ACTIVATING_CONFIGURATION);
-        log.println("----------------- NixOS deployment target: " + configuration);
+    private void activate(NixCacheAccess cache, OutputListener log) throws Exception {
         retry(() -> {
             try (CommandRunner client = benchmarkServer.connectSsh()) {
                 client.runAndCheck(Nix.activate(cache.readUri(), cache.defaultOutput()), log);
@@ -263,56 +193,33 @@ public final class Infrastructure extends AbstractInfrastructure {
         });
     }
 
-    private void run0(OutputListener.Write log, Path outputDirectory, FrameworkRun run, LoadVariant loadVariant,
-                      PhaseTracker.PhaseUpdater progress) throws Exception {
-        try (CommandRunner benchmarkServerClient = benchmarkServer.connectSsh()) {
-            // special PhaseUpdater that logs the current benchmark phase for reference.
-            progress = new PhaseTracker.DelegatePhaseUpdater(progress) {
-                String lastDisplay = null;
-
-                @Override
-                public void update(BenchmarkPhase phase, double percent, @Nullable String displayProgress) {
-                    if (!Objects.equals(displayProgress, lastDisplay)) {
-                        log.println("----------------- Benchmark progress changed to: " + displayProgress);
-                        lastDisplay = displayProgress;
-                    }
-                    super.update(phase, percent, displayProgress);
-                }
-            };
-
-            PhaseTracker.PhaseUpdater finalProgress = progress;
-            factory.sutMonitor.monitorAndRun(
-                    benchmarkServerClient,
-                    outputDirectory,
-                    () -> {
-                        run.setupAndRun(
-                                benchmarkServerClient,
-                                 outputDirectory,
-                                 log,
-                                 hyperfoilRunner.benchmarkClosure(outputDirectory, loadVariant.protocol(), loadVariant.definition()),
-                                 finalProgress);
-                        return null;
-                    }
-            );
+    private void switchOutput(String marker, OutputListener target) throws Exception {
+        var change = benchmarkServerConsoleHistory.switchOn(marker, target);
+        try {
+            try (CommandRunner client = benchmarkServer.connectSsh()) {
+                client.runAndCheck("printf '%s\\n' " + Nix.shellQuote(marker) + " | systemd-cat");
+            }
+            change.await(CONSOLE_STOP_TIMEOUT);
+        } catch (Exception e) {
+            change.cancel(benchmarkServerLog);
+            throw e;
         }
     }
 
+    private static String marker(String state) {
+        return "MICRONAUT_BENCHMARK_CONSOLE_" + state + "_" + UUID.randomUUID();
+    }
     @Indexed(Attachment.class)
     public interface Attachment {
+        String name();
         void setUp(Infrastructure infrastructure) throws Exception;
     }
-
     @Singleton
-    public record Factory(
-            AbstractInfrastructure.Factory baseFactory,
-            ResourceContext context,
-            Compute compute,
-            HyperfoilRunner.Factory hyperfoilRunnerFactory,
-            SutMonitor sutMonitor,
-            List<Attachment> attachments
-    ) {
-        Infrastructure create(OciLocation location, Path logDirectory, List<FrameworkRun.NixosConfiguration> nixosConfigurations) throws Exception {
-            return new Infrastructure(this, location, logDirectory, nixosConfigurations);
+    public record Factory(AbstractInfrastructure.Factory baseFactory, Compute compute,
+                          HyperfoilRunner.Factory hyperfoilRunnerFactory, SutMonitor sutMonitor,
+                          List<Attachment> attachments) {
+        Infrastructure create(OciLocation location, Path logDirectory) throws Exception {
+            return new Infrastructure(this, location, logDirectory);
         }
     }
 }

@@ -3,6 +3,7 @@
   imports = [ ./common.nix ./jvm-defaults.nix ];
 
   benchmark.suite = {
+    attachments = [ "postgresql" ];
     documents = [{
       name = "db";
       method = "GET";

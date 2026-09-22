@@ -1,6 +1,6 @@
 package io.micronaut.benchmark.http.plot;
 
-import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
+import io.micronaut.benchmark.api.BenchmarkStats;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -11,7 +11,7 @@ import java.util.Map;
 final class JfrSummary {
     final Map<String, PhaseSummary> phases = new HashMap<>();
 
-    PhaseSummary phase(HyperfoilRunner.StatsAll.Stats phase) {
+    PhaseSummary phase(BenchmarkStats.Stats phase) {
         return phases.computeIfAbsent(phase.name(), k -> new PhaseSummary(Duration.ofNanos(phase.total().summary().endTime - phase.total().summary().startTime)));
     }
 

@@ -1,10 +1,13 @@
 package io.micronaut.benchmark.loadgen.oci.resource;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -13,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PhasePollerTest {
+    @TempDir
+    Path temporary;
     @Test
     void replacementRemainsSubscribedWhenAnInFlightPollCompletesThePreviousSubscription() throws Exception {
         CountDownLatch oldPollStarted = new CountDownLatch(1);
@@ -31,11 +36,11 @@ class PhasePollerTest {
             }
             return Phase.TARGET;
         }, List::<String>of, summary -> summary, summary -> Phase.TARGET);
-        ResourceContext context = new ResourceContext(null);
+        ResourceContext context = new ResourceContext(null, temporary);
         TestResource oldResource = new TestResource(context);
         poller.subscribeUntil("resource", oldResource, Phase.COMPLETE);
 
-        try (ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<?> oldPoll = executor.submit(poller::poll);
             assertTrue(oldPollStarted.await(5, TimeUnit.SECONDS));
 
@@ -60,7 +65,7 @@ class PhasePollerTest {
                 summary -> summary,
                 summary -> Phase.COMPLETE
         );
-        ResourceContext context = new ResourceContext(null);
+        ResourceContext context = new ResourceContext(null, temporary);
         TestResource original = new TestResource(context);
         TestResource replacement = new TestResource(context);
         poller.subscribeUntil("resource", original, Phase.COMPLETE);

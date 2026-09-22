@@ -17,6 +17,12 @@ let
   };
 in {
   options.benchmark.suite = {
+    attachments = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = "Infrastructure attachments required by this suite.";
+    };
+
     documents = mkOption {
       type = types.listOf benchmarkTypes.request;
       default = [ ];

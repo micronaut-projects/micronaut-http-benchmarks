@@ -48,17 +48,16 @@ public final class NixosCacheResource extends PhasedResource<NixosCacheResource.
 
     public void manage() throws Exception {
         setPhase(Phase.Uploading);
-        try {
+        try (var log = new OutputListener.Stream(List.of(new OutputListener.Log(LOG, Level.DEBUG)))) {
             URI writeCacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectReadWrite);
             URI readCacheUri = buildPreauthenticatedRequest(CreatePreauthenticatedRequestDetails.AccessType.AnyObjectRead);
-            String defaultOutput = context.clients.nix().resolveOutput(
-                    new OutputListener.Log(LOG, Level.DEBUG), installable).toString();
+            String defaultOutput = context.clients.nix().resolveOutput(log, installable).toString();
             cacheAccess = new NixCacheAccess(defaultOutput, readCacheUri);
             setPhase(Phase.Available);
             awaitPublicationSignal();
             NixCacheAccess cache = cacheAccess();
             Path output = context.clients.nix().buildAndUploadOutputCache(
-                    new OutputListener.Log(LOG, Level.DEBUG),
+                    log,
                     writeCacheUri,
                     installable
             );

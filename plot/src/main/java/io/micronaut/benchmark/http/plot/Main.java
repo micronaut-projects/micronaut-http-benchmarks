@@ -8,13 +8,12 @@ import com.oracle.bmc.objectstorage.model.PreauthenticatedRequest;
 import com.oracle.bmc.objectstorage.requests.CreatePreauthenticatedRequestRequest;
 import com.oracle.bmc.objectstorage.requests.PutObjectRequest;
 import io.hyperfoil.http.statistics.HttpStats;
-import io.micronaut.benchmark.loadgen.oci.HyperfoilRunner;
-import io.micronaut.benchmark.loadgen.oci.SuiteRunner;
+import io.micronaut.benchmark.api.BenchmarkResult;
+import io.micronaut.benchmark.api.BenchmarkStats;
 import one.jfr.JfrReader;
 import one.jfr.event.CPULoad;
 import one.jfr.event.Event;
 import one.jfr.event.ExecutionSample;
-import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -43,10 +42,10 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public class Main {
-    private static final Path OUTPUT = Path.of("output");
+    private final Path output;
 
     static final List<Discriminator> DISCRIMINATORS = List.of(
-            new Discriminator("type", SuiteRunner.BenchmarkParameters::type),
+            new Discriminator("type", BenchmarkResult::type),
             new Discriminator("Hotspot options", p -> p.parameters() == null ? "N/A" : Objects.toString(((Map<?, Object>) p.parameters()).getOrDefault("hotspotOptions", "N/A"))),
             new Discriminator("Hotspot version", p -> {
                 Map<?, ?> parameters = (Map<?, ?>) p.parameters();
@@ -74,19 +73,19 @@ public class Main {
     private final ObjectMapper mapper = JsonMapper.builder()
             .registerSubtypes(HttpStats.class)
             .build();
-    private final Map<String, HyperfoilRunner.StatsAll> benchmarkOutput = new HashMap<>();
+    private final Map<String, BenchmarkStats> benchmarkOutput = new HashMap<>();
     private final double minTime;
     private final double maxTime = Duration.ofMillis(200).toNanos();
-    private final List<SuiteRunner.BenchmarkParameters> index;
-    private final Map<SuiteRunner.BenchmarkParameters, JfrSummary> jfrSummaries;
-    private final Map<SuiteRunner.BenchmarkParameters, ProfileConverter.ProfileArtifacts> profiles;
+    private final List<BenchmarkResult> index;
+    private final Map<BenchmarkResult, JfrSummary> jfrSummaries;
+    private final Map<BenchmarkResult, ProfileConverter.ProfileArtifacts> profiles;
 
-    private Main() throws IOException, InterruptedException {
-        index = mapper.readValue(OUTPUT.resolve("index.json").toFile(), new TypeReference<>() {
-        });
-        index.sort(Comparator.comparing(SuiteRunner.BenchmarkParameters::name));
+    private Main(Path output) throws IOException, InterruptedException {
+        this.output = output.toAbsolutePath().normalize();
+        index = new ArrayList<>(Results.index(this.output));
+        index.sort(Comparator.comparing(BenchmarkResult::name));
         index.removeIf(p -> {
-            HyperfoilRunner.StatsAll statsAll = getBenchmark(p.name());
+            BenchmarkStats statsAll = getBenchmark(p.name());
             if (statsAll.findPhase("main/0") == null) {
                 System.out.println("Benchmark run " + p.name() + " failed");
                 return true;
@@ -98,16 +97,16 @@ public class Main {
                 .map(p -> getBenchmark(p.name()))
                 .flatMap(s -> s.stats().stream())
                 .flatMap(s -> s.histogram().percentiles().stream())
-                .mapToDouble(HyperfoilRunner.StatsAll.Percentile::to)
-                .min().orElseThrow();
+                .mapToDouble(BenchmarkStats.Percentile::to)
+                .min().orElseThrow(() -> new IllegalArgumentException("No completed measurement data in " + output));
 
         profiles = new HashMap<>();
         jfrSummaries = new HashMap<>();
-        for (SuiteRunner.BenchmarkParameters parameters : index) {
+        for (BenchmarkResult parameters : index) {
             if (parameters.profiling() == null) {
                 continue;
             }
-            Path directory = OUTPUT.resolve(parameters.name());
+            Path directory = output.resolve(parameters.name());
             ProfileConverter.ProfileArtifacts profile;
             try {
                 profile = ProfileConverter.convert(directory, parameters.profiling());
@@ -131,7 +130,7 @@ public class Main {
                         // from JfrToHeatmap
                         long msFromStart = (event.time - jfr.chunkStartTicks) * 1_000 / jfr.ticksPerSec;
                         Instant time = Instant.ofEpochMilli(jfr.chunkStartNanos / 1_000_000 + msFromStart);
-                        HyperfoilRunner.StatsAll.Stats phase = getBenchmark(parameters.name()).findPhaseContaining(time);
+                        BenchmarkStats.Stats phase = getBenchmark(parameters.name()).findPhaseContaining(time);
 
                         if (phase != null) {
                             if (event instanceof ExecutionSample es) {
@@ -148,15 +147,15 @@ public class Main {
         }
     }
 
-    private HyperfoilRunner.StatsAll getBenchmark(String benchmarkName) {
+    private BenchmarkStats getBenchmark(String benchmarkName) {
         return benchmarkOutput.computeIfAbsent(benchmarkName, n -> {
-            Path path = OUTPUT.resolve(n).resolve("output.json");
-            return mapper.readValue(path.toFile(), HyperfoilRunner.StatsAll.class);
+            Path path = output.resolve(n).resolve("output.json");
+            return mapper.readValue(path.toFile(), BenchmarkStats.class);
         });
     }
 
     @SuppressWarnings("unchecked")
-    private static String compileConfiguration(SuiteRunner.BenchmarkParameters parameters, String name) {
+    private static String compileConfiguration(BenchmarkResult parameters, String name) {
         Map<String, Object> map = (Map<String, Object>) parameters.parameters();
         if (map == null) {
             return "";
@@ -218,7 +217,7 @@ public class Main {
                 .maxCpu(maxCpu)
                 .metricAttributes(metricAttributes);
 
-        for (SuiteRunner.BenchmarkParameters parameters : index) {
+        for (BenchmarkResult parameters : index) {
             loadGroup.add(
                     parameters,
                     getBenchmark(parameters.name()),
@@ -288,10 +287,14 @@ public class Main {
     }
 
     public static void main(String[] args) throws Exception {
-        Main main = new Main();
+        generate(args.length == 0 ? Path.of("output") : Path.of(args[0]), args.length > 1 && args[1].equals("--upload"));
+    }
+
+    public static Path generate(Path directory, boolean upload) throws Exception {
+        Main main = new Main(directory);
         String html = main.plot();
 
-        Path outputRoot = OUTPUT.toAbsolutePath().normalize();
+        Path outputRoot = directory.toAbsolutePath().normalize();
         Path plotFile = outputRoot.resolve("plot.html");
         Files.writeString(plotFile, html);
 
@@ -310,6 +313,10 @@ public class Main {
             if (profile.heatmap() != null && Files.exists(profile.heatmap())) {
                 resultFiles.add(profile.heatmap());
             }
+        }
+
+        if (!upload) {
+            return plotFile;
         }
 
         System.out.println("Creating plot.zip…");
@@ -359,6 +366,7 @@ public class Main {
             System.out.println("Result URI: " + uri);
             Runtime.getRuntime().exec(new String[]{"firefox", uri});
         }
+        return plotFile;
     }
 
     private static Path requireOutputPath(Path outputRoot, Path file) {
@@ -371,11 +379,11 @@ public class Main {
 
     record Discriminator(
             String name,
-            Function<SuiteRunner.BenchmarkParameters, String> extractor,
+            Function<BenchmarkResult, String> extractor,
             List<String> order,
             boolean selectWithDropdown
     ) {
-        Discriminator(String name, Function<SuiteRunner.BenchmarkParameters, String> extractor) {
+        Discriminator(String name, Function<BenchmarkResult, String> extractor) {
             this(name, extractor, List.of(), false);
         }
 

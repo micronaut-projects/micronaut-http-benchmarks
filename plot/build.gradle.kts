@@ -15,7 +15,7 @@ java {
 
 dependencies {
     implementation(libs.chartjs)
-    implementation(project(":load-generator-oci"))
+    implementation(project(":benchmark-api"))
     implementation(libs.async.profiler.jfr.converter)
     implementation(libs.openjdk.jmc.flightrecorder.writer)
     implementation("io.micronaut.oraclecloud:micronaut-oraclecloud-bmc-objectstorage")

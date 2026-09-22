@@ -1,6 +1,6 @@
 package io.micronaut.benchmark.http.plot;
 
-import io.micronaut.benchmark.loadgen.oci.FrameworkRun;
+import io.micronaut.benchmark.api.ProfileMetadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,7 +19,7 @@ final class ProfileConverterTest {
 
     @Test
     void missingOrEmptyDeclaredSupplementalArtifactsAreRejected() throws Exception {
-        FrameworkRun.Profiling profiling = new FrameworkRun.Profiling(
+        ProfileMetadata profiling = new ProfileMetadata(
                 "perf", "profile.data", "profile.jit.data", "profile-symbols");
         IOException missingInjected = assertThrows(IOException.class, () ->
                 ProfileConverter.perfScriptCommand(temporaryDirectory, profiling, temporaryDirectory.resolve("profile.data")));
@@ -67,13 +67,14 @@ final class ProfileConverterTest {
         Files.writeString(injected, "profile");
         Files.createDirectories(kallsyms.getParent());
         Files.writeString(kallsyms, "ffffffff81000000 T _stext\n");
-        FrameworkRun.Profiling profiling = new FrameworkRun.Profiling(
+        ProfileMetadata profiling = new ProfileMetadata(
                 "perf", "profile.data", "profile.jit.data", "profile-symbols");
 
+        Path perf = Files.createDirectories(directory.resolve(".nix/experiment/perf"));
         List<String> command = ProfileConverter.perfScriptCommand(directory, profiling, raw);
 
         assertEquals(List.of(
-                "shell", ".#profiling-perf", "--command", "perf", "script", "--ns",
+                "shell", perf.toRealPath().toString(), "--command", "perf", "script", "--ns",
                 "--symfs", symbols.toAbsolutePath().normalize().toString(),
                 "--kallsyms", kallsyms.toAbsolutePath().normalize().toString(),
                 "-i", injected.toAbsolutePath().normalize().toString()), command);
@@ -82,12 +83,13 @@ final class ProfileConverterTest {
     @Test
     void rawOnlyPerfCommandDoesNotRequireSupplementalArtifacts() throws Exception {
         Path raw = temporaryDirectory.resolve("profile.data");
-        FrameworkRun.Profiling profiling = new FrameworkRun.Profiling("perf", "profile.data");
+        ProfileMetadata profiling = new ProfileMetadata("perf", "profile.data");
 
+        Path perf = Files.createDirectories(temporaryDirectory.resolve(".nix/experiment/perf"));
         List<String> command = ProfileConverter.perfScriptCommand(temporaryDirectory, profiling, raw);
 
         assertEquals(List.of(
-                "shell", ".#profiling-perf", "--command", "perf", "script", "--ns",
+                "shell", perf.toRealPath().toString(), "--command", "perf", "script", "--ns",
                 "-i", raw.toAbsolutePath().normalize().toString()), command);
     }
 
@@ -105,7 +107,7 @@ final class ProfileConverterTest {
                  84 schedule ([kernel.kallsyms])
                  80 root (app)
                 """);
-        FrameworkRun.Profiling profiling = new FrameworkRun.Profiling("perf", "profile.data");
+        ProfileMetadata profiling = new ProfileMetadata("perf", "profile.data");
 
         ProfileConverter.ProfileArtifacts artifacts =
                 ProfileConverter.convertPerfScript(temporaryDirectory, profiling, raw, perfScript);
@@ -142,7 +144,7 @@ final class ProfileConverterTest {
         Files.writeString(perfScript, " 7f orphan (lib.so)\n");
 
         IOException failure = assertThrows(IOException.class, () -> ProfileConverter.convertPerfScript(
-                temporaryDirectory, new FrameworkRun.Profiling("perf", "profile.data"), raw, perfScript));
+                temporaryDirectory, new ProfileMetadata("perf", "profile.data"), raw, perfScript));
 
         assertTrue(failure.getMessage().contains("line 1"));
         try (var files = Files.list(temporaryDirectory)) {
@@ -167,7 +169,7 @@ final class ProfileConverterTest {
                 """);
 
         IOException failure = assertThrows(IOException.class, () -> ProfileConverter.convertPerfScript(
-                temporaryDirectory, new FrameworkRun.Profiling("perf", "profile.data"), raw, perfScript));
+                temporaryDirectory, new ProfileMetadata("perf", "profile.data"), raw, perfScript));
 
         assertTrue(failure.getMessage().contains("sample 3"));
         assertTrue(Files.notExists(temporaryDirectory.resolve("flamegraph.html")));

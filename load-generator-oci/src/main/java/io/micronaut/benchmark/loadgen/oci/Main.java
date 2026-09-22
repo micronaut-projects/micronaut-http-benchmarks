@@ -1,12 +1,11 @@
 package io.micronaut.benchmark.loadgen.oci;
 
-import io.micronaut.context.ApplicationContext;
 import io.micronaut.runtime.Micronaut;
 
-public class Main {
-    public static void main(String[] args) throws Exception {
-        try (ApplicationContext ctx = Micronaut.run(args)) {
-            ctx.getBean(SuiteRunner.class).run();
-        }
+public final class Main {
+    public static void main(String[] args) {
+        var context = Micronaut.build(args).environments("daemon").start();
+        // Own the process lock before accepting work, even if no controller has been requested yet.
+        context.getBean(ExperimentQueue.class);
     }
 }

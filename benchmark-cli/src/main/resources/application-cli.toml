@@ -1,0 +1,8 @@
+[micronaut.http.services.benchmark-daemon]
+url = "http://127.0.0.1:7075"
+read-timeout = "4h"
+
+[micronaut.http.services.benchmark-daemon-probe]
+url = "http://127.0.0.1:7075"
+connect-timeout = "2s"
+read-timeout = "2s"
