@@ -49,6 +49,8 @@ dependencies {
     implementation(libs.agroal)
     implementation(mn.postgresql)
 
+    runtimeOnly("io.netty:netty-transport-native-io_uring::linux-x86_64")
+    runtimeOnly("io.netty:netty-transport-native-io_uring::linux-aarch_64")
     runtimeOnly(mn.snakeyaml)
     runtimeOnly(mn.logback.classic)
 

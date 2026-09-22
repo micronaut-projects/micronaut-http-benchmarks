@@ -56,7 +56,7 @@ let
           --replace-fail $'  server:\n' $'  server:\n    thread-selection: BLOCKING\n'
         ${lib.optionalString (threading == "loom-carrier") ''
           substituteInPlace src/main/resources/application.yml \
-            --replace-fail $'      default:\n        prefer-native-transport: true' $'      default:\n        loom-carrier: true\n        prefer-native-transport: true'
+            --replace-fail $'      default:\n' $'      default:\n        loom-carrier: true\n'
         ''}
       '';
       nativeBuildInputs = [ gradle pkgs.makeWrapper ];
@@ -98,6 +98,7 @@ in {
     };
     sut = {
       inherit package;
+      tlsHttp2 = true;
       executable = "micronaut-framework";
       description = if runtimeInfo.isJvm then "Micronaut Framework ${codec} benchmark server" else if runtimeInfo.isPgo then "Micronaut Framework PGO benchmark server" else "Micronaut Framework native benchmark server";
       environment = [ "MICRONAUT_SYSTEMD_NOTIFY_ENABLED=true" ];
@@ -106,6 +107,7 @@ in {
         typeSuffix = codec;
         parameters.codec = codec;
         parameters.threading = threading;
+        parameters.transport = "io-uring";
       };
     };
   };

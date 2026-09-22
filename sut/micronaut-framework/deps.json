@@ -1002,6 +1002,19 @@
    "jar": "sha256-aDc+xUTPdpuhe/LvRVFm2Y8sJg3/U27fNe9XBnqcFV8=",
    "pom": "sha256-2HlY2fXiteYiI/jHr3mHC5a5HryPt3uEZDKYn8txr3g="
   },
+  "io/netty#netty-transport-classes-io_uring/4.2.18.Final": {
+   "jar": "sha256-4ngg/maea18ZxOnQrNAUKvvicZx/Y4DmvuNX0NucWiY=",
+   "pom": "sha256-UeR3zqAN/oM7X3ZVC1aijHDyvFzNrifnMS9Rk5tJqyw="
+  },
+  "io/netty#netty-transport-native-io_uring/4.2.18.Final": {
+   "pom": "sha256-JPud/u4vCmPeq7wY0vWXRMOphmPlaD7725uozs+sbo8="
+  },
+  "io/netty#netty-transport-native-io_uring/4.2.18.Final/linux-aarch_64": {
+   "jar": "sha256-Lyy/Om3JlrS5VdpCsMaSq8pN/JPHvVsJ/u5UyU5Is5E="
+  },
+  "io/netty#netty-transport-native-io_uring/4.2.18.Final/linux-x86_64": {
+   "jar": "sha256-06jx3hjJELYpLb8hh9tgk7Jh6KdghtoOz88d7X6agKM="
+  },
   "io/netty#netty-transport-native-unix-common/4.2.18.Final": {
    "jar": "sha256-ytpwI9CRNq8ShRHKlEIdadyE0PH2TJ4fEnoScbtikyo=",
    "pom": "sha256-st/wNcZHlfOvG/5PxZ6tJzjge7lLKEOWyMF/CtP7Nd4="

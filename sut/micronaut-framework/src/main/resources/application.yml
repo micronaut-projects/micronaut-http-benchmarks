@@ -24,7 +24,7 @@ micronaut:
   netty:
     event-loops:
       default:
-        prefer-native-transport: true
+        transport: [io_uring]
   certificate:
     resource:
       benchmark:
