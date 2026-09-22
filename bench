@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+benchmark_main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+exec "$benchmark_main/benchmark-cli/build/install/benchmark-cli/bin/benchmark-cli" "$@"
