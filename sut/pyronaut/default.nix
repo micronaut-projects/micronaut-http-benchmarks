@@ -44,13 +44,7 @@ let
   };
   upstream = builtins.fetchGit {
     url = "ssh://git@github.com/micronaut-projects/pyronaut.git";
-    rev = "cb4fd7c31620697743f2cb1d035b27c06ef847c3";
-  };
-  micronautCore = pkgs.fetchFromGitHub {
-    owner = "micronaut-projects";
-    repo = "micronaut-core";
-    rev = "dfface2cc2178afdc141f21258af9d09d271de3f";
-    hash = "sha256-QR60jmPUqsVHFQPiv59wOXDKnJLXXEhTX+pksuzDVRw=";
+    rev = "c9c8bd4a16daa72529c684e7cd13de1d3e624a5c";
   };
   wheelGradleInit = pkgs.writeText "pyronaut-wheel.init.gradle" ''
     gradle.beforeProject { project ->
@@ -64,28 +58,25 @@ let
         }
     }
   '';
-  patchedUpstream = pkgs.applyPatches {
-    name = "pyronaut-patched";
-    src = upstream;
-    postPatch = ''
-      substituteInPlace settings.gradle.kts \
-        --replace-fail 'micronautBuild {' $'micronautBuild {\n    requiresDevelopmentVersion("micronaut-core", "5.2.x")'
-    '';
-  };
   runtime = config.benchmark.sut.runtime;
   isJvm = runtime == "hotspot";
   buildTarget = if isJvm then "jvm" else "native";
-  nativeImageArgs = config.benchmark.sut.runtimeInfo.nativeImageArgs ++ [
+  nativeImageInitArgs = [
+    # Micronaut 5.2 registers this converter in the build-time conversion service.
+    "--initialize-at-build-time=io.micronaut.http.server.cors.CorsOriginConverter"
+  ];
+  nativeImageArgs = config.benchmark.sut.runtimeInfo.nativeImageArgs ++ nativeImageInitArgs ++ [
     "--gc=G1"
     "-R:MaxHeapSize=12g"
     "-H:-GraalJITCompileAtRuntime"
     "-H:-RuntimeClassLoading"
   ];
   pythonSitePackages = "lib/python${pyronautPython.pythonVersion}/site-packages";
+  # Collect SDK dependencies once; apply the threading mode when building the SUT below.
   pyronaut = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     pname = "pyronaut";
-    version = "cb4fd7c31620697743f2cb1d035b27c06ef847c3";
-    src = patchedUpstream;
+    version = upstream.rev;
+    src = upstream;
 
     nativeBuildInputs = [ gradle pyronautPython pkgs.cacert pkgs.gnutar pkgs.stdenv.cc ];
 
@@ -116,20 +107,6 @@ let
       export PATH="$JAVA_HOME/bin:$PATH"
       export JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=$MITM_CACHE_HOST -Dhttp.proxyPort=$MITM_CACHE_PORT -Dhttps.proxyHost=$MITM_CACHE_HOST -Dhttps.proxyPort=$MITM_CACHE_PORT -Djavax.net.ssl.trustStore=$MITM_CACHE_KEYSTORE -Djavax.net.ssl.trustStorePassword=$MITM_CACHE_KS_PWD"
       mkdir -p "$HOME" "$TMPDIR" "$GRADLE_USER_HOME" "$TMPDIR/sdk" "$TMPDIR/m2"
-      cp -r ${micronautCore} "$TMPDIR/micronaut-core"
-      chmod -R u+w "$TMPDIR/micronaut-core"
-      cat > "$TMPDIR/micronaut-core/gradlew" <<'EOF'
-      #!/bin/sh
-      exec ${gradle}/bin/gradle "$@"
-      EOF
-      chmod +x "$TMPDIR/micronaut-core/gradlew"
-      gradle \
-        -p "$TMPDIR/micronaut-core" \
-        publishToMavenLocal \
-        --no-daemon \
-        --max-workers 4 \
-        -Poverride.libs.managed-graal=25.3.4.1 \
-        -Dmaven.repo.local="$TMPDIR/m2"
       gradle \
         :micronaut-pyronaut:prepareSdkMavenLocalEnvironment \
         :micronaut-pyronaut-dev:assemble \
@@ -137,8 +114,7 @@ let
         :micronaut-pyronaut-run-python:assemble \
         --no-daemon \
         --max-workers 4 \
-        -Plocal.git.micronaut-core="$TMPDIR/micronaut-core" \
-        -PpyronautNativeImageCiArgs=-H:NativeLinkerOption=-L${pkgs.zlib.static}/lib \
+        -PpyronautNativeImageCiArgs=${lib.escapeShellArg (lib.concatStringsSep " " ([ "-H:NativeLinkerOption=-L${pkgs.zlib.static}/lib" ] ++ nativeImageInitArgs))} \
         -Poverride.libs.managed-graal=25.3.4.1 \
         -Dmaven.repo.local="$TMPDIR/m2" \
         -Ppyronaut.sdk.mavenLocalRepository="$TMPDIR/m2"
@@ -147,7 +123,6 @@ let
         --no-daemon \
         --max-workers 4 \
         --init-script ${wheelGradleInit} \
-        -Plocal.git.micronaut-core="$TMPDIR/micronaut-core" \
         -Poverride.libs.managed-graal=25.3.4.1 \
         -Dmaven.repo.local="$TMPDIR/m2"
       ${pyronautPython}/bin/python -m pip install --no-deps --prefix "$TMPDIR/sdk" pyronaut/build/wheel/dist/pyronaut-*.whl
@@ -155,8 +130,10 @@ let
       cat > "$HOME/.pyronaut/settings.toml" <<EOF
       [native-images]
       base-url = "$PWD"
-      version = "0.0.2-SNAPSHOT"
+      version = "0.0.4-SNAPSHOT"
       EOF
+      # The Java installer also keeps caches beneath user.home.
+      export JAVA_TOOL_OPTIONS="$JAVA_TOOL_OPTIONS -Duser.home=$HOME"
       export PYTHONPATH="$TMPDIR/sdk/lib/python${pyronautPython.pythonVersion}/site-packages"
       "$TMPDIR/sdk/bin/pyronaut" setup \
         --local-repository "$TMPDIR/m2" \
@@ -164,7 +141,7 @@ let
       export PYRONAUT_LOCAL_REPOSITORY="$TMPDIR/m2"
       cp -r ${appSource} benchmark-app
       chmod -R u+w benchmark-app
-      ${configureThreading}install -Dm644 ${tls}/server.p12 benchmark-app/config/server.p12
+      install -Dm644 ${tls}/server.p12 benchmark-app/config/server.p12
       "$TMPDIR/sdk/bin/pyronaut" install \
         --project-dir "$PWD/benchmark-app" \
         --local-repository "$TMPDIR/m2"
@@ -187,8 +164,8 @@ let
   });
   sut = pkgs.stdenvNoCC.mkDerivation {
     pname = "pyronaut-benchmark-${buildTarget}";
-    version = "cb4fd7c31620697743f2cb1d035b27c06ef847c3";
-    src = patchedUpstream;
+    version = upstream.rev;
+    src = upstream;
 
     nativeBuildInputs = [ pkgs.gnutar pkgs.makeWrapper pkgs.stdenv.cc ];
     dontStrip = config.benchmark.sut.runtimeInfo.keepDebugSymbols;
@@ -198,6 +175,7 @@ let
       export HOME="$TMPDIR/home"
       export TMPDIR="$TMPDIR/tmp"
       export JAVA_HOME=${graalvm}
+      export JAVA_TOOL_OPTIONS="-Duser.home=$HOME"
       export PATH="$JAVA_HOME/bin:$PATH"
       mkdir -p "$HOME" "$TMPDIR"
       mkdir "$TMPDIR/pyronaut"
@@ -228,12 +206,18 @@ let
           --offline \
           --project-dir "$PWD/benchmark-app"
       '' else ''
+        # The launcher probes Truffle through its runtime JAR class loader.
+        # Resolve that probe to the compiled class with runtime class loading disabled.
+        cat > truffle-reflect-config.json <<'EOF'
+        [{"name":"com.oracle.truffle.api.Truffle"}]
+        EOF
         ${pyronautPython}/bin/python "$TMPDIR/pyronaut/sdk/bin/pyronaut" build \
           --native \
           --offline \
           --project-dir "$PWD/benchmark-app" \
           -- \
           --no-sbom \
+          -H:ReflectionConfigurationFiles="$PWD/truffle-reflect-config.json" \
           -H:NativeLinkerOption=-L${pkgs.zlib.static}/lib ${lib.concatMapStringsSep " " lib.escapeShellArg nativeImageArgs}
       ''}
       test -f benchmark-app/dist/pyronaut_benchmark-*.whl
