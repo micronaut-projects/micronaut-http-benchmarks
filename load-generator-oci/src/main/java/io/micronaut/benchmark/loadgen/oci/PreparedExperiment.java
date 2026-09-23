@@ -28,6 +28,11 @@ public record PreparedExperiment(Path system, List<Artifact> artifacts, Experime
         for (String file : List.of("metadata.json", "hyperfoil.yaml")) {
             Files.copy(output.resolve(file), resultDirectory.resolve(file));
         }
+        Path data = output.resolve("hyperfoil-data");
+        if (Files.exists(data)) {
+            // Retain immutable payload files through the experiment's Nix closure.
+            Files.createSymbolicLink(resultDirectory.resolve("hyperfoil-data"), data.toRealPath());
+        }
         return new PreparedExperiment(system, artifacts, requirements);
     }
 

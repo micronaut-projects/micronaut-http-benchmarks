@@ -103,8 +103,10 @@ existing infrastructure. Batches do not replace it. Results use the same per-inv
 
 Benchmark flakes expose `lib.catalog` for discovery and
 `lib.mkExperiment { suite; run; protocol; document; rate; warmupDuration ? "60s"; benchmarkDuration ? "60s"; full ? false; }`.
-The output contains `system`, `hyperfoil.yaml`, `artifacts.json`, `requirements.json`, and opaque `metadata.json`; perf
-experiments also retain `perf`.
+The output contains `system`, `hyperfoil.yaml`, `artifacts.json`, `requirements.json`, and opaque `metadata.json`.
+An optional `hyperfoil-data/` directory supplies files referenced by Hyperfoil
+`body.fromFile` (paths relative to that directory). Payload files are retained in the Nix closure and uploaded with the
+benchmark definition. Perf experiments also retain `perf`.
 
 The daemon accepts `{ derivation, output, outputRoot, annotations }` and builds that derivation without reevaluating the
 caller's checkout. It serializes deployment, execution, collection, and bootstrap reset. Artifact entries declare

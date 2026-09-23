@@ -166,7 +166,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         awaitPhase(HyperfoilPhase.READY);
         String effective = benchmarkDefinition(workload);
         Files.writeString(outputDirectory.resolve("hyperfoil-effective.yaml"), effective);
-        Client.BenchmarkRef benchmarkRef = client.register(effective, Map.of(), null, null);
+        Client.BenchmarkRef benchmarkRef = client.register(effective, benchmarkData(workload), null, null);
         Client.RunRef runRef = benchmarkRef.start("run", Map.of());
         try {
             collectRun(outputDirectory, runRef, progress);
@@ -320,6 +320,21 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             agents.put("agent" + i, agent);
         }
         return agents;
+    }
+
+    private static Map<String, byte[]> benchmarkData(Path workload) throws IOException {
+        Path directory = workload.resolveSibling("hyperfoil-data");
+        if (!Files.exists(directory)) {
+            return Map.of();
+        }
+        Map<String, byte[]> data = new LinkedHashMap<>();
+        try (var files = Files.walk(directory.toRealPath())) {
+            Path root = directory.toRealPath();
+            for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
+                data.put(root.relativize(file).toString().replace('\\', '/'), Files.readAllBytes(file));
+            }
+        }
+        return data;
     }
 
     private String benchmarkDefinition(Path workload) throws Exception {
