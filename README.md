@@ -192,6 +192,11 @@ the configured `micronaut.python.pool` properties: pooling is enabled, `size = 0
 available processors for the shared pool, and `max-event-loop-contexts = 0` allows a dedicated Python context
 for every event loop. Each context has its own GIL.
 
+Pyronaut's SDK and benchmark app use Micronaut Core built from the source revision pinned in
+`sut/pyronaut/default.nix`. Results record `micronautCoreRevision` and `micronautCoreVersion` separately
+from Pyronaut's `sourceRevision`. When updating the core pin, refresh Pyronaut's dependency lock and
+run all four smoke checks below.
+
 ## Smoke checks
 
 The four Pyronaut checks exercise the status and search endpoints over HTTP/1 and HTTPS/2:

@@ -57,6 +57,13 @@ let
     ref = "0.0.x";
     rev = "3c54ff1ec4113660b5794a28aea5bc5f748520c7";
   };
+  micronautCore = builtins.fetchGit {
+    url = "https://github.com/micronaut-projects/micronaut-core.git";
+    ref = "5.3.x";
+    rev = "56bd42481232212f7592c61bbc2d15eaa3150a30";
+  };
+  micronautCoreVersion = builtins.head (builtins.match "projectVersion=([^\n]+).*"
+    (builtins.readFile "${micronautCore}/gradle.properties"));
   wheelGradleInit = pkgs.writeText "pyronaut-wheel.init.gradle" ''
     gradle.beforeProject { project ->
         project.repositories {
@@ -113,6 +120,26 @@ let
     NIX_SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
     __structuredAttrs = true;
 
+    postPatch = ''
+      cp -r ${micronautCore} micronaut-core
+      chmod -R u+w micronaut-core
+      substituteInPlace gradle.properties \
+        --replace-fail 'pyronaut.micronaut.core.version=5.2.5' 'pyronaut.micronaut.core.version=${micronautCoreVersion}'
+      echo "local.git.micronaut-core=$PWD/micronaut-core" >> gradle.properties
+      cat >> settings.gradle.kts <<'EOF'
+
+      micronautBuild {
+          requiresDevelopmentVersion("micronaut-core", "5.3.x")
+      }
+      EOF
+      # The development-version helper generates core's catalog via its wrapper.
+      # Use the Nix-provided Gradle and JDK for that nested build too.
+      cat > micronaut-core/gradlew <<'EOF'
+      #!${pkgs.runtimeShell}
+      exec gradle "$@"
+      EOF
+    '';
+
     gradleUpdateScript = ''
       export out="$PWD/pyronaut.tar"
       ${finalAttrs.buildPhase}
@@ -129,22 +156,30 @@ let
       export PATH="$JAVA_HOME/bin:$PATH"
       export JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=$MITM_CACHE_HOST -Dhttp.proxyPort=$MITM_CACHE_PORT -Dhttps.proxyHost=$MITM_CACHE_HOST -Dhttps.proxyPort=$MITM_CACHE_PORT -Djavax.net.ssl.trustStore=$MITM_CACHE_KEYSTORE -Djavax.net.ssl.trustStorePassword=$MITM_CACHE_KS_PWD"
       mkdir -p "$HOME" "$TMPDIR" "$GRADLE_USER_HOME" "$TMPDIR/sdk" "$TMPDIR/m2"
+      # The Python installer resolves Maven artifacts outside the composite build.
+      gradle -p micronaut-core publishToMavenLocal \
+        --no-daemon \
+        --max-workers 4 \
+        -Dmaven.repo.local="$TMPDIR/m2"
       gradle \
         :micronaut-pyronaut:prepareSdkMavenLocalEnvironment \
-        :micronaut-pyronaut-dev:assemble \
-        :micronaut-pyronaut-run:assemble \
-        :micronaut-pyronaut-run-python:assemble \
         --no-daemon \
         --max-workers 4 \
         -PpyronautNativeImageCiArgs=${lib.escapeShellArg (lib.concatStringsSep " " ([ "-H:NativeLinkerOption=-L${pkgs.zlib.static}/lib" ] ++ nativeImageInitArgs))} \
         -Poverride.libs.managed-graal=${graalvm.version} \
         -Dmaven.repo.local="$TMPDIR/m2" \
         -Ppyronaut.sdk.mavenLocalRepository="$TMPDIR/m2"
+      # Repository preparation declares all of m2 as an output. Package the SDK
+      # separately so consumers of the locally built core have no overlapping outputs.
       gradle \
+        :micronaut-pyronaut-dev:assemble \
+        :micronaut-pyronaut-run:assemble \
+        :micronaut-pyronaut-run-python:assemble \
         :micronaut-pyronaut:buildSdkWheel \
         --no-daemon \
         --max-workers 4 \
         --init-script ${wheelGradleInit} \
+        -PpyronautNativeImageCiArgs=${lib.escapeShellArg (lib.concatStringsSep " " ([ "-H:NativeLinkerOption=-L${pkgs.zlib.static}/lib" ] ++ nativeImageInitArgs))} \
         -Poverride.libs.managed-graal=${graalvm.version} \
         -Dmaven.repo.local="$TMPDIR/m2"
       ${pyronautPython}/bin/python -m pip install --no-deps --prefix "$TMPDIR/sdk" pyronaut/build/wheel/dist/pyronaut-*.whl
@@ -295,6 +330,8 @@ in {
           parameters.contextPoolSize = toString contextPool.size;
           parameters.maxEventLoopContexts = toString contextPool.max-event-loop-contexts;
           parameters.sourceRevision = upstream.rev;
+          parameters.micronautCoreRevision = micronautCore.rev;
+          parameters.micronautCoreVersion = micronautCoreVersion;
           parameters.graalvm = graalvm.version;
         };
       };
