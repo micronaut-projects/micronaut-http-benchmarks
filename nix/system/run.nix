@@ -37,7 +37,8 @@ let
   profilingLauncher = pkgs.writeShellScript "benchmark-profile-${cfg.run.name}" (if runtimeProjection.isNative then ''
     exec ${pkgs.linuxPackages.perf}/bin/perf record -k 1 -F 99 -e cpu-clock --call-graph fp -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
   '' else ''
-    exec ${pkgs.py-spy}/bin/py-spy record --rate 1 --format raw --subprocesses -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
+    # Suspending worker processes while sampling can distort tail latency even at 1 Hz.
+    exec ${pkgs.py-spy}/bin/py-spy record --rate 1 --nonblocking --format raw --subprocesses -o ${lib.escapeShellArg profilingPath} -- ${lib.escapeShellArg sutCommand}
   '');
   nativeProfileCleanup = pkgs.writeShellScript "benchmark-clean-native-profile-${cfg.run.name}" ''
     set -eu

@@ -97,6 +97,11 @@ validation result and the logical run completed successfully. With two repetitio
 Step size is search resolution, not statistical confidence or a significance test. Comparisons check workload, SLA,
 protocol settings, machines, profiling, and search settings; different discovered rates are expected.
 
+Python profiling uses `py-spy --nonblocking` at one sample per second. Blocking sampling suspends worker processes
+and can introduce tail-latency spikes even at this low frequency. Nonblocking sampling avoids those pauses, at the
+cost of occasional missing or partial stack samples. When investigating unstable Python latency, compare with
+profiling disabled before relaxing the SLA; profiling overhead is still possible in nonblocking mode.
+
 ## Saved results and analysis
 
 The root retains the immutable experiment link, `run.json`, `metadata.json`, `search.json`, and `throughput.json`.
