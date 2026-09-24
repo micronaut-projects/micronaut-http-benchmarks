@@ -73,7 +73,7 @@ final class PerfScriptParserTest {
     void parsesDefaultHeaderWithPeriodAndNoPrintedCpu() throws Exception {
         List<PerfScriptParser.Sample> samples = new ArrayList<>();
         PerfScriptParser.parse(new BufferedReader(new StringReader("""
-                python worker 4062 3497.040185: 10101010 cpu-clock:
+                python worker 4062 3497.040185: 10101010 cpu-clock:\s\t
                  7f leaf (lib.so)
                 """)), samples::add);
 

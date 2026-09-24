@@ -31,7 +31,8 @@ final class PerfScriptParser {
             }
 
             Matcher matcher = HEADER.matcher(line.stripLeading());
-            if (matcher.matches()) {
+            // Headers end in a colon; avoid expensive regex backtracking over long stack-frame symbols.
+            if (line.stripTrailing().endsWith(":") && matcher.matches()) {
                 header = emit(header, frames, consumer, lineNumber);
                 header = parseHeader(matcher, lineNumber);
             } else if (Character.isWhitespace(line.charAt(0))) {
