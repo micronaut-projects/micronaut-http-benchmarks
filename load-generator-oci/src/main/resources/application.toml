@@ -28,7 +28,7 @@ max-concurrent-captures=4
 
 # configuration for the hyperfoil cluster
 [hyperfoil]
-agent-count=2
+agent-count=4
 
 [perf-stat]
 enabled=false

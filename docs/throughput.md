@@ -74,10 +74,13 @@ physical connection count, allowing HTTP/2 multiplexing. Session exhaustion fail
 two-stage search when discovery has preceding passes. The ceiling affects Hyperfoil's preallocated session capacity;
 use an appropriate ceiling for the available agent resources.
 
-Hyperfoil reserves pools for all planned phases before starting the sweep. In verification, the default 1,000,000 RPS
-ceiling with factor 2 exhausted the configured 16 GiB agents during initialization. This is an invalid generator run,
-not evidence of SUT overload. A smaller explicit ceiling (for example `--max-rate 200000`) or larger agents may be
-needed; the protocol never silently lowers the requested ceiling or session factor.
+Hyperfoil reserves pools for all planned phases before starting the sweep. The cluster defaults to four 32 GiB agents;
+the runner assigns each a 25 GiB Java heap (80% of VM memory, rounded down). The previous two 16 GiB agents exhausted
+their 12 GiB heaps during initialization, both at the default 1,000,000 RPS ceiling and during thorough validation
+with a 200,000 RPS ceiling. Capacity depends on the sum of all phases' session limits, so a dense validation sweep can
+require more memory than discovery despite its lower maximum rate. Heap exhaustion is an invalid generator run,
+not evidence of SUT overload. Size the rate ceiling and sweep for the available resources; the protocol never silently
+lowers the requested ceiling or session factor. The increased cluster capacity still requires benchmark verification.
 
 Only validation establishes throughput:
 

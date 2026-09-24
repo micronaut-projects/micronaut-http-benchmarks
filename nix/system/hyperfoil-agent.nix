@@ -22,7 +22,7 @@ in
   benchmark.oci.instance = {
     shape = "VM.Standard.E5.Flex";
     ocpus = 8;
-    memoryInGb = 16;
+    memoryInGb = 32;
     platform = "x86_64-linux";
     diskPerformanceUnits = 80;
   };
