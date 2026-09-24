@@ -11,7 +11,6 @@ repositories {
 
 micronaut {
     runtime("netty")
-    ignoredAutomaticDependencies.add("io.micronaut.serde:micronaut-serde-processor")
     testRuntime("junit5")
     processing {
         incremental(true)
@@ -38,12 +37,9 @@ if (nativeBuild) {
     }
 }
 
-val codec = providers.gradleProperty("codec").orElse("jackson-databind").get()
-require(codec in setOf("jackson-databind", "micronaut-serialization")) {
-    "codec must be one of: jackson-databind, micronaut-serialization"
-}
-
 dependencies {
+    annotationProcessor(mn.micronaut.serde.processor)
+    implementation(mn.micronaut.serde.jackson)
     implementation(mn.micronaut.http.client)
     implementation("io.projectreactor:reactor-core")
     implementation(libs.agroal)
@@ -56,17 +52,6 @@ dependencies {
 
     testImplementation(mn.micronaut.test.junit5)
     testRuntimeOnly(mn.junit.platform.launcher)
-
-    when (codec) {
-        "jackson-databind" -> {
-            implementation(mn.micronaut.jackson.databind)
-            implementation(mn.micronaut.serde.api)
-        }
-        "micronaut-serialization" -> {
-            implementation(mn.micronaut.serde.jackson)
-            annotationProcessor(mn.micronaut.serde.processor)
-        }
-    }
 }
 
 java {

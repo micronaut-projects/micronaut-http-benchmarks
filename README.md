@@ -3,6 +3,8 @@
 Suites, workloads, and deployable NixOS systems are defined in `nix/`. The Micronaut CLI resolves experiment
 derivations; the Micronaut daemon executes them on warm OCI infrastructure.
 
+All Micronaut Framework benchmarks use Micronaut Serialization for JSON encoding and decoding.
+
 ## Usage
 
 Both applications require Java 25 and Nix with flakes enabled.

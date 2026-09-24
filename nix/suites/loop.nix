@@ -13,9 +13,6 @@
     }];
     protocols.http1.enable = true;
     protocols.https1.enable = true;
-    runs.micronaut = {
-      imports = [ ../../sut/micronaut-framework ];
-      micronaut-framework.codec = "micronaut-serialization";
-    };
+    runs.micronaut.imports = [ ../../sut/micronaut-framework ];
   };
 }

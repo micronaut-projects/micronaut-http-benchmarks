@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  codec = config.micronaut-framework.codec;
+  codec = "micronaut-serialization";
   threading = config.micronaut-framework.threading;
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
@@ -57,17 +57,13 @@ let
         ++ lib.optionals (runtime == "native-pgo") [ "--pgo=${config.benchmark.sut.pgoProfile}/default.iprof" ])}" ];
       gradleUpdateTaskSuffix = lib.optionalString (runtime != "hotspot") " --dry-run";
       gradleUpdateScript = ''
-        gradle nixDownloadDeps -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
-        gradle nixDownloadDeps -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
+        gradle nixDownloadDeps ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
         # Resolving the app alone misses compile-only dependencies in the included core build.
-        gradle jar --max-workers 4 -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
-        gradle jar --max-workers 4 -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
-        ${lib.optionalString (runtime != "hotspot") ''gradle generateDynamicAccessMetadata -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}''}
-        gradle ${finalAttrs.gradleBuildTask} -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
-        ${lib.optionalString (runtime != "hotspot") ''gradle generateDynamicAccessMetadata -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}''}
-        gradle ${finalAttrs.gradleBuildTask} -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
+        gradle jar --max-workers 4 ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
+        ${lib.optionalString (runtime != "hotspot") ''gradle generateDynamicAccessMetadata ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}''}
+        gradle ${finalAttrs.gradleBuildTask} ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
       '';
-      gradleFlags = [ "-Pcodec=${codec}" ] ++ finalAttrs.nativeGradleFlags;
+      gradleFlags = finalAttrs.nativeGradleFlags;
       preBuild = ''
         install -Dm644 ${tls}/server.p12 src/main/resources/server.p12
       '' + lib.optionalString (threading != "default") ''
@@ -96,11 +92,6 @@ let
       '';
     });
 in {
-  options.micronaut-framework.codec = lib.mkOption {
-    type = lib.types.enum [ "jackson-databind" "micronaut-serialization" ];
-    default = "jackson-databind";
-    description = "The Micronaut Framework JSON codec used by this benchmark run.";
-  };
   options.micronaut-framework.threading = lib.mkOption {
     type = lib.types.enum [ "default" "virtual" "loom-carrier" ];
     default = "default";
