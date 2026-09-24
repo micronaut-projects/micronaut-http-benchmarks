@@ -27,7 +27,7 @@ let
         inherit protocol request;
         target = benchmarkTarget;
         settings = {
-          inherit (config.benchmark.hyperfoil) warmupDuration benchmarkDuration sessionLimitFactor;
+          inherit (config.benchmark.hyperfoil) warmupDuration warmupUsers benchmarkDuration sessionLimitFactor;
         };
       })) suite.documents)) suite.resolvedProtocols;
 in {
@@ -36,6 +36,11 @@ in {
       type = benchmarkTypes.duration;
       default = "1m";
       description = "Duration of the Hyperfoil warmup phase.";
+    };
+    warmupUsers = mkOption {
+      type = types.addCheck types.int (value: value > 0);
+      default = 200;
+      description = "Total concurrent clients across all agents during benchmark warmup.";
     };
     benchmarkDuration = mkOption {
       type = benchmarkTypes.duration;

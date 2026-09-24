@@ -3,6 +3,7 @@ package io.micronaut.benchmark.loadgen.oci;
 import io.micronaut.benchmark.api.Artifact;
 import io.micronaut.benchmark.api.ExperimentRequirements;
 import io.micronaut.benchmark.api.Nix;
+import io.micronaut.benchmark.api.ThroughputSearch;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
@@ -10,7 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
-public record PreparedExperiment(Path system, List<Artifact> artifacts, ExperimentRequirements requirements) {
+public record PreparedExperiment(Path system, List<Artifact> artifacts, ExperimentRequirements requirements, ThroughputSearch search) {
+    public PreparedExperiment(Path system, List<Artifact> artifacts, ExperimentRequirements requirements) {
+        this(system, artifacts, requirements, null);
+    }
     public static PreparedExperiment load(Path output, Path resultDirectory, JsonMapper mapper) throws IOException {
         Path system = Nix.checkStorePath(output.resolve("system").toRealPath().toString(), false);
         List<Artifact> artifacts = List.of(mapper.readValue(Files.readAllBytes(output.resolve("artifacts.json")), Artifact[].class));
@@ -33,7 +37,13 @@ public record PreparedExperiment(Path system, List<Artifact> artifacts, Experime
             // Retain immutable payload files through the experiment's Nix closure.
             Files.createSymbolicLink(resultDirectory.resolve("hyperfoil-data"), data.toRealPath());
         }
-        return new PreparedExperiment(system, artifacts, requirements);
+        ThroughputSearch search = null;
+        if (Files.exists(output.resolve("search.json"))) {
+            Files.copy(output.resolve("search.json"), resultDirectory.resolve("search.json"));
+            search = mapper.readValue(output.resolve("search.json").toFile(), ThroughputSearch.class);
+            search.discovery(); // Validate the phase count before provisioning infrastructure.
+        }
+        return new PreparedExperiment(system, artifacts, requirements, search);
     }
 
     private static boolean overlap(String a, String b) {

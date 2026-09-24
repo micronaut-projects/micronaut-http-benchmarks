@@ -12,18 +12,35 @@ Both applications require Java 25 and Nix with flakes enabled.
 alias bench="$PWD/benchmark-cli/build/install/benchmark-cli/bin/benchmark-cli"
 bench cases
 bench run --suite standard --run pure-netty --protocol https2 --document 6-6 \
-  --rate 1000 --wait
+  --wait
 ```
 
-Focused runs require an explicit rate and default to 60 seconds warmup plus 60 seconds measurement. `--warmup` and
-`--duration` override these durations. `--flake` defaults to `nix`, relative to the CLI's working directory;
+Focused runs default to a quick adaptive throughput search. Suites default to the thorough preset. Each repetition
+discovers a rate range, resets the SUT, warms it up again, and validates with an ascending sweep. Results after the first
+failed phase are excluded even if later traffic succeeds. See [throughput methodology](docs/throughput.md).
+
+| Setting | Quick | Thorough |
+| --- | ---: | ---: |
+| Warmup before each stage | 60s | 180s |
+| Discovery phase / increase | 10s / 25% | 15s / 25% |
+| Validation phase / increase | 15s / 5% | 45s / 2% |
+| Repetitions | 1 | 2 |
+
+Use `--preset thorough` for focused comparisons. `--start-rate`, `--max-rate`, `--repetitions`, `--discovery-duration`,
+`--discovery-step`, and `--validation-step` override search settings. Steps are percentages. `--warmup` overrides both
+warmups and `--duration` overrides validation duration. The default ceiling is 1,000,000 RPS.
+Hyperfoil preallocates sessions for every phase; this ceiling exhausted the configured 16 GiB agents during verification.
+Use an explicit ceiling that fits the agents; see the [capacity notes](docs/throughput.md#validity-and-interpretation).
+
+An explicit `--rate 1000` retains fixed-rate mode, with 60s warmup and 60s measurement by default.
+`--flake` defaults to `nix`, relative to the CLI's working directory;
 `--override-input NAME=REFERENCE` can be repeated.
 
 Concurrent agents should use separate worktrees and select their flakes directly:
 
 ```sh
 bench run --flake /path/to/agent-worktree/nix \
-  --suite standard --run pure-netty --protocol https2 --document 6-6 --rate 1000
+  --suite standard --run pure-netty --protocol https2 --document 6-6
 ```
 
 Preparation uses normal Nix flake evaluation. Git flakes include dirty tracked files; add new source files to Git before
@@ -71,6 +88,11 @@ Each directory contains `run.json`, experiment metadata and workload, environmen
 benchmark output and logs (`output.json`, `server.log`, `agent0.log`, etc.), and declared profiling artifacts.
 Completion is recorded only after collection and reset. Failed and cancelled runs retain their available diagnostics.
 
+Adaptive directories contain `search.json` and an incrementally saved `throughput.json`. Raw statistics, effective
+workloads, logs, profiles, and eligibility decisions live in `repetitions/N/discovery` and `repetitions/N/validation`.
+An expected SLA failure can complete execution successfully: inspect the search outcome separately from `run.json`'s
+execution state. Missing, inconclusive, and generator-limited results are retained, not counted as throughput estimates.
+
 `.nix/experiment` links to the built experiment. There is no automatic result deletion. Rerun the derivation recorded in
 `run.json` with `submit` while it remains available in the Nix store.
 
@@ -85,6 +107,7 @@ Analysis works with the daemon stopped. Summary and comparison emit JSON for mea
 Plotting reads completed run directories and uses the existing raw profile formats. Current profiles cover the SUT
 process lifetime, including warmup and shutdown. Perf conversion uses the tooling retained in `.nix/experiment/perf`.
 Uploading requires explicit `plot --upload`.
+Adaptive plots show per-repetition bounds and expandable phase diagnostics; later phases are explicitly excluded.
 
 ## Profile queries
 
@@ -92,6 +115,8 @@ Uploading requires explicit `plot --upload`.
 and caches a DuckDB database. Use `--context` to discover the schema, `--query SQL` for exploratory
 queries, or `--query-file FILE --csv` for a saved analysis. Add `WHERE benchmark_measured(startTime)`
 to restrict event queries to measurement phases; upstream views otherwise cover the full recording.
+For adaptive runs select a recording with `--stage 1/validation` or `--stage 2/discovery`. The measurement filter
+includes only eligible validation phases; it excludes discovery and all phases at or after failure.
 
 See [profile query documentation](docs/profile-queries.md) for examples, cache behavior, and validation.
 
@@ -99,11 +124,15 @@ See [profile query documentation](docs/profile-queries.md) for examples, cache b
 
 `bench suite standard --wait` resolves and shuffles all selected cases, then submits an exclusive batch on the daemon's
 existing infrastructure. Batches do not replace it. Results use the same per-invocation directory layout and
-`--output-root` option. Keep the selected worktree stable while preparation runs.
+`--output-root` option. Repetitions run in rounds across cases, shuffled each round, with each discovery/validation pair
+kept together. Keep the selected worktree stable while preparation runs.
 
 Benchmark flakes expose `lib.catalog` for discovery and
-`lib.mkExperiment { suite; run; protocol; document; rate; warmupDuration ? "60s"; benchmarkDuration ? "60s"; full ? false; }`.
+`lib.mkExperiment { suite; run; protocol; document; rate ? null; preset ? "quick"; search ? {}; warmupDuration ? null; benchmarkDuration ? null; full ? false; }`.
+Omitting `rate` selects adaptive mode; `search` accepts the rate bounds, repetitions, discovery duration, and step
+overrides described above using camelCase names. Explicit `rate` and legacy `full = true` retain fixed workloads.
 The output contains `system`, `hyperfoil.yaml`, `artifacts.json`, `requirements.json`, and opaque `metadata.json`.
+Adaptive outputs also contain versioned `search.json`; their YAML is a warmup plus one measurement-phase template.
 An optional `hyperfoil-data/` directory supplies files referenced by Hyperfoil
 `body.fromFile` (paths relative to that directory). Payload files are retained in the Nix closure and uploaded with the
 benchmark definition. Perf experiments also retain `perf`.

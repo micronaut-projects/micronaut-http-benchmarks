@@ -25,7 +25,14 @@ let
       headers = requestHeaders // optionalAttrs { "content-type" = request.requestType; };
       sync = true;
     } // optionalAttrs { body = request.requestBody; }
-      // lib.optionalAttrs withSla { sla = { limits = protocol.sla; }; }
+      // lib.optionalAttrs withSla {
+        # Native validation returns only the first failure within each SLA. Keep latency independent
+        # so connection blocking or response errors cannot hide a simultaneous percentile failure.
+        sla = [
+          { limits = protocol.sla; blockedRatio = 1; }
+          { errorRatio = 0; invalidRatio = 0; blockedRatio = 0; }
+        ];
+      }
       // lib.optionalAttrs (handler != null) { handler = handler; };
   };
   scenario = { withSla, handler }: {
@@ -85,7 +92,7 @@ in if mode == "local" || mode == "pgo" then {
   http = http;
   phases = [{
     warmup.always = {
-      users = builtins.floor (protocol.compileOps * sessionLimitFactor);
+      users = settings.warmupUsers or (builtins.floor (protocol.compileOps * sessionLimitFactor));
       duration = warmupDuration;
       isWarmup = true;
       scenario = scenario { withSla = false; handler = responseHandler; };
@@ -93,7 +100,8 @@ in if mode == "local" || mode == "pgo" then {
   }] ++ lib.imap0 (index: ops: {
     "main/${toString index}".constantRate = {
       usersPerSec = ops;
-      maxSessions = lib.min (builtins.floor (ops * sessionLimitFactor)) protocol.sharedConnections;
+      maxSessions = builtins.ceil (ops * sessionLimitFactor);
+      sessionLimitPolicy = "FAIL";
       duration = benchmarkDuration;
       isWarmup = false;
       startAfterStrict = if index == 0 then "warmup" else "main/${toString (index - 1)}";

@@ -5,12 +5,22 @@ import software.xdev.chartjs.model.charts.Chart;
 import java.util.UUID;
 
 final class ChartEmitter {
-    private final Chart<?, ?, ?> chart;
+    private final String configuration;
     private String collection = null;
     private String wrapperClass = "";
 
     ChartEmitter(Chart<?, ?, ?> chart) {
-        this.chart = chart;
+        this(chart.toJson());
+    }
+
+    /** A trusted JavaScript configuration expression, with any data JSON-escaped by the caller. */
+    ChartEmitter(String configuration) {
+        this.configuration = configuration;
+    }
+
+    static String scripts() {
+        return "<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js\"></script><script>"
+                + Main.loadStatic("/static.js") + "</script>";
     }
 
     public ChartEmitter collection(String collection) {
@@ -32,7 +42,7 @@ final class ChartEmitter {
         html.append("new Chart(document.getElementById('")
                 .append(id)
                 .append("').getContext('2d'), ")
-                .append(chart.toJson())
+                .append(configuration)
                 .append(")");
         if (collection != null) {
             html.append(")");

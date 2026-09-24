@@ -6,7 +6,6 @@ import io.micronaut.benchmark.api.InstanceType;
 import io.micronaut.benchmark.api.ProtocolSettings;
 import io.micronaut.core.annotation.Nullable;
 
-import java.awt.*;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -126,31 +125,16 @@ final class LoadGroup {
         for (int i = 0; i < discriminated.size(); i++) {
             Discriminated d = discriminated.get(i);
             if (fallback) {
-                d.color = "C" + i;
+                d.color = PlotColors.color(i, 1, 1);
             } else {
-                double hv, sv = 1, vv = 1;
-                hv = List.of(
-                        278. / 360, // purple
-                        230. / 360, // blue
-                        157. / 360, // turqoise
-                        70. / 360, // yellow
-                        0. / 360, // red
-                        25. / 360, // orange
-                        120. / 360 // green
-                ).get(optionsByDiscriminator.get(h).indexOf(d.label.values().get(h)));
+                double sv = 1, vv = 1;
                 if (s != null) {
                     sv = 1 - (double) optionsByDiscriminator.get(s).indexOf(d.label.values().get(s)) / optionsByDiscriminator.get(s).size();
                 }
                 if (v != null) {
                     vv = 1 - (double) optionsByDiscriminator.get(v).indexOf(d.label.values().get(v)) / optionsByDiscriminator.get(v).size();
                 }
-                Color color = Color.getHSBColor((float) hv, (float) sv, (float) vv);
-                String hex = Integer.toHexString(color.getRGB() & 0xffffff);
-                while (hex.length() < 6) {
-                    //noinspection StringConcatenationInLoop
-                    hex = "0" + hex;
-                }
-                d.color = "#" + hex;
+                d.color = PlotColors.color(optionsByDiscriminator.get(h).indexOf(d.label.values().get(h)), sv, vv);
             }
         }
     }

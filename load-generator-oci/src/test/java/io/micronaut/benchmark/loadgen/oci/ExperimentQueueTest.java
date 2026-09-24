@@ -4,6 +4,9 @@ import io.micronaut.benchmark.api.BatchRequest;
 import io.micronaut.benchmark.api.ExperimentRequest;
 import io.micronaut.benchmark.api.Nix;
 import io.micronaut.benchmark.api.RunRecord;
+import io.micronaut.benchmark.api.ThroughputSearch;
+import io.micronaut.benchmark.api.ThroughputStage;
+import io.micronaut.benchmark.api.ThroughputResult;
 import io.micronaut.http.exceptions.HttpStatusException;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -29,6 +32,7 @@ import java.util.function.BooleanSupplier;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -41,6 +45,7 @@ class ExperimentQueueTest {
     Path temporary;
     static String derivation;
     static String namedDerivation;
+    static String adaptiveDerivation;
     static final JsonMapper JSON = JsonMapper.builder().build();
     static final Nix NIX = new Nix(JSON);
 
@@ -63,6 +68,27 @@ class ExperimentQueueTest {
                 + " { outputs = [ \"out\" \"bundle\" ]; source = import " + NIX.expressionString(derivation)
                 + "; } \"mkdir $out; cp -r $source $bundle\").drvPath";
         namedDerivation = NIX.capture(List.of("eval", "--impure", "--raw", "--expr", named), System.err);
+        String search = JSON.writeValueAsString(new ThroughputSearch("thorough", 100, 125, "1s", "1s", "1s", 25, 5, 2, 2));
+        String workload = """
+                name: benchmark
+                agents: {}
+                phases:
+                - warmup: { always: { duration: 1s, users: 1 } }
+                - main/0: { constantRate: { usersPerSec: 100, duration: 1s } }
+                """;
+        String adaptive = """
+                let pkgs = import (builtins.getFlake %s).inputs.nixpkgs { system = builtins.currentSystem; };
+                in (pkgs.runCommand "adaptive-queue-test" { source = import %s; } ''
+                  mkdir $out
+                  cp -r $source/. $out/
+                  rm $out/metadata.json $out/hyperfoil.yaml
+                  cp ${pkgs.writeText "search" %s} $out/search.json
+                  cp ${pkgs.writeText "workload" %s} $out/hyperfoil.yaml
+                  cp ${pkgs.writeText "metadata" ''{"load":{"protocol":{"ops":[100]}}}''} $out/metadata.json
+                '').drvPath
+                """.formatted(NIX.expressionString(flake), NIX.expressionString(derivation),
+                NIX.expressionString(search), NIX.expressionString(workload));
+        adaptiveDerivation = NIX.capture(List.of("eval", "--impure", "--raw", "--expr", adaptive), System.err);
     }
 
     ExperimentRequest request() {
@@ -73,6 +99,93 @@ class ExperimentQueueTest {
         return new ExperimentQueue(JSON, NIX, temporary.resolve("daemon"), Duration.ofHours(2),
                 () -> environment, () -> {
         });
+    }
+
+    @Test
+    void adaptivePairsResetAndRetainArtifactsAndRunInRepetitionRounds() throws Exception {
+        var calls = new CopyOnWriteArrayList<Path>();
+        var environment = new LocalEnvironment(temporary.resolve("remote")) {
+            @Override
+            public void execute(PreparedExperiment experiment, Path directory, PhaseTracker.PhaseUpdater progress) throws Exception {
+                assertFalse(Files.exists(remote), "Previous stage must have reset before starting this stage");
+                calls.add(directory);
+                super.execute(experiment, directory, progress);
+                writePassingStage(directory);
+            }
+        };
+        try (var queue = queue(environment)) {
+            var request = new ExperimentRequest(adaptiveDerivation, "out", temporary.resolve("runs").toString(), Map.of());
+            var batch = queue.submit(new BatchRequest(List.of(request, request)));
+            await(() -> environment.entered.getCount() == 0 || queue.run(batch.runs().getFirst().id()).terminal());
+            assertEquals(0, environment.entered.getCount(), queue.run(batch.runs().getFirst().id()).toString());
+            environment.release.countDown();
+            await(() -> queue.batch(batch.id()).finished());
+            assertNull(queue.batch(batch.id()).failure());
+            assertEquals(8, calls.size());
+            for (int i = 0; i < calls.size(); i++) {
+                Path stage = calls.get(i);
+                assertEquals(i % 2 == 0 ? "discovery" : "validation", stage.getFileName().toString());
+                assertEquals(i < 4 ? "1" : "2", stage.getParent().getFileName().toString());
+                assertTrue(Files.exists(stage.resolve("profile.dat")));
+                assertTrue(Files.exists(stage.resolve("stage-result.json")));
+                assertEquals("SUCCEEDED", JSON.readTree(stage.resolve("run.json").toFile()).path("state").asString());
+                var definition = Files.readString(stage.resolve("hyperfoil.yaml"));
+                assertTrue(definition.contains("warmup"));
+                assertTrue(definition.contains("duration: 1s"));
+            }
+            assertNotEquals(calls.get(0).getParent().getParent().getParent(), calls.get(2).getParent().getParent().getParent());
+            for (var run : batch.runs()) {
+                var result = JSON.readValue(Path.of(run.directory()).resolve("throughput.json").toFile(), ThroughputResult.class);
+                assertEquals(2, result.repetitions().size());
+                assertTrue(result.repetitions().stream().allMatch(r -> "LOWER_BOUND".equals(r.validation().outcome())));
+            }
+        }
+    }
+
+    @Test
+    void cancellingDiscoveryDoesNotStartValidationOrAnotherRepetition() throws Exception {
+        var environment = new LocalEnvironment(temporary.resolve("remote"));
+        try (var queue = queue(environment)) {
+            var request = new ExperimentRequest(adaptiveDerivation, "out", temporary.resolve("runs").toString(), Map.of());
+            var batch = queue.submit(new BatchRequest(List.of(request)));
+            await(() -> environment.entered.getCount() == 0 || queue.run(batch.runs().getFirst().id()).terminal());
+            assertEquals(0, environment.entered.getCount(), queue.run(batch.runs().getFirst().id()).toString());
+            var run = batch.runs().getFirst();
+            queue.cancel(run.id());
+            await(() -> queue.batch(batch.id()).finished());
+            assertEquals("CANCELLED", queue.run(run.id()).state());
+            Path repetition = Path.of(run.directory()).resolve("repetitions/1");
+            assertTrue(Files.exists(repetition.resolve("discovery/profile.dat")));
+            assertFalse(Files.exists(repetition.resolve("validation")));
+            assertFalse(Files.exists(Path.of(run.directory()).resolve("repetitions/2")));
+            var result = JSON.readValue(Path.of(run.directory()).resolve("throughput.json").toFile(), ThroughputResult.class);
+            assertEquals("INVALID", result.repetitions().getFirst().discovery().outcome());
+            assertNull(result.aggregate());
+            assertFalse(Files.exists(environment.remote));
+        }
+    }
+
+    static void writePassingStage(Path directory) throws Exception {
+        var plan = JSON.readValue(directory.resolve("stage-plan.json").toFile(), ThroughputStage.class);
+        var stats = new ArrayList<Map<String, Object>>();
+        var terminated = new ArrayList<String>();
+        var phases = new ArrayList<>(plan.phases());
+        phases.addFirst(new ThroughputStage.Phase("warmup", 100, plan.warmupMillis()));
+        for (var phase : phases) {
+            var summary = new java.util.LinkedHashMap<String, Object>();
+            for (String key : List.of("minResponseTime", "maxResponseTime", "meanResponseTime", "stdDevResponseTime",
+                    "invalid", "connectionErrors", "requestTimeouts", "internalErrors", "blockedTime")) summary.put(key, 0);
+            summary.put("startTime", 1000);
+            summary.put("endTime", 1000 + phase.durationMillis());
+            summary.put("requestCount", 100);
+            summary.put("responseCount", 100);
+            summary.put("percentileResponseTime", Map.of());
+            summary.put("extensions", Map.of("http", Map.of("@type", "http", "status_2xx", 100)));
+            stats.add(Map.of("name", phase.name(), "phase", phase.name(), "total", Map.of("summary", summary)));
+            terminated.add(phase.name());
+        }
+        JSON.writeValue(directory.resolve("output.json").toFile(), Map.of("info", Map.of("errors", List.of()), "failures", List.of(), "stats", stats));
+        JSON.writeValue(directory.resolve("stage-completion.json").toFile(), new ThroughputStage.Completion(true, false, terminated));
     }
 
     @Test

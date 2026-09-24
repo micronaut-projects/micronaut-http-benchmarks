@@ -5,6 +5,7 @@ micronaut-application = { id = "io.micronaut.application", version.ref = "micron
 agroal = { group = "io.agroal", name = "agroal-pool", version.ref = "agroal" }
 
 [versions]
+# Selects the platform catalog; core modules are built from the revision pinned in default.nix.
 micronaut = "5.1.5"
 micronaut-gradle-plugin = "5.0.2"
 agroal = "2.7.1"

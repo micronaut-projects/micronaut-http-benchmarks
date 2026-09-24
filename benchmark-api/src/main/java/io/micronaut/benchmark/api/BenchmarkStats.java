@@ -15,8 +15,10 @@ public record BenchmarkStats(
 ) {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Info(
-            List<Error> errors
+            List<Error> errors,
+            Boolean cancelled
     ) {
+        public Info(List<Error> errors) { this(errors, false); }
         @JsonIgnoreProperties(ignoreUnknown = true)
         public record Error(
                 String agent,
@@ -80,4 +82,3 @@ public record BenchmarkStats(
         return null;
     }
 }
-

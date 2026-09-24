@@ -100,5 +100,6 @@ function updateMaxTime(maxTime) {
 }
 
 window.onload = function () {
-    updateMaxTimeLabel(Math.pow(10, document.getElementById("max-time").getElementsByTagName("input").item(0).value));
+    const maxTime = document.getElementById("max-time");
+    if (maxTime) updateMaxTimeLabel(Math.pow(10, maxTime.getElementsByTagName("input").item(0).value));
 };

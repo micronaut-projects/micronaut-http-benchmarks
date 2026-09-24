@@ -237,10 +237,27 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         record StatsAllWrapper(byte[] resultBytes, BenchmarkStats statsAll) {
         }
 
+        // TERMINATED can precede agent shutdown and final SLA evaluation. Read only persisted results.
+        long finalizationDeadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(2);
+        while (!Infrastructure.retry(runRef::get, controllerPortForward::disconnect).persisted) {
+            if (System.nanoTime() > finalizationDeadline) throw new TimeoutException("Hyperfoil statistics did not finalize");
+            TimeUnit.SECONDS.sleep(1);
+        }
         StatsAllWrapper wrapper = Infrastructure.retry(() -> {
             byte[] bytes = runRef.statsAll("json");
             return new StatsAllWrapper(bytes, factory.objectMapper.readValue(bytes, BenchmarkStats.class));
         }, controllerPortForward::disconnect);
+        if (Files.exists(outputDirectory.resolve("stage-plan.json"))) {
+            // Search outcomes, including SLA failure, belong to the shared ordered-prefix classifier.
+            // The raw result is retained intact, including any traffic after the cutoff.
+            Files.write(outputDirectory.resolve("output.json"), wrapper.resultBytes);
+            var finished = Infrastructure.retry(runRef::get, controllerPortForward::disconnect);
+            var completion = new io.micronaut.benchmark.api.ThroughputStage.Completion(finished.completed, finished.cancelled,
+                    finished.phases.stream().filter(p -> "TERMINATED".equals(p.status)).map(p -> p.name).toList());
+            factory.objectMapper.writeValue(outputDirectory.resolve("stage-completion.json").toFile(), completion);
+            Files.write(outputDirectory.resolve("meta.json"), factory.objectMapper.writeValueAsBytes(new Metadata(factory.config)));
+            return;
+        }
         List<String> benchmarkFailures = new ArrayList<>();
         boolean invalidatesBenchmark = false;
         for (BenchmarkStats.Info.Error error : wrapper.statsAll.info().errors()) {

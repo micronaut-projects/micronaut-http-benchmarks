@@ -238,14 +238,34 @@
       // lib.listToAttrs (map rolePackage activatableRoles)
       // lib.listToAttrs (map runPackage systemRuns);
     mkExperiment = { suite, run, protocol, document, rate ? null,
-                     warmupDuration ? "60s", benchmarkDuration ? "60s", full ? false }:
+                     warmupDuration ? null, benchmarkDuration ? null, full ? false,
+                     preset ? "quick", search ? { } }:
       let
         selectedSuite = evaluatedSuites.${suite};
         selectedRun = evaluatedSuiteRuns.${suite}.${run};
         request = lib.findFirst (r: r.name == document)
           (throw "Unknown document ${document}") selectedSuite.config.benchmark.suite.documents;
         baseProtocol = selectedSuite.config.benchmark.suite.resolvedProtocols.${protocol};
-        effectiveProtocol = baseProtocol // lib.optionalAttrs (!full) { ops = [ rate ]; };
+        adaptive = !full && rate == null;
+        thorough = preset == "thorough";
+        effectiveWarmup = if warmupDuration != null then warmupDuration else if adaptive && thorough then "180s" else "60s";
+        effectiveDuration = if benchmarkDuration != null then benchmarkDuration else if !adaptive then "60s" else if thorough then "45s" else "15s";
+        searchSettings = {
+          startRate = lib.foldl' lib.min (lib.head baseProtocol.ops) baseProtocol.ops;
+          maxRate = 1000000;
+          discoveryDuration = if thorough then "15s" else "10s";
+          discoveryStep = 25;
+          validationStep = if thorough then 2 else 5;
+          repetitions = if thorough then 2 else 1;
+        } // search // {
+          inherit preset;
+          warmupDuration = effectiveWarmup;
+          validationDuration = effectiveDuration;
+          inherit (selectedSuite.config.benchmark.hyperfoil) sessionLimitFactor;
+        };
+        effectiveProtocol = baseProtocol // lib.optionalAttrs (!full) {
+          ops = [ (if adaptive then searchSettings.startRate else rate) ];
+        };
         configuration = selectedRun.metadata.nixosConfigurations.${protocol}.${document};
         selectedSystem = lib.findFirst (r: r.configurationName == configuration)
           (throw "Missing system ${configuration}") selectedRun.variants;
@@ -267,15 +287,17 @@
               httpsUrl = "https://10.0.0.2"; httpsAuthority = "10.0.0.2"; httpsPort = 8443;
             };
             settings = {
-              inherit warmupDuration benchmarkDuration;
-              inherit (selectedSuite.config.benchmark.hyperfoil) sessionLimitFactor;
+              warmupDuration = effectiveWarmup;
+              benchmarkDuration = effectiveDuration;
+              inherit (selectedSuite.config.benchmark.hyperfoil) warmupUsers sessionLimitFactor;
             };
           };
         json = name: value: pkgs.writeText name (builtins.toJSON value);
       in
-      assert lib.assertMsg (full || (builtins.isInt rate && rate > 0)) "Focused experiments require a positive request rate";
-      assert lib.assertMsg (builtins.match "^[1-9][0-9]*(s|m|h)$" warmupDuration != null
-        && builtins.match "^[1-9][0-9]*(s|m|h)$" benchmarkDuration != null) "Invalid experiment duration";
+      assert lib.assertMsg (full || adaptive || (builtins.isInt rate && rate > 0)) "Fixed experiments require a positive request rate";
+      assert lib.assertMsg (builtins.elem preset [ "quick" "thorough" ]) "Unknown throughput preset";
+      assert lib.assertMsg (builtins.match "^[1-9][0-9]*(s|m|h)$" effectiveWarmup != null
+        && builtins.match "^[1-9][0-9]*(s|m|h)$" effectiveDuration != null) "Invalid experiment duration";
       pkgs.linkFarm "benchmark-experiment" ([
         # Analysis tooling is part of the retained closure, independent of a checkout.
         { name = "system"; path = selectedSystem.system.config.system.build.toplevel; }
@@ -289,6 +311,7 @@
           }; }
         { name = "metadata.json"; path = json "metadata.json" {
             name = "${suite}-${run}-${protocol}-${document}";
+            benchmarkMode = if adaptive then "throughput" else "fixed";
             inherit (selectedRun.metadata) type parameters profiling;
             profileCoverage = if profiling == null then "none" else "process-lifetime";
             load = {
@@ -298,7 +321,8 @@
             };
             sutSpecs = instanceTypes.benchmark-server;
           }; }
-      ] ++ lib.optional (profiling != null && profiling.tool == "perf") {
+      ] ++ lib.optional adaptive { name = "search.json"; path = json "search.json" searchSettings; }
+      ++ lib.optional (profiling != null && profiling.tool == "perf") {
         name = "perf"; path = pkgs.linuxPackages.perf;
       });
   in {

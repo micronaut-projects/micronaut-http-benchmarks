@@ -5,6 +5,11 @@ let
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
   tls = import ../../nix/tls.nix { inherit pkgs; };
+  upstream = builtins.fetchGit {
+    url = "https://github.com/micronaut-projects/micronaut-core.git";
+    ref = "5.3.x";
+    rev = "733ff0ded334bd3f0e4d11e254e6f539e6d50bbe";
+  };
   package =
     assert lib.assertMsg (runtime != "native-pgo" || config.benchmark.sut.pgoProfile != null)
       "Micronaut native-pgo requires a build-time training profile.";
@@ -16,7 +21,7 @@ let
     in
     pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       pname = "micronaut-framework-${codec}-${runtime}";
-      version = "1.0.0";
+      version = upstream.rev;
 
       src = lib.fileset.toSource {
         root = ./.;
@@ -34,6 +39,17 @@ let
         useBwrap = false;
       };
 
+      # Compile the pinned core sources through Gradle's composite substitution,
+      # including transitive core modules and the annotation processors.
+      postPatch = ''
+        cp -r ${upstream} micronaut-core
+        chmod -R u+w micronaut-core
+        cat >> settings.gradle.kts <<'EOF'
+
+        includeBuild("micronaut-core")
+        EOF
+      '';
+
       gradleBuildTask = if runtime == "hotspot" then "jar" else "nativeCompile";
       dontStrip = runtimeInfo.keepDebugSymbols;
       nativeGradleFlags = lib.optionals (runtime != "hotspot") [ "-PnativeBuild" "-PnativeImageArgs=${lib.concatStringsSep "," (runtimeInfo.nativeImageArgs
@@ -43,6 +59,9 @@ let
       gradleUpdateScript = ''
         gradle nixDownloadDeps -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
         gradle nixDownloadDeps -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
+        # Resolving the app alone misses compile-only dependencies in the included core build.
+        gradle jar --max-workers 4 -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
+        gradle jar --max-workers 4 -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}
         ${lib.optionalString (runtime != "hotspot") ''gradle generateDynamicAccessMetadata -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}''}
         gradle ${finalAttrs.gradleBuildTask} -Pcodec=jackson-databind ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}${finalAttrs.gradleUpdateTaskSuffix}
         ${lib.optionalString (runtime != "hotspot") ''gradle generateDynamicAccessMetadata -Pcodec=micronaut-serialization ${lib.concatStringsSep " " finalAttrs.nativeGradleFlags}''}
@@ -108,6 +127,7 @@ in {
         parameters.codec = codec;
         parameters.threading = threading;
         parameters.transport = "io-uring";
+        parameters.sourceRevision = upstream.rev;
       };
     };
   };

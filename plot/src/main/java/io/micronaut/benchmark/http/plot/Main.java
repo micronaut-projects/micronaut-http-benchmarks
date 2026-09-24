@@ -180,7 +180,7 @@ public class Main {
         };
     }
 
-    private static String loadStatic(String name) {
+    static String loadStatic(String name) {
         try (InputStream is = Main.class.getResourceAsStream(name)) {
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
@@ -235,10 +235,7 @@ public class Main {
                 <meta charset="UTF-8">
                  <meta name="viewport" content="width=device-width, initial-scale=1">
                  <title>micronaut-http-benchmarks result</title>
-                 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
-                 <script>
-                """ + loadStatic("/static.js") + """
-                </script>
+                """ + ChartEmitter.scripts() + """
                 <style>
                 """ + loadStatic("/static.css") + """
                  </style>
@@ -291,8 +288,11 @@ public class Main {
     }
 
     public static Path generate(Path directory, boolean upload) throws Exception {
-        Main main = new Main(directory);
-        String html = main.plot();
+        boolean throughput = ThroughputPlot.applicable(directory);
+        Main main = throughput ? null : new Main(directory);
+        var profiles = new ArrayList<ProfileConverter.ProfileArtifacts>();
+        String html = throughput ? ThroughputPlot.render(directory, profiles) : main.plot();
+        if (main != null) profiles.addAll(main.profiles.values());
 
         Path outputRoot = directory.toAbsolutePath().normalize();
         Path plotFile = outputRoot.resolve("plot.html");
@@ -300,7 +300,7 @@ public class Main {
 
         List<Path> resultFiles = new ArrayList<>();
         resultFiles.add(plotFile);
-        for (ProfileConverter.ProfileArtifacts profile : main.profiles.values()) {
+        for (ProfileConverter.ProfileArtifacts profile : profiles) {
             if (profile.raw() != null) {
                 resultFiles.add(profile.raw());
             }

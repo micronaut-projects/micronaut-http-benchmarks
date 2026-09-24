@@ -12,10 +12,10 @@ let
   tls = import ../../nix/tls.nix { inherit pkgs; };
   graalvm = pkgs.stdenvNoCC.mkDerivation {
     pname = "graalvm-oracle";
-    version = "25.3.4.1";
+    version = "25.4.4.1.1";
     src = pkgs.fetchurl {
-      url = "https://gds.oracle.com/download/graal/25i3/archive/graalvm-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz";
-      hash = "sha256-gU3qwUSpEgNcToJOBfoGouDIOCHw+50QhLyRbl7u8kc=";
+      url = "https://gds.oracle.com/download/graal/25i4/archive/graalvm-jdk-25i4-25.0.4.1.1_linux-x64_bin.tar.gz";
+      hash = "sha256-T8xjLPxo6Y9J+TFvijWIuv5PUonxIBBOLSkKdc8z4o4=";
     };
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
     buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.zlib ];
@@ -44,7 +44,8 @@ let
   };
   upstream = builtins.fetchGit {
     url = "ssh://git@github.com/micronaut-projects/pyronaut.git";
-    rev = "c9c8bd4a16daa72529c684e7cd13de1d3e624a5c";
+    ref = "0.0.x";
+    rev = "3c54ff1ec4113660b5794a28aea5bc5f748520c7";
   };
   wheelGradleInit = pkgs.writeText "pyronaut-wheel.init.gradle" ''
     gradle.beforeProject { project ->
@@ -65,14 +66,15 @@ let
     # Micronaut 5.2 registers this converter in the build-time conversion service.
     "--initialize-at-build-time=io.micronaut.http.server.cors.CorsOriginConverter"
   ];
-  nativeImageArgs = config.benchmark.sut.runtimeInfo.nativeImageArgs ++ nativeImageInitArgs ++ [
+  baseNativeImageArgs = nativeImageInitArgs ++ [
     "--gc=G1"
     "-R:MaxHeapSize=12g"
     "-H:-GraalJITCompileAtRuntime"
     "-H:-RuntimeClassLoading"
   ];
+  nativeImageArgs = config.benchmark.sut.runtimeInfo.nativeImageArgs ++ baseNativeImageArgs;
   pythonSitePackages = "lib/python${pyronautPython.pythonVersion}/site-packages";
-  # Collect SDK dependencies once; apply the threading mode when building the SUT below.
+  # Share the SDK across runtime variants; apply threading and profiling to the SUT below.
   pyronaut = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     pname = "pyronaut";
     version = upstream.rev;
@@ -115,7 +117,7 @@ let
         --no-daemon \
         --max-workers 4 \
         -PpyronautNativeImageCiArgs=${lib.escapeShellArg (lib.concatStringsSep " " ([ "-H:NativeLinkerOption=-L${pkgs.zlib.static}/lib" ] ++ nativeImageInitArgs))} \
-        -Poverride.libs.managed-graal=25.3.4.1 \
+        -Poverride.libs.managed-graal=${graalvm.version} \
         -Dmaven.repo.local="$TMPDIR/m2" \
         -Ppyronaut.sdk.mavenLocalRepository="$TMPDIR/m2"
       gradle \
@@ -123,7 +125,7 @@ let
         --no-daemon \
         --max-workers 4 \
         --init-script ${wheelGradleInit} \
-        -Poverride.libs.managed-graal=25.3.4.1 \
+        -Poverride.libs.managed-graal=${graalvm.version} \
         -Dmaven.repo.local="$TMPDIR/m2"
       ${pyronautPython}/bin/python -m pip install --no-deps --prefix "$TMPDIR/sdk" pyronaut/build/wheel/dist/pyronaut-*.whl
       mkdir -p "$HOME/.pyronaut"
@@ -150,7 +152,7 @@ let
         --project-dir "$PWD/benchmark-app" \
         -- \
         --no-sbom \
-        -H:NativeLinkerOption=-L${pkgs.zlib.static}/lib ${lib.concatMapStringsSep " " lib.escapeShellArg nativeImageArgs}
+        -H:NativeLinkerOption=-L${pkgs.zlib.static}/lib ${lib.concatMapStringsSep " " lib.escapeShellArg baseNativeImageArgs}
       cp -r benchmark-app/__pyronaut__/reachability-metadata "$TMPDIR/reachability-metadata"
       cp -r "$HOME/.pyronaut" "$TMPDIR/pyronaut-home"
       rm -rf benchmark-app
@@ -268,6 +270,8 @@ in {
         metadata = {
           typePrefix = "pyronaut";
           parameters.threading = threading;
+          parameters.sourceRevision = upstream.rev;
+          parameters.graalvm = graalvm.version;
         };
       };
     };

@@ -7,6 +7,7 @@ let
   );
   nonEmpty = type: types.addCheck type (value: value != [ ] && value != { });
   cfg = config.benchmark.suite.protocols;
+  defaultSla = { "0.50" = "100ms"; "0.95" = "200ms"; "0.99" = "1000ms"; };
   protocolControls = defaults: {
     enable = mkOption { type = types.bool; default = defaults.enable; };
     protocol = mkOption { type = types.enum [ "HTTP1" "HTTPS1" "HTTPS2" ]; default = defaults.protocol; };
@@ -15,7 +16,7 @@ let
     maxHttp2Streams = mkOption { type = positive; default = defaults.maxHttp2Streams; };
     compileOps = mkOption { type = positive; default = defaults.compileOps; };
     ops = mkOption { type = nonEmpty (types.listOf positive); default = defaults.ops; };
-    sla = mkOption { type = nonEmpty (types.attrsOf duration); default = defaults.sla; };
+    sla = mkOption { type = nonEmpty (types.attrsOf duration); default = defaultSla; };
   };
 in {
   options.benchmark.suite.protocols = {
@@ -27,7 +28,6 @@ in {
       maxHttp2Streams = 1;
       compileOps = 100;
       ops = [ 2000 16000 64000 96000 128000 160000 192000 256000 ];
-      sla = { "0.99" = "200ms"; };
     };
     https1 = protocolControls {
       enable = false;
@@ -37,7 +37,6 @@ in {
       maxHttp2Streams = 1;
       compileOps = 25;
       ops = [ 1000 4000 8000 16000 32000 64000 80000 ];
-      sla = { "0.99" = "200ms"; };
     };
     https2 = protocolControls {
       enable = false;
@@ -47,7 +46,6 @@ in {
       maxHttp2Streams = 100;
       compileOps = 25;
       ops = [ 1000 4000 8000 16000 32000 64000 80000 ];
-      sla = { "0.99" = "200ms"; };
     };
   };
 

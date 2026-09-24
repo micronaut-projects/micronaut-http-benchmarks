@@ -61,3 +61,12 @@ application {
     applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
     mainClass.set("io.micronaut.benchmark.loadgen.oci.Main")
 }
+
+tasks.test { useJUnitPlatform { excludeTags("hyperfoil") } }
+tasks.register<Test>("adaptiveHyperfoilIntegrationTest") {
+    description = "Runs real throughput SLA checks against HYPERFOIL_HOME (the Nix-pinned distribution)."
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("hyperfoil") }
+    inputs.property("hyperfoilHome", providers.environmentVariable("HYPERFOIL_HOME").orElse(""))
+}

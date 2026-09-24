@@ -1,6 +1,7 @@
 package io.micronaut.benchmark.cli;
 
 import io.micronaut.benchmark.api.Nix;
+import io.micronaut.benchmark.api.ThroughputStage;
 import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
@@ -42,6 +43,9 @@ final class ProfileQuery {
             throw new IllegalArgumentException("Stack depth must be between 1 and 4096");
         }
         directory = directory.toAbsolutePath().normalize();
+        if (Files.exists(directory.resolve("search.json"))) {
+            throw new IllegalArgumentException("Select a profile stage using --stage REPETITION/discovery or REPETITION/validation");
+        }
         JsonNode metadata = Bench.JSON.readTree(directory.resolve("metadata.json").toFile());
         String artifact = metadata.path("profiling").path("artifact").asString("");
         Path profile = directory.resolve(artifact).normalize();
@@ -60,7 +64,7 @@ final class ProfileQuery {
         try (var channel = FileChannel.open(cache.resolve("import.lock"), CREATE, WRITE);
              var ignored = channel.lock()) {
             var hashes = new LinkedHashMap<String, String>();
-            for (String file : List.of(artifact, "metadata.json", "run.json", "output.json", "machine-info.txt")) {
+            for (String file : List.of(artifact, "metadata.json", "run.json", "output.json", "machine-info.txt", "stage-plan.json", "stage-result.json")) {
                 if (Files.isRegularFile(directory.resolve(file))) {
                     hashes.put(file, sha256(directory.resolve(file)));
                 }
@@ -127,6 +131,11 @@ final class ProfileQuery {
     }
 
     private static String contextSql(Path directory, JsonNode run, JsonNode metadata, JsonNode output) throws IOException {
+        ThroughputStage.Result eligibility = Files.exists(directory.resolve("stage-result.json"))
+                ? Bench.JSON.readValue(directory.resolve("stage-result.json").toFile(), ThroughputStage.Result.class) : null;
+        if (Files.exists(directory.resolve("stage-plan.json")) && eligibility == null) {
+            throw new IllegalArgumentException("Adaptive profile requires finalized stage results");
+        }
         var sql = new StringBuilder("""
                 CREATE TABLE benchmark_phases (
                   name VARCHAR, measurement BOOLEAN, start_time TIMESTAMP, end_time TIMESTAMP,
@@ -141,14 +150,15 @@ final class ProfileQuery {
             long start = summary.path("startTime").asLong();
             long end = summary.path("endTime").asLong();
             if (name == null || end <= start) throw new IllegalArgumentException("Missing or invalid benchmark phase bounds");
-            boolean measurement = name.startsWith("main/");
+            boolean measurement = name.startsWith("main/") && (eligibility == null
+                    || "validation".equals(eligibility.stage()) && eligibility.eligible(name));
             if (measurement) measurements++;
             sql.append("INSERT INTO benchmark_phases VALUES (").append(sqlString(name)).append(',').append(measurement)
                     .append(", epoch_ms(").append(start).append("), epoch_ms(").append(end).append("), ")
                     .append(summary.path("requestCount").asLong()).append(',').append(summary.path("responseCount").asLong())
                     .append(',').append((end - start) / 1000.0).append(");\n");
         }
-        if (measurements == 0) throw new IllegalArgumentException("Run contains no main measurement phases");
+        if (measurements == 0 && eligibility == null) throw new IllegalArgumentException("Run contains no main measurement phases");
         Path machineInfo = directory.resolve("machine-info.txt");
         sql.append("CREATE TABLE benchmark_run AS SELECT ")
                 .append(sqlString(run.path("id").asString())).append(" AS run_id, ")
@@ -158,7 +168,7 @@ final class ProfileQuery {
                 .append(sqlString(Files.exists(machineInfo) ? Files.readString(machineInfo) : "")).append(" AS machine_info;\n")
                 .append("COMMENT ON TABLE benchmark_run IS 'Saved experiment metadata and SLA warnings. Imported profile tables cover the full recording; filter explicitly using benchmark_measured(startTime).';\n")
                 .append("CREATE MACRO benchmark_measured(t) AS EXISTS (SELECT 1 FROM benchmark_phases p WHERE p.measurement AND t >= p.start_time AND t < p.end_time);\n")
-                .append("COMMENT ON MACRO benchmark_measured IS 'True during any main measurement phase; excludes warmup and shutdown. UTC, half-open intervals.';\n")
+                .append("COMMENT ON MACRO benchmark_measured IS 'True during eligible validation phases for adaptive runs, or main phases for fixed runs. Excludes warmup, discovery and phases at/after failure. UTC, half-open intervals.';\n")
                 .append("SELECT count(*) AS measurement_phases FROM benchmark_phases WHERE measurement;");
         return sql.toString();
     }

@@ -131,6 +131,48 @@ public final class Bench implements Runnable {
         boolean wait;
     }
 
+    static class SearchOptions {
+        @Option(names = "--preset", description = "Throughput preset: quick or thorough (run: quick; suite: thorough).")
+        String preset;
+        @Option(names = "--start-rate", description = "Discovery starting RPS (default: protocol's lowest configured rate).")
+        Integer startRate;
+        @Option(names = "--max-rate", description = "Search ceiling in RPS (default: 1000000).")
+        Integer maxRate;
+        @Option(names = "--repetitions", description = "Independent discovery/validation pairs (quick: 1; thorough: 2).")
+        Integer repetitions;
+        @Option(names = "--discovery-duration", description = "Discovery phase duration (quick: 10s; thorough: 15s).")
+        String discoveryDuration;
+        @Option(names = "--discovery-step", description = "Discovery increase in percent (default: 25).")
+        Double discoveryStep;
+        @Option(names = "--validation-step", description = "Validation increase in percent (quick: 5; thorough: 2).")
+        Double validationStep;
+        @Option(names = "--warmup", description = "Warmup before each stage (quick: 60s; thorough: 180s; fixed: 60s).")
+        String warmup;
+        @Option(names = "--duration", description = "Validation phase duration (quick: 15s; thorough: 45s; fixed: 60s).")
+        String duration;
+
+        void configure(Map<String, Object> selection, String defaultPreset, boolean fixed) {
+            var search = new LinkedHashMap<String, Object>();
+            if (startRate != null) search.put("startRate", startRate);
+            if (maxRate != null) search.put("maxRate", maxRate);
+            if (repetitions != null) search.put("repetitions", repetitions);
+            if (discoveryDuration != null) search.put("discoveryDuration", discoveryDuration);
+            if (discoveryStep != null) search.put("discoveryStep", discoveryStep);
+            if (validationStep != null) search.put("validationStep", validationStep);
+            if (fixed && (preset != null || !search.isEmpty())) {
+                throw new IllegalArgumentException("--rate cannot be combined with throughput search options");
+            }
+            if (!fixed) {
+                String effectivePreset = preset == null ? defaultPreset : preset;
+                if (!List.of("quick", "thorough").contains(effectivePreset)) throw new IllegalArgumentException("Unknown preset: " + effectivePreset);
+                selection.put("preset", effectivePreset);
+                selection.put("search", search);
+            }
+            if (warmup != null) selection.put("warmupDuration", warmup);
+            if (duration != null) selection.put("benchmarkDuration", duration);
+        }
+    }
+
     @Command(name = "cases", mixinStandardHelpOptions = true, description = "Print suites, run selectors, protocols, and documents as JSON.")
     static final class Cases extends Subcommand implements Callable<Integer> {
         @Mixin
@@ -143,7 +185,7 @@ public final class Bench implements Runnable {
         }
     }
 
-    @Command(name = "run", mixinStandardHelpOptions = true, description = "Prepare and submit one experiment at a fixed request rate.")
+    @Command(name = "run", mixinStandardHelpOptions = true, description = "Measure sustainable throughput, or run at an explicit fixed --rate.")
     static final class Run extends Subcommand implements Callable<Integer> {
         @Mixin
         SourceOptions source;
@@ -157,20 +199,18 @@ public final class Bench implements Runnable {
         String protocol;
         @Option(names = "--document", paramLabel = "DOCUMENT", required = true, description = "Document/workload name from the suite catalog, e.g. 6-6.")
         String document;
-        @Option(names = "--rate", paramLabel = "REQUESTS_PER_SECOND", required = true, description = "Positive target request rate in requests per second.")
-        int rate;
-        @Option(names = "--warmup", paramLabel = "DURATION", defaultValue = "60s",
-                description = "Warmup duration: positive number with s, m, or h (default: ${DEFAULT-VALUE}).")
-        String warmup;
-        @Option(names = "--duration", paramLabel = "DURATION", defaultValue = "60s",
-                description = "Measurement duration: positive number with s, m, or h (default: ${DEFAULT-VALUE}).")
-        String duration;
+        @Option(names = "--rate", paramLabel = "REQUESTS_PER_SECOND", description = "Use fixed-rate mode at this positive RPS instead of searching.")
+        Integer rate;
+        @Mixin
+        SearchOptions search;
 
         @Override
         public Integer call() throws Exception {
             Preparation preparation = new Preparation(parent.nix, source.flake, source.inputs);
-            var request = preparation.prepare(Map.of("suite", suite, "run", run, "protocol", protocol,
-                    "document", document, "rate", rate, "warmupDuration", warmup, "benchmarkDuration", duration), submission.output);
+            var selection = new LinkedHashMap<String, Object>(Map.of("suite", suite, "run", run, "protocol", protocol, "document", document));
+            if (rate != null) selection.put("rate", rate);
+            search.configure(selection, "quick", rate != null);
+            var request = preparation.prepare(selection, submission.output);
             JsonNode receipt = parent.request("POST", "/runs", request);
             print(receipt);
             return submission.wait ? parent.await(receipt.get("id").stringValue(), true) : 0;
@@ -200,9 +240,11 @@ public final class Bench implements Runnable {
 
     @Command(name = "suite", mixinStandardHelpOptions = true, description = {
             "Submit all suite cases in a shuffled, exclusive batch.",
-            "Uses the suite's full workload and the daemon's existing infrastructure."
+            "Uses thorough throughput searches and the daemon's existing infrastructure."
     })
     static final class Suite extends Subcommand implements Callable<Integer> {
+        @Mixin
+        SearchOptions search;
         @Parameters(index = "0", paramLabel = "SUITE", description = "Suite name from 'bench cases'.")
         String suite;
         @Mixin
@@ -222,8 +264,10 @@ public final class Bench implements Runnable {
             for (JsonNode run : catalog.get("runs"))
                 for (var protocol : catalog.get("protocols").properties())
                     for (JsonNode doc : catalog.get("documents")) {
-                        requests.add(preparation.prepare(Map.of("suite", suite, "run", run.get("selector").stringValue(),
-                                "protocol", protocol.getKey(), "document", doc.get("name").stringValue(), "full", true), root));
+                        var selection = new LinkedHashMap<String, Object>(Map.of("suite", suite, "run", run.get("selector").stringValue(),
+                                "protocol", protocol.getKey(), "document", doc.get("name").stringValue()));
+                        search.configure(selection, "thorough", false);
+                        requests.add(preparation.prepare(selection, root));
                     }
             Collections.shuffle(requests);
             JsonNode receipt = parent.request("POST", "/batches", new BatchRequest(requests));
@@ -320,6 +364,8 @@ public final class Bench implements Runnable {
     static final class Profile extends Subcommand implements Callable<Integer> {
         @Parameters(index = "0", paramLabel = "RUN_DIR", description = "Completed run directory with a declared JFR artifact.")
         Path directory;
+        @Option(names = "--stage", paramLabel = "REPETITION/STAGE", description = "Adaptive profile stage, e.g. 1/validation or 2/discovery.")
+        String stage;
         @Mixin
         SourceOptions source;
         @Option(names = "--stack-depth", defaultValue = "256", description = "Maximum imported stack depth, 1–4096 (default: ${DEFAULT-VALUE}).")
@@ -335,6 +381,10 @@ public final class Bench implements Runnable {
 
         @Override
         public Integer call() throws Exception {
+            if (stage != null) {
+                if (!stage.matches("[1-9][0-9]*/(discovery|validation)")) throw new IllegalArgumentException("Invalid profile stage");
+                directory = directory.resolve("repetitions").resolve(stage);
+            }
             if ((context ? 1 : 0) + (query != null ? 1 : 0) + (queryFile != null ? 1 : 0) > 1) {
                 throw new IllegalArgumentException("Choose one of --query, --query-file, or --context");
             }

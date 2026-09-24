@@ -34,6 +34,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -229,21 +230,25 @@ public final class ExperimentQueue implements AutoCloseable {
     private void execute(Batch batch) {
         Exception failure = null;
         try {
-            for (Job job : batch.jobs) {
-                if (stopping) {
-                    break;
-                }
-                synchronized (job) {
-                    if (job.cancelled) {
-                        continue;
+            for (int round = 1; batch.jobs.stream().anyMatch(j -> !j.view().terminal()) && !stopping; round++) {
+                var scheduled = new ArrayList<>(batch.jobs);
+                if (round > 1) Collections.shuffle(scheduled);
+                for (Job job : scheduled) {
+                    if (stopping) {
+                        break;
                     }
-                    active = job;
-                }
-                execute(job);
-                active = null;
-                Thread.interrupted();
-                if (!"SUCCEEDED".equals(job.view().state())) {
-                    throw new IOException("Batch stopped after " + job.id + ": " + job.view().state());
+                    synchronized (job) {
+                        if (job.cancelled || job.finished != null) {
+                            continue;
+                        }
+                        active = job;
+                    }
+                    execute(job, round);
+                    active = null;
+                    Thread.interrupted();
+                    if (job.view().terminal() && !"SUCCEEDED".equals(job.view().state())) {
+                        throw new IOException("Batch stopped after " + job.id + ": " + job.view().state());
+                    }
                 }
             }
         } catch (Exception e) {
@@ -267,15 +272,18 @@ public final class ExperimentQueue implements AutoCloseable {
         }
     }
 
-    private void execute(Job job) {
+    private void execute(Job job, int repetition) {
         try {
-            job.started = Instant.now();
-            job.state("BUILDING");
-            try (OutputStream log = Files.newOutputStream(job.directory.resolve("build.log"))) {
-                job.experiment = nix.realize(Path.of(job.request.derivation()), job.request.output(), job.directory.resolve(".nix/experiment"), log).toString();
+            if (job.prepared == null) {
+                job.started = Instant.now();
+                job.state("BUILDING");
+                try (OutputStream log = Files.newOutputStream(job.directory.resolve("build.log"))) {
+                    job.experiment = nix.realize(Path.of(job.request.derivation()), job.request.output(), job.directory.resolve(".nix/experiment"), log).toString();
+                }
+                job.state("PREPARING_EXPERIMENT");
+                job.prepared = PreparedExperiment.load(Path.of(job.experiment), job.directory, mapper);
             }
-            job.state("PREPARING_EXPERIMENT");
-            PreparedExperiment prepared = PreparedExperiment.load(Path.of(job.experiment), job.directory, mapper);
+            PreparedExperiment prepared = job.prepared;
             ExecutionEnvironment environment = environment();
             environment.validate(prepared);
             PhaseTracker tracker = new PhaseTracker(mapper, job.directory);
@@ -297,9 +305,17 @@ public final class ExperimentQueue implements AutoCloseable {
                 if (job.cancelled) {
                     throw new InterruptedException("Run cancelled");
                 }
-                environment.execute(prepared, job.directory, updater);
+                if (prepared.search() == null) {
+                    environment.execute(prepared, job.directory, updater);
+                } else {
+                    new ThroughputRunner(mapper).repetition(environment, prepared, job.directory, repetition, updater);
+                }
             }
-            job.finish(job.cancelled ? "CANCELLED" : "SUCCEEDED", null);
+            if (!job.cancelled && prepared.search() != null && repetition < prepared.search().repetitions()) {
+                job.state("WAITING_FOR_REPETITION");
+            } else {
+                job.finish(job.cancelled ? "CANCELLED" : "SUCCEEDED", null);
+            }
         } catch (Throwable e) {
             try {
                 job.finish(job.cancelled || stopping ? "CANCELLED" : "FAILED", e);
@@ -378,6 +394,7 @@ public final class ExperimentQueue implements AutoCloseable {
         String state = "QUEUED", experiment, environmentId, failure;
         Instant started, finished;
         volatile boolean cancelled;
+        PreparedExperiment prepared;
 
         Job(String id, ExperimentRequest request, Path directory) {
             this.id = id;

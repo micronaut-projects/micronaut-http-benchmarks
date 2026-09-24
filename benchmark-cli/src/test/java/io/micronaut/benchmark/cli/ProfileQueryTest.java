@@ -1,6 +1,7 @@
 package io.micronaut.benchmark.cli;
 
 import io.micronaut.benchmark.api.Nix;
+import io.micronaut.benchmark.api.ThroughputStage;
 import jdk.jfr.Event;
 import jdk.jfr.Name;
 import jdk.jfr.Recording;
@@ -68,6 +69,22 @@ class ProfileQueryTest {
         assertEquals("n,bytes\n1,20\n", query(profile, database,
                 "SELECT count(*) AS n, sum(weight) AS bytes FROM \"bench.QueryFixture\" WHERE benchmark_measured(startTime)"));
         assertEquals("n\n3\n", query(profile, database, "SELECT count(*) AS n FROM \"bench.QueryFixture\""));
+        // A late SLA failure changes eligibility without changing the recording or raw statistics.
+        Bench.JSON.writeValue(directory.resolve("stage-plan.json").toFile(),
+                new ThroughputStage("validation", 1000, List.of(new ThroughputStage.Phase("main/0", 100, end - start))));
+        Bench.JSON.writeValue(directory.resolve("stage-result.json").toFile(),
+                new ThroughputStage.Result("validation", "INCONCLUSIVE", null, 100, "SLA failed", List.of(
+                        new ThroughputStage.Observation("main/0", 100, "FAIL", "SLA failed"))));
+        profile.prepare(directory, 256);
+        assertEquals("n\n0\n", query(profile, database, "SELECT count(*) AS n FROM \"bench.QueryFixture\" WHERE benchmark_measured(startTime)"));
+        Bench.JSON.writeValue(directory.resolve("stage-result.json").toFile(),
+                new ThroughputStage.Result("discovery", "LOWER_BOUND", 100, null, null, List.of(
+                        new ThroughputStage.Observation("main/0", 100, "PASS", null))));
+        profile.prepare(directory, 256);
+        assertEquals("n\n0\n", query(profile, database, "SELECT count(*) AS n FROM \"bench.QueryFixture\" WHERE benchmark_measured(startTime)"));
+        Files.delete(directory.resolve("stage-plan.json"));
+        Files.delete(directory.resolve("stage-result.json"));
+        profile.prepare(directory, 256);
         assertEquals("deep\ntrue\n", query(profile, database,
                 "SELECT min(len(list_filter(\"stackTrace$methods\", m -> m != 0))) > 10 AS deep FROM \"bench.QueryFixture\""));
         assertTrue(query(profile, database, "SELECT run_id FROM benchmark_run").contains("test's-run"));
