@@ -170,7 +170,39 @@ Profiles and optimized binaries are normal Nix build outputs, reused across suit
 
 These builds require an `x86_64-linux` Nix builder with KVM available to Nix (`kvm` and `nixos-test` in its system features). Native-image compilation also needs substantial RAM. A remote Linux/KVM builder can provide these requirements.
 
+## Pyronaut threading
+
+`pyronaut.threading` selects between `event-loop` (the default) and `io`:
+
+| Standard suite run | Runtime | Controller execution |
+| --- | --- | --- |
+| `pyronaut` | JVM | `async def` handlers on the Netty event loop |
+| `pyronaut-io` | JVM | `def` handlers offloaded to cached platform IO threads |
+| `pyronaut-native` | Native | `async def` handlers on the Netty event loop |
+| `pyronaut-native-io` | Native | `def` handlers offloaded to cached platform IO threads |
+
+The event-loop build converts both handlers to `async def`; the short search computation needs no `await`.
+Server `thread-selection` is left at its default. Synchronous Python handlers select the IO executor before
+considering that setting, and Pyronaut configures its IO and blocking executors to use platform threads.
+The former Pyronaut `virtual` and `loom-carrier` modes have been removed. Historical `default` results used
+synchronous handlers on IO threads; new results record the explicit threading mode so they remain distinguishable.
+
+Results also record `contextPoolEnabled`, `contextPoolSize`, and `maxEventLoopContexts` in `parameters`, matching
+the configured `micronaut.python.pool` properties: pooling is enabled, `size = 0` selects twice the runtime's
+available processors for the shared pool, and `max-event-loop-contexts = 0` allows a dedicated Python context
+for every event loop. Each context has its own GIL.
+
 ## Smoke checks
+
+The four Pyronaut checks exercise the status and search endpoints over HTTP/1 and HTTPS/2:
+
+```sh
+nix build --no-link \
+  ./nix#checks.x86_64-linux.pyronaut-smoke \
+  ./nix#checks.x86_64-linux.pyronaut-io-smoke \
+  ./nix#checks.x86_64-linux.pyronaut-native-smoke \
+  ./nix#checks.x86_64-linux.pyronaut-native-io-smoke
+```
 
 The standard suite includes `fastapi-gunicorn` and `fastapi-granian`. Both use the shared app in
 `sut/fastapi/app.py`, with Pydantic request/response models, `/status`, and `/search/find` (404 when no match is found).

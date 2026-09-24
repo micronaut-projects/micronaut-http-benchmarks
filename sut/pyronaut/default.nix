@@ -1,14 +1,24 @@
 { config, lib, pkgs, ... }:
 let
   threading = config.pyronaut.threading;
-  configureThreading = lib.optionalString (threading != "default") ''
-    substituteInPlace benchmark-app/config/application.toml \
-      --replace-fail '[micronaut.server]' $'[micronaut.server]\nthread-selection = "BLOCKING"'
-    ${lib.optionalString (threading == "loom-carrier") ''
-      substituteInPlace benchmark-app/config/application.toml \
-        --replace-fail '[micronaut.server]' $'[micronaut.netty.event-loops.default]\nloom-carrier = true\n\n[micronaut.server]'
-    ''}
+  # Synchronous Python handlers always use the IO executor, regardless of server
+  # thread selection. Async handlers keep the work on the receiving event loop.
+  configureThreading = lib.optionalString (threading == "event-loop") ''
+    substituteInPlace benchmark-app/src/benchmark.py \
+      --replace-fail 'def status(' 'async def status(' \
+      --replace-fail 'def find(' 'async def find('
   '';
+  # Pin and record the context-pool defaults independently of controller threading.
+  # Zero means twice the available processors for the shared pool, and one
+  # dedicated context per event loop without a cap for async handlers.
+  contextPool = {
+    enabled = true;
+    size = 0;
+    max-event-loop-contexts = 0;
+  };
+  poolConfiguration = (pkgs.formats.toml { }).generate "pyronaut-context-pool.toml" {
+    micronaut.python.pool = contextPool;
+  };
   tls = import ../../nix/tls.nix { inherit pkgs; };
   graalvm = pkgs.stdenvNoCC.mkDerivation {
     pname = "graalvm-oracle";
@@ -72,7 +82,17 @@ let
     "-H:-GraalJITCompileAtRuntime"
     "-H:-RuntimeClassLoading"
   ];
-  nativeImageArgs = config.benchmark.sut.runtimeInfo.nativeImageArgs ++ baseNativeImageArgs;
+  # The asyncio bridge converts its Python cancellation callback to Runnable.
+  # The pinned runtime does not register this dynamic proxy for native images.
+  asyncNativeMetadata = pkgs.writeTextFile {
+    name = "pyronaut-async-native-metadata";
+    destination = "/reachability-metadata.json";
+    text = builtins.toJSON {
+      reflection = [{ type.proxy = [ "java.lang.Runnable" ]; }];
+    };
+  };
+  nativeImageArgs = config.benchmark.sut.runtimeInfo.nativeImageArgs ++ baseNativeImageArgs
+    ++ lib.optional (threading == "event-loop") "-H:ConfigurationFileDirectories=${asyncNativeMetadata}";
   pythonSitePackages = "lib/python${pyronautPython.pythonVersion}/site-packages";
   # Share the SDK across runtime variants; apply threading and profiling to the SUT below.
   pyronaut = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
@@ -192,7 +212,9 @@ let
         --progress off
       cp -r ${appSource} benchmark-app
       chmod -R u+w benchmark-app
-      ${configureThreading}install -Dm644 ${tls}/server.p12 benchmark-app/config/server.p12
+      ${configureThreading}
+      cat ${poolConfiguration} >> benchmark-app/config/application.toml
+      install -Dm644 ${tls}/server.p12 benchmark-app/config/server.p12
       ${pyronautPython}/bin/python "$TMPDIR/pyronaut/sdk/bin/pyronaut" install \
         --offline \
         --project-dir "$PWD/benchmark-app" \
@@ -250,17 +272,16 @@ let
   };
 in {
   options.pyronaut.threading = lib.mkOption {
-    type = lib.types.enum [ "default" "virtual" "loom-carrier" ];
-    default = "default";
-    description = "Server threading mode; virtual and loom-carrier use BLOCKING thread selection.";
+    type = lib.types.enum [ "event-loop" "io" ];
+    default = "event-loop";
+    description = "Controller threading: async handlers on the event loop, or synchronous handlers on cached platform IO threads.";
   };
   config = {
     benchmark = {
       sut.tlsHttp2 = true;
       jvm = {
         enable = isJvm;
-        extraArgs = lib.optional isJvm "-Dpolyglot.engine.userResourceCache=/var/lib/sut/.cache/org.graalvm.polyglot"
-          ++ lib.optional (isJvm && threading == "loom-carrier") "--add-opens=java.base/java.lang=ALL-UNNAMED";
+        extraArgs = lib.optional isJvm "-Dpolyglot.engine.userResourceCache=/var/lib/sut/.cache/org.graalvm.polyglot";
       };
       sut = {
         package = sut;
@@ -270,6 +291,9 @@ in {
         metadata = {
           typePrefix = "pyronaut";
           parameters.threading = threading;
+          parameters.contextPoolEnabled = lib.boolToString contextPool.enabled;
+          parameters.contextPoolSize = toString contextPool.size;
+          parameters.maxEventLoopContexts = toString contextPool.max-event-loop-contexts;
           parameters.sourceRevision = upstream.rev;
           parameters.graalvm = graalvm.version;
         };

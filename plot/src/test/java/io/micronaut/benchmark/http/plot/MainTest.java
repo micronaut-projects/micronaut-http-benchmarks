@@ -39,13 +39,15 @@ final class MainTest {
     }
 
     @Test
-    void loomSupportMapsNixThreadingMetadata() {
-        assertEquals("off", Main.loomSupport(null));
-        assertEquals("off", Main.loomSupport(Map.of()));
-        assertEquals("off", Main.loomSupport(Map.of("threading", "default")));
-        assertEquals("on", Main.loomSupport(Map.of("threading", "virtual")));
-        assertEquals("carried", Main.loomSupport(Map.of("threading", "loom-carrier")));
+    void threadingModelReadsNixThreadingMetadata() {
+        assertEquals("default", Main.threadingModel(null));
+        assertEquals("default", Main.threadingModel(Map.of()));
+        assertEquals("default", Main.threadingModel(Map.of("threading", "default")));
+        assertEquals("event-loop", Main.threadingModel(Map.of("threading", "event-loop")));
+        assertEquals("io", Main.threadingModel(Map.of("threading", "io")));
+        assertEquals("virtual", Main.threadingModel(Map.of("threading", "virtual")));
+        assertEquals("loom-carrier", Main.threadingModel(Map.of("threading", "loom-carrier")));
         assertThrows(IllegalArgumentException.class,
-                () -> Main.loomSupport(Map.of("threading", "unknown")));
+                () -> Main.threadingModel(Map.of("threading", "unknown")));
     }
 }
