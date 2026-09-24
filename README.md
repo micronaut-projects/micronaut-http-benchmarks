@@ -172,6 +172,25 @@ These builds require an `x86_64-linux` Nix builder with KVM available to Nix (`k
 
 ## Smoke checks
 
+The standard suite includes `fastapi-gunicorn` and `fastapi-granian`. Both use the shared app in
+`sut/fastapi/app.py`, with Pydantic request/response models, `/status`, and `/search/find` (404 when no match is found).
+They serve HTTP/1.1 on port 8080 and HTTP/2 over TLS on port 8443, with six ASGI workers per listener and uvloop.
+Gunicorn uses its native `asgi` worker and the `h2` package; Granian uses its `asgi` interface.
+The FastAPI Gunicorn package pins 26.2.2 because the nixpkgs version (26.0.0) does not finish empty ASGI HTTP/2 responses correctly.
+Both support py-spy profiling through the standard Python runtime configuration.
+Granian gives workers 10 seconds to stop before terminating any that remain, preventing benchmark teardown from hanging.
+
+Run their service and profiling checks with:
+
+```sh
+cd nix
+nix build --no-link \
+  .#checks.x86_64-linux.fastapi-gunicorn-smoke \
+  .#checks.x86_64-linux.fastapi-gunicorn-profiling-smoke \
+  .#checks.x86_64-linux.fastapi-granian-smoke \
+  .#checks.x86_64-linux.fastapi-granian-profiling-smoke
+```
+
 PGO checks remain available even while the production PGO entries are commented out:
 
 ```sh
