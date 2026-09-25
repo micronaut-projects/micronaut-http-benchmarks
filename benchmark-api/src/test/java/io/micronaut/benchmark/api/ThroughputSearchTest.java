@@ -205,6 +205,70 @@ class ThroughputSearchTest {
     }
 
     @Test
+    void discoveryRampsKeepMeasurementDurationsAndHistoricalPlans() {
+        var search = new ThroughputSearch("thorough", 100, 125, "180s", "15s", "45s", 25, 2, 2, 2, "5s");
+        var discovery = search.discovery();
+        assertEquals(List.of("main/0", "ramp/1", "main/1"),
+                discovery.executionPhases().stream().map(ThroughputStage.Phase::name).toList());
+        assertEquals(List.of(15000L, 5000L, 15000L),
+                discovery.executionPhases().stream().map(ThroughputStage.Phase::durationMillis).toList());
+        assertEquals(0, search.validation(new ThroughputStage.Result("discovery", "BRACKETED", 100, 125, null, List.of())).rampMillis());
+        assertEquals(search, JSON.readValue(JSON.writeValueAsString(search), ThroughputSearch.class));
+        assertEquals(discovery, JSON.readValue(JSON.writeValueAsString(discovery), ThroughputStage.class));
+
+        var savedSearch = (tools.jackson.databind.node.ObjectNode) JSON.valueToTree(search);
+        savedSearch.remove("discoveryRampDuration");
+        var historical = JSON.treeToValue(savedSearch, ThroughputSearch.class);
+        assertEquals("0s", historical.discoveryRampDuration());
+        assertEquals(historical.discovery().phases(), historical.discovery().executionPhases());
+        var savedPlan = (tools.jackson.databind.node.ObjectNode) JSON.valueToTree(discovery);
+        savedPlan.remove("rampMillis");
+        var historicalPlan = JSON.treeToValue(savedPlan, ThroughputStage.class);
+        assertEquals(historicalPlan.phases(), historicalPlan.executionPhases());
+    }
+
+    @Test
+    void aPassingRampDoesNotReplaceAMissingOrIncompleteMeasurement() {
+        var discovery = new ThroughputSearch("quick", 100, 125, "1s", "1s", "1s", 25, 5, 1, 2, "2s").discovery();
+        var points = List.of(phase("main/0", 1000, 100), phase("ramp/1", 2000, 100), phase("main/1", 999, 100));
+        var result = discovery.evaluate(stats(null, null, points));
+        assertEquals("INVALID", result.outcome());
+        assertEquals(100, result.highestPassingRate());
+        assertEquals("RAMP_PASS", result.phases().get(1).status());
+        assertFalse(result.eligible("ramp/1"));
+        result = discovery.evaluate(stats(null, null, points.subList(0, 2)));
+        assertEquals("INVALID", result.outcome());
+        assertEquals(100, result.highestPassingRate());
+
+        // A missing transition cannot be skipped even if the next measurement passed.
+        result = discovery.evaluate(stats(null, null, List.of(phase("main/0", 1000, 100), phase("main/1", 1000, 100))));
+        assertEquals("INVALID", result.outcome());
+        assertEquals(100, result.highestPassingRate());
+        assertFalse(result.eligible("main/1"));
+    }
+
+    @Test
+    void delayedRampFailureCutsOffLaterMeasurementsAtTheRampTarget() {
+        var discovery = new ThroughputSearch("quick", 100, 125, "1s", "1s", "1s", 25, 5, 1, 2, "2s").discovery();
+        var points = List.of(phase("main/1", 1000, 100), phase("ramp/1", 2000, 100), phase("main/0", 1000, 100));
+        var completion = new ThroughputStage.Completion(true, false, List.of("warmup", "main/0", "ramp/1", "main/1"));
+        for (String failure : List.of("Response time exceeded", "Exceeded session limit")) {
+            var result = discovery.evaluate(stats("ramp/1", failure, points), completion);
+            assertEquals("BRACKETED", result.outcome());
+            assertEquals(100, result.highestPassingRate());
+            assertEquals(125, result.firstFailingRate());
+            assertEquals(List.of("PASS", "RAMP_FAIL", "EXCLUDED"), result.phases().stream().map(ThroughputStage.Observation::status).toList());
+            assertTrue(result.canValidate());
+            assertFalse(result.eligible("ramp/1"));
+            assertFalse(result.eligible("main/1"));
+        }
+        var result = discovery.evaluate(stats(null, null, points), completion);
+        assertEquals("LOWER_BOUND", result.outcome());
+        assertEquals(125, result.highestPassingRate());
+        assertEquals(List.of("PASS", "RAMP_PASS", "PASS"), result.phases().stream().map(ThroughputStage.Observation::status).toList());
+    }
+
+    @Test
     void validationStartsBelowDiscoveryAndAggregationRequiresEveryRepetition() {
         var search = new ThroughputSearch("thorough", 100, 1000, "180s", "15s", "45s", 25, 2, 2, 2);
         var discovery = new ThroughputStage.Result("discovery", "BRACKETED", 100, 125, null, List.of());

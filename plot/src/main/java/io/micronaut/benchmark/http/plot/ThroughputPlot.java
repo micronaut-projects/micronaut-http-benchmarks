@@ -107,7 +107,8 @@ final class ThroughputPlot {
             var search = summary.throughput().search();
             environmentValue(html, "Measurement", search.preset() + " · warmup " + search.warmupDuration()
                     + " · discovery " + search.discoveryDuration() + " / +" + search.discoveryStep()
-                    + "% · validation " + search.validationDuration() + " / +" + search.validationStep() + "%");
+                    + "% · discovery ramp " + search.discoveryRampDuration()
+                    + " · validation " + search.validationDuration() + " / +" + search.validationStep() + "%");
         }
         Path savedEnvironment = Path.of(summary.directory()).resolve("environment.json");
         if (!Files.isRegularFile(savedEnvironment)) savedEnvironment = summary.stages().stream()

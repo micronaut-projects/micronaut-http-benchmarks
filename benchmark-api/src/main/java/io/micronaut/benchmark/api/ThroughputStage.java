@@ -5,10 +5,22 @@ import java.util.List;
 import java.util.Locale;
 
 /** The planned order, rather than arrival order of statistics, determines the eligible prefix. */
-public record ThroughputStage(String stage, long warmupMillis, List<Phase> phases) {
+public record ThroughputStage(String stage, long warmupMillis, List<Phase> phases, Long rampMillis) {
+    public ThroughputStage(String stage, long warmupMillis, List<Phase> phases) {
+        this(stage, warmupMillis, phases, 0L);
+    }
+
     public ThroughputStage {
+        // Jackson supplies null when this field is absent in an older saved plan.
+        if (rampMillis == null) rampMillis = 0L;
         if (!List.of("discovery", "validation").contains(stage) || warmupMillis <= 0 || phases.isEmpty()) {
             throw new IllegalArgumentException("Invalid throughput stage");
+        }
+        if (rampMillis < 0 || rampMillis > 0 && !stage.equals("discovery")) {
+            throw new IllegalArgumentException("Only discovery can include ramps");
+        }
+        if (rampMillis > 0 && phases.size() > 500) {
+            throw new IllegalArgumentException("Discovery with ramps would exceed 1000 phases; increase step size");
         }
         phases = List.copyOf(phases);
         int previous = 0;
@@ -22,6 +34,18 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
     }
 
     public record Phase(String name, int rate, long durationMillis) { }
+
+    /** Ramps carry their target rate for diagnostics and a conservative discovery failure boundary. */
+    public List<Phase> executionPhases() {
+        if (rampMillis == 0) return phases;
+        var execution = new ArrayList<Phase>();
+        for (int i = 0; i < phases.size(); i++) {
+            if (i > 0) execution.add(new Phase("ramp/" + i, phases.get(i).rate(), rampMillis));
+            execution.add(phases.get(i));
+        }
+        return List.copyOf(execution);
+    }
+
     public record Completion(boolean completed, boolean cancelled, List<String> terminatedPhases) { }
     public record Observation(String name, int rate, String status, String reason) {
         public boolean eligible() { return "PASS".equals(status); }
@@ -42,11 +66,12 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
     }
 
     public Result invalid(String reason) {
-        return new Result(stage, "INVALID", null, null, reason, phases.stream()
+        return new Result(stage, "INVALID", null, null, reason, executionPhases().stream()
                 .map(p -> new Observation(p.name(), p.rate(), "EXCLUDED", reason)).toList());
     }
 
     public Result evaluate(BenchmarkStats stats, Completion completion) {
+        var execution = executionPhases();
         String invalid = null;
         if (stats.info() == null || stats.info().errors() == null || stats.stats() == null || stats.failures() == null) {
             invalid = "Missing final statistics";
@@ -60,7 +85,7 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
                     || stats.failures().stream().anyMatch(f -> f.phase().equals("warmup"))) {
                 invalid = "Warmup failed or is incomplete";
             }
-            if (stats.failures().stream().anyMatch(f -> !f.phase().equals("warmup") && phases.stream().noneMatch(p -> p.name().equals(f.phase())))) {
+            if (stats.failures().stream().anyMatch(f -> !f.phase().equals("warmup") && execution.stream().noneMatch(p -> p.name().equals(f.phase())))) {
                 invalid = "Failure for an unknown phase";
             }
             if (stats.stats().stream().map(BenchmarkStats.Stats::name).distinct().count() != stats.stats().size()) {
@@ -72,7 +97,8 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
         String outcome = invalid == null ? "LOWER_BOUND" : "INVALID";
         String reason = invalid;
         boolean cutoff = invalid != null;
-        for (Phase planned : phases) {
+        for (Phase planned : execution) {
+            boolean ramp = planned.name().startsWith("ramp/");
             if (cutoff) {
                 observations.add(new Observation(planned.name(), planned.rate(), "EXCLUDED", reason));
                 continue;
@@ -121,10 +147,12 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
                 status = "INCOMPLETE";
                 reason = "Missing or incomplete measurement phase";
             } else {
-                passing = planned.rate();
-                observations.add(new Observation(planned.name(), planned.rate(), "PASS", null));
+                // A changing rate cannot establish a passing fixed-rate measurement.
+                if (!ramp) passing = planned.rate();
+                observations.add(new Observation(planned.name(), planned.rate(), ramp ? "RAMP_PASS" : "PASS", null));
                 continue;
             }
+            if (ramp && status.equals("FAIL")) status = "RAMP_FAIL";
             observations.add(new Observation(planned.name(), planned.rate(), status, reason));
             reason = "Cutoff at " + planned.name() + ": " + reason;
             cutoff = true;

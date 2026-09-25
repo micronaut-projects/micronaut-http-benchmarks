@@ -142,6 +142,8 @@ public final class Bench implements Runnable {
         Integer repetitions;
         @Option(names = "--discovery-duration", description = "Discovery phase duration (quick: 10s; thorough: 15s).")
         String discoveryDuration;
+        @Option(names = "--discovery-ramp-duration", description = "Smooth ramp between discovery measurement rates (default: 5s; 0s disables).")
+        String discoveryRampDuration;
         @Option(names = "--discovery-step", description = "Discovery increase in percent (default: 25).")
         Double discoveryStep;
         @Option(names = "--validation-step", description = "Validation increase in percent (quick: 5; thorough: 2).")
@@ -157,6 +159,7 @@ public final class Bench implements Runnable {
             if (maxRate != null) search.put("maxRate", maxRate);
             if (repetitions != null) search.put("repetitions", repetitions);
             if (discoveryDuration != null) search.put("discoveryDuration", discoveryDuration);
+            if (discoveryRampDuration != null) search.put("discoveryRampDuration", discoveryRampDuration);
             if (discoveryStep != null) search.put("discoveryStep", discoveryStep);
             if (validationStep != null) search.put("validationStep", validationStep);
             if (fixed && (preset != null || !search.isEmpty())) {

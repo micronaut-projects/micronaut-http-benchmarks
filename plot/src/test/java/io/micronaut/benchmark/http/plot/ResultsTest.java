@@ -191,6 +191,42 @@ class ResultsTest {
     }
 
     @Test
+    void discoveryRampStatisticsStayInDiagnosticsWithoutBecomingFixedRatePoints() throws Exception {
+        Path directory = result("discovery-ramp", "SUCCEEDED", 2000000);
+        var stats = (ObjectNode) JSON.readTree(directory.resolve("output.json").toFile());
+        var raw = stats.withArray("stats");
+        ((ObjectNode) raw.get(0).path("total").path("summary")).put("requestCount", 100).put("responseCount", 100);
+        ((ObjectNode) raw.get(1).path("total").path("summary")).put("responseCount", 6000).put("invalid", 0);
+        var ramp = ((ObjectNode) raw.get(1)).deepCopy();
+        ramp.put("name", "ramp/1");
+        ((ObjectNode) ramp.path("total").path("summary")).put("endTime", 7000);
+        raw.add(ramp);
+        var next = ((ObjectNode) raw.get(1)).deepCopy();
+        next.put("name", "main/1");
+        raw.add(next);
+        JSON.writeValue(directory.resolve("output.json").toFile(), stats);
+        var plan = new ThroughputStage("discovery", 1000, List.of(
+                new ThroughputStage.Phase("main/0", 100, 60000),
+                new ThroughputStage.Phase("main/1", 125, 60000)), 5000L);
+        JSON.writeValue(directory.resolve("stage-plan.json").toFile(), plan);
+        JSON.writeValue(directory.resolve("stage-completion.json").toFile(), new ThroughputStage.Completion(true, false,
+                List.of("warmup", "main/0", "ramp/1", "main/1")));
+        var summary = Results.summary(directory);
+        assertEquals(List.of("PASS", "RAMP_PASS", "PASS"), summary.phases().stream().map(Results.Phase::status).toList());
+        assertEquals(List.of(100, 125), ThroughputCharts.data(List.of(summary)).runs().getFirst().curves().getFirst()
+                .phases().stream().map(Results.Phase::targetRate).toList());
+        assertTrue(ThroughputPlot.render(directory).contains("RAMP_PASS"));
+
+        stats.withArray("failures").addObject().put("phase", "ramp/1").put("message", "Response time exceeded");
+        JSON.writeValue(directory.resolve("output.json").toFile(), stats);
+        summary = Results.summary(directory);
+        assertEquals(List.of("PASS", "RAMP_FAIL", "EXCLUDED"), summary.phases().stream().map(Results.Phase::status).toList());
+        assertEquals(List.of(100), ThroughputCharts.data(List.of(summary)).runs().getFirst().curves().getFirst()
+                .phases().stream().map(Results.Phase::targetRate).toList());
+        assertTrue(ThroughputPlot.render(directory).contains("RAMP_FAIL"));
+    }
+
+    @Test
     void adaptiveStageDiagnosticsRetainLaterPassesButComparisonsExcludeThem() throws Exception {
         Path directory = result("stage", "SUCCEEDED", 2000000);
         var stats = (ObjectNode) JSON.readTree(directory.resolve("output.json").toFile());

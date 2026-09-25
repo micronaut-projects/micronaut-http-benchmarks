@@ -31,6 +31,9 @@ failed phase are excluded even if later traffic succeeds. See [throughput method
 Use `--preset thorough` for focused comparisons. `--start-rate`, `--max-rate`, `--repetitions`, `--discovery-duration`,
 `--discovery-step`, and `--validation-step` override search settings. Steps are percentages. `--warmup` overrides both
 warmups and `--duration` overrides validation duration. The default ceiling is 300,000 RPS.
+Discovery inserts a five-second smooth ramp between its fixed-rate measurements. Use `--discovery-ramp-duration`
+to change it, or `--discovery-ramp-duration 0s` for direct rate changes. Ramp passes do not establish passing throughput;
+ramp failures stop discovery and retain the preceding passing measurement for validation.
 Hyperfoil preallocates sessions for every phase. The cluster defaults to four 32 GiB agents with 25 GiB Java heaps each.
 Use an explicit ceiling that fits the agents; see the [capacity notes](docs/throughput.md#validity-and-interpretation).
 

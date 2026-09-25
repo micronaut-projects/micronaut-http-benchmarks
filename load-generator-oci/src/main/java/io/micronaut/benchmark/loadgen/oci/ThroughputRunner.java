@@ -138,16 +138,24 @@ final class ThroughputRunner {
         var warmup = (Map<String, Object>) ((Map<String, Object>) phases.getFirst().get("warmup")).values().iterator().next();
         warmup.put("maxDuration", Math.addExact(plan.warmupMillis(), DRAIN_TIMEOUT_MILLIS) + "ms");
         generated.add(phases.getFirst());
-        for (int i = 0; i < plan.phases().size(); i++) {
-            var phase = plan.phases().get(i);
+        var execution = plan.executionPhases();
+        for (int i = 0; i < execution.size(); i++) {
+            var phase = execution.get(i);
             var settings = new LinkedHashMap<>(main);
             settings.put("duration", phase.durationMillis() + "ms");
             settings.put("maxDuration", Math.addExact(phase.durationMillis(), DRAIN_TIMEOUT_MILLIS) + "ms");
-            settings.put("usersPerSec", phase.rate());
+            boolean ramp = phase.name().startsWith("ramp/");
+            if (ramp) {
+                settings.remove("usersPerSec");
+                settings.put("initialUsersPerSec", execution.get(i - 1).rate());
+                settings.put("targetUsersPerSec", phase.rate());
+            } else {
+                settings.put("usersPerSec", phase.rate());
+            }
             settings.put("maxSessions", (int) Math.ceil(phase.rate() * search.sessionLimitFactor()));
             settings.put("sessionLimitPolicy", "FAIL");
-            settings.put("startAfterStrict", i == 0 ? "warmup" : plan.phases().get(i - 1).name());
-            generated.add(Map.of(phase.name(), Map.of("constantRate", settings)));
+            settings.put("startAfterStrict", i == 0 ? "warmup" : execution.get(i - 1).name());
+            generated.add(Map.of(phase.name(), Map.of(ramp ? "increasingRate" : "constantRate", settings)));
         }
         definition.put("phases", generated);
         return yaml.dump(definition);

@@ -8,7 +8,9 @@
 Each repetition contains two fresh SUT process lifetimes on the same machines:
 
 1. Warm up using the existing fixed-concurrency workload. Discovery begins at the lowest configured protocol rate
-   (or `--start-rate`), increasing by 25% up to `--max-rate` (default 300,000).
+   (or `--start-rate`), increasing by 25% up to `--max-rate` (default 300,000). Between measurement rates, a five-second
+   Hyperfoil `increasingRate` phase ramps smoothly from the preceding rate to the next. The first measurement starts
+   directly after warmup. The fixed-rate discovery measurements retain their full configured duration.
 2. Stop load, collect all artifacts, restore bootstrap, and redeploy. Warm up again.
 3. Validate at 25%, 50%, and 75% of the last passing discovery rate, then use the fine sweep from 90% of that passing
    rate through 125% of the first failing discovery rate, rounded up and capped at `--max-rate`. This gives the fresh
@@ -17,7 +19,7 @@ Each repetition contains two fresh SUT process lifetimes on the same machines:
    The three coarse steps use the normal validation duration, SLAs, and cutoff rules; they are eligible measurements.
    Rates that coincide after rounding are included only once.
 
-Rates round upward to integers and always increase; the endpoint appears exactly once. There is no descending search
+Measurement rates round upward to integers and always increase; the endpoint appears exactly once. There is no descending search
 or retry at a lower rate. Failure at the first discovery or validation rate is inconclusive. Warmup remains an explicit
 exception to the measured sweep's overload rule: it uses fixed concurrency and retains the response checks.
 Warmup defaults to 200 concurrent clients total across all agents, configurable with
@@ -31,13 +33,24 @@ Warmup defaults to 200 concurrent clients total across all agents, configurable 
 The coarse validation steps add 45 seconds in quick mode or 2 minutes 15 seconds per thorough repetition before
 draining/operational overhead. Every validation stage uses this ramp before the fine sweep starting at 90%.
 
-These are configurable with `--preset`, `--warmup`, `--discovery-duration`, `--duration`, `--discovery-step`,
+The discovery ramps add five seconds per transition, up to 2 minutes 10 seconds for the default 1,000–300,000 RPS
+search, before draining overhead. They apply in both presets. `--discovery-ramp-duration` changes their duration;
+`0s` disables them. Existing saved experiments without this setting retain their original direct rate changes.
+
+These are configurable with `--preset`, `--warmup`, `--discovery-duration`, `--discovery-ramp-duration`, `--duration`, `--discovery-step`,
 `--validation-step`, and `--repetitions`. Durations accept positive integer seconds, minutes, or hours; steps are
 percentages. Thorough runs typically take 30–50 minutes per case plus infrastructure and artifact overhead.
 
 ## Validity and interpretation
 
-Measurement uses Hyperfoil `constantRate`, `startAfterStrict`, and `failurePolicy: CANCEL`. The existing native percentile
+Measurement uses Hyperfoil `constantRate`, with `increasingRate` for discovery transitions, `startAfterStrict`, and
+`failurePolicy: CANCEL`. Ramps use the same native SLAs and response checks as the fixed-rate measurements. A passing
+ramp is recorded as `RAMP_PASS` and does not advance the highest passing rate. A failing ramp is `RAMP_FAIL`: it stops
+the search, excludes later phases, and uses the ramp's target as a conservative upper endpoint for fresh validation.
+That endpoint is not a measured constant-rate failure. An otherwise passing ramp must complete and drain;
+missing final statistics and internal generator errors remain invalid. Ramp observations remain in diagnostics,
+but are omitted from the fixed-rate latency curves.
+The existing native percentile
 SLAs require p50 below 100ms, p95 below 200ms, and p99 below 1000ms by default for every protocol,
 in both quick and thorough searches, with zero permitted request errors or invalid responses. No additional
 rolling-window SLA is introduced. Native SLA definitions and results determine failure; the analysis does not
@@ -74,7 +87,8 @@ Queueing must not mask a reported SLA failure. Connection blocking alone, withou
 failure, remains `GENERATOR_LIMITED`. Missing statistics, cancellation, and internal generator errors do not enable
 continuation.
 
-`maxSessions` remains explicit: `ceil(rate × sessionLimitFactor)`. Its default factor remains 2, independently of the
+`maxSessions` remains explicit: `ceil(rate × sessionLimitFactor)`, using the target rate for a discovery ramp.
+Its default factor remains 2, independently of the
 physical connection count, allowing HTTP/2 multiplexing. Session exhaustion fails the phase; it does not abort the
 two-stage search when discovery has preceding passes. The ceiling affects Hyperfoil's preallocated session capacity;
 use an appropriate ceiling for the available agent resources.
@@ -86,6 +100,9 @@ with a 200,000 RPS ceiling. Capacity depends on the sum of all phases' session l
 require more memory than discovery despite its lower maximum rate. Heap exhaustion is an invalid generator run,
 not evidence of SUT overload. Size the rate ceiling and sweep for the available resources; the protocol never silently
 lowers the requested ceiling or session factor. The increased cluster capacity still requires benchmark verification.
+Discovery ramps add one phase per transition, approximately doubling its reserved session capacity at the default
+rates. A short duration does not reduce that allocation. The native ramp avoids allocating a separate pool for every
+intermediate rate, but its initialization cost still needs to fit the agents and controller's initialization timeout.
 
 Only validation establishes throughput:
 

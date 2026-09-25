@@ -254,6 +254,7 @@
           startRate = lib.foldl' lib.min (lib.head baseProtocol.ops) baseProtocol.ops;
           maxRate = 300000;
           discoveryDuration = if thorough then "15s" else "10s";
+          discoveryRampDuration = "5s";
           discoveryStep = 25;
           validationStep = if thorough then 2 else 5;
           repetitions = if thorough then 2 else 1;

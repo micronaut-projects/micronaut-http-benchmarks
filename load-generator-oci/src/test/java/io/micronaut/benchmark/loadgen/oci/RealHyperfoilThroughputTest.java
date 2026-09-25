@@ -148,6 +148,62 @@ class RealHyperfoilThroughputTest {
         return execute(name, yaml, 60);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void discoveryRampsRunNativelyAndRetainTheFailureCutoff() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 128);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            server.setExecutor(executor);
+            server.createContext("/", exchange -> {
+                exchange.sendResponseHeaders(exchange.getRequestURI().getPath().equals("/invalid") ? 500 : 200, 2);
+                exchange.getResponseBody().write(new byte[]{'o', 'k'});
+                exchange.close();
+            });
+            server.start();
+            try {
+                var search = new ThroughputSearch("quick", 100, 125, "2s", "2s", "2s", 25, 5, 1, 2, "2s");
+                var plan = search.discovery();
+                String template = """
+                        name: discovery-ramp
+                        threads: 1
+                        failurePolicy: CANCEL
+                        http:
+                          host: http://127.0.0.1:%d
+                          sharedConnections: 32
+                        phases:
+                        """.formatted(server.getAddress().getPort())
+                        + phase("warmup", 100, "", "1s") + phase("main/0", 100, "warmup", "1s");
+                String workload = ThroughputRunner.workload(template, search, plan);
+                var successful = plan.evaluate(execute("discovery-ramp", workload));
+                assertEquals("LOWER_BOUND", successful.outcome(), successful.toString());
+                assertEquals(125, successful.highestPassingRate());
+                assertEquals(List.of("PASS", "RAMP_PASS", "PASS"),
+                        successful.phases().stream().map(ThroughputStage.Observation::status).toList());
+                assertFalse(successful.eligible("ramp/1"));
+
+                // Inject errors only into the native ramp, leaving both measured phases healthy.
+                var yaml = new org.yaml.snakeyaml.Yaml();
+                java.util.Map<String, Object> definition = yaml.load(workload);
+                var phases = (List<java.util.Map<String, java.util.Map<String, java.util.Map<String, Object>>>>) definition.get("phases");
+                var ramp = phases.get(2).get("ramp/1").get("increasingRate");
+                List<java.util.Map<String, Object>> scenario = yaml.load(yaml.dump(ramp.get("scenario")));
+                var steps = (List<java.util.Map<String, Object>>) scenario.getFirst().get("test");
+                var request = (java.util.Map<String, Object>) steps.getFirst().get("httpRequest");
+                request.put("GET", "/invalid");
+                request.put("handler", java.util.Map.of("autoRangeCheck", true));
+                ramp.put("scenario", scenario);
+                var failed = plan.evaluate(execute("discovery-ramp-failure", yaml.dump(definition)));
+                assertEquals("BRACKETED", failed.outcome(), failed.toString());
+                assertEquals(100, failed.highestPassingRate());
+                assertEquals(125, failed.firstFailingRate());
+                assertEquals(List.of("PASS", "RAMP_FAIL", "EXCLUDED"),
+                        failed.phases().stream().map(ThroughputStage.Observation::status).toList());
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+
     private BenchmarkStats execute(String name, String yaml, int timeoutSeconds) throws Exception {
         String home = System.getenv("HYPERFOIL_HOME");
         assertNotNull(home);

@@ -8,7 +8,15 @@ import java.util.List;
 /** Immutable search settings retained in the experiment closure. */
 public record ThroughputSearch(String preset, int startRate, int maxRate,
                                String warmupDuration, String discoveryDuration, String validationDuration,
-                               double discoveryStep, double validationStep, int repetitions, double sessionLimitFactor) {
+                               double discoveryStep, double validationStep, int repetitions, double sessionLimitFactor,
+                               String discoveryRampDuration) {
+    public ThroughputSearch(String preset, int startRate, int maxRate,
+                            String warmupDuration, String discoveryDuration, String validationDuration,
+                            double discoveryStep, double validationStep, int repetitions, double sessionLimitFactor) {
+        this(preset, startRate, maxRate, warmupDuration, discoveryDuration, validationDuration,
+                discoveryStep, validationStep, repetitions, sessionLimitFactor, "0s");
+    }
+
     public ThroughputSearch {
         if (!List.of("quick", "thorough").contains(preset)) throw new IllegalArgumentException("Unknown preset: " + preset);
         if (startRate < 1 || maxRate < startRate) throw new IllegalArgumentException("Require 0 < start rate <= maximum rate");
@@ -18,6 +26,9 @@ public record ThroughputSearch(String preset, int startRate, int maxRate,
         milliseconds(warmupDuration);
         milliseconds(discoveryDuration);
         milliseconds(validationDuration);
+        // Saved experiments without this setting retain their original direct rate changes.
+        if (discoveryRampDuration == null) discoveryRampDuration = "0s";
+        if (!discoveryRampDuration.equals("0s")) milliseconds(discoveryRampDuration);
         if (!Double.isFinite(sessionLimitFactor) || sessionLimitFactor <= 0
                 || Math.ceil(maxRate * sessionLimitFactor) > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Invalid session limit factor or excessive session capacity");
@@ -87,8 +98,11 @@ public record ThroughputSearch(String preset, int startRate, int maxRate,
     }
 
     private ThroughputStage stage(String stage, List<Integer> rates, String duration) {
+        long rampMillis = stage.equals("discovery") && !discoveryRampDuration.equals("0s")
+                ? milliseconds(discoveryRampDuration) : 0;
         return new ThroughputStage(stage, milliseconds(warmupDuration),
                 java.util.stream.IntStream.range(0, rates.size())
-                        .mapToObj(i -> new ThroughputStage.Phase("main/" + i, rates.get(i), milliseconds(duration))).toList());
+                        .mapToObj(i -> new ThroughputStage.Phase("main/" + i, rates.get(i), milliseconds(duration))).toList(),
+                rampMillis);
     }
 }

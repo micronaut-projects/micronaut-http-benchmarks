@@ -98,7 +98,8 @@ public final class Results {
         }
         var phases = new ArrayList<Phase>();
         for (var phase : stats.stats() == null ? List.<BenchmarkStats.Stats>of() : stats.stats()) {
-            if (phase.name() == null || !phase.name().startsWith("main/") || phase.total() == null || phase.total().summary() == null) {
+            if (phase.name() == null || !(phase.name().startsWith("main/") || phase.name().startsWith("ramp/"))
+                    || phase.total() == null || phase.total().summary() == null) {
                 continue;
             }
             var s = phase.total().summary();
@@ -199,7 +200,8 @@ public final class Results {
         Path file = directory.resolve("stage-plan.json");
         if (!Files.exists(file)) return null;
         var plan = JSON.readValue(file.toFile(), ThroughputStage.class);
-        return List.of(plan.warmupMillis(), plan.phases().stream().map(ThroughputStage.Phase::durationMillis).distinct().sorted().toList());
+        return List.of(plan.warmupMillis(), plan.rampMillis(),
+                plan.phases().stream().map(ThroughputStage.Phase::durationMillis).distinct().sorted().toList());
     }
 
     private static JsonNode warmupSettings(Path directory) throws IOException {
