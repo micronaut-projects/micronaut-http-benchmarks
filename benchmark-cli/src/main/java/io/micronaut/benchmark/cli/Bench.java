@@ -136,7 +136,7 @@ public final class Bench implements Runnable {
         String preset;
         @Option(names = "--start-rate", description = "Discovery starting RPS (default: protocol's lowest configured rate).")
         Integer startRate;
-        @Option(names = "--max-rate", description = "Search ceiling in RPS (default: 1000000).")
+        @Option(names = "--max-rate", description = "Search ceiling in RPS (default: 300000).")
         Integer maxRate;
         @Option(names = "--repetitions", description = "Independent discovery/validation pairs (quick: 1; thorough: 2).")
         Integer repetitions;

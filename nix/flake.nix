@@ -252,7 +252,7 @@
         effectiveDuration = if benchmarkDuration != null then benchmarkDuration else if !adaptive then "60s" else if thorough then "45s" else "15s";
         searchSettings = {
           startRate = lib.foldl' lib.min (lib.head baseProtocol.ops) baseProtocol.ops;
-          maxRate = 1000000;
+          maxRate = 300000;
           discoveryDuration = if thorough then "15s" else "10s";
           discoveryStep = 25;
           validationStep = if thorough then 2 else 5;

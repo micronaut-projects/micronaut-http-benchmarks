@@ -8,7 +8,7 @@
 Each repetition contains two fresh SUT process lifetimes on the same machines:
 
 1. Warm up using the existing fixed-concurrency workload. Discovery begins at the lowest configured protocol rate
-   (or `--start-rate`), increasing by 25% up to `--max-rate` (default 1,000,000).
+   (or `--start-rate`), increasing by 25% up to `--max-rate` (default 300,000).
 2. Stop load, collect all artifacts, restore bootstrap, and redeploy. Warm up again.
 3. Validate at 25%, 50%, and 75% of the last passing discovery rate, then use the fine sweep from 90% through the first
    failing discovery rate. If discovery reached the ceiling successfully, validate through that ceiling instead.
@@ -79,7 +79,7 @@ use an appropriate ceiling for the available agent resources.
 
 Hyperfoil reserves pools for all planned phases before starting the sweep. The cluster defaults to four 32 GiB agents;
 the runner assigns each a 25 GiB Java heap (80% of VM memory, rounded down). The previous two 16 GiB agents exhausted
-their 12 GiB heaps during initialization, both at the default 1,000,000 RPS ceiling and during thorough validation
+their 12 GiB heaps during initialization, both at the former 1,000,000 RPS ceiling and during thorough validation
 with a 200,000 RPS ceiling. Capacity depends on the sum of all phases' session limits, so a dense validation sweep can
 require more memory than discovery despite its lower maximum rate. Heap exhaustion is an invalid generator run,
 not evidence of SUT overload. Size the rate ceiling and sweep for the available resources; the protocol never silently
