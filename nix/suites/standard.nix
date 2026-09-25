@@ -36,12 +36,12 @@
       #};
       # Native Loom carrier variants are unsupported because they require private JDK APIs.
       #micronaut-pgo = { imports = [ ../../sut/micronaut-framework ]; benchmark.sut.runtime = "native-pgo"; };
-      pyronaut.imports = [ ../../sut/pyronaut ];
+      pyronaut-async.imports = [ ../../sut/pyronaut ];
       pyronaut-io = {
         imports = [ ../../sut/pyronaut ];
         pyronaut.threading = "io";
       };
-      #pyronaut-native = { imports = [ ../../sut/pyronaut ]; benchmark.sut.runtime = "native"; };
+      #pyronaut-native-async = { imports = [ ../../sut/pyronaut ]; benchmark.sut.runtime = "native"; };
       #pyronaut-native-io = {
       #  imports = [ ../../sut/pyronaut ];
       #  benchmark.sut.runtime = "native";

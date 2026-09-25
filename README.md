@@ -176,9 +176,9 @@ These builds require an `x86_64-linux` Nix builder with KVM available to Nix (`k
 
 | Standard suite run | Runtime | Controller execution |
 | --- | --- | --- |
-| `pyronaut` | JVM | `async def` handlers on the Netty event loop |
+| `pyronaut-async` | JVM | `async def` handlers on the Netty event loop |
 | `pyronaut-io` | JVM | `def` handlers offloaded to cached platform IO threads |
-| `pyronaut-native` | Native | `async def` handlers on the Netty event loop |
+| `pyronaut-native-async` | Native | `async def` handlers on the Netty event loop |
 | `pyronaut-native-io` | Native | `def` handlers offloaded to cached platform IO threads |
 
 The event-loop build converts both handlers to `async def`; the short search computation needs no `await`.
@@ -186,6 +186,8 @@ Server `thread-selection` is left at its default. Synchronous Python handlers se
 considering that setting, and Pyronaut configures its IO and blocking executors to use platform threads.
 The former Pyronaut `virtual` and `loom-carrier` modes have been removed. Historical `default` results used
 synchronous handlers on IO threads; new results record the explicit threading mode so they remain distinguishable.
+The async run selectors were previously named `pyronaut` and `pyronaut-native`; use the recorded `threading`
+parameter to distinguish older results.
 
 Results also record `contextPoolEnabled`, `contextPoolSize`, and `maxEventLoopContexts` in `parameters`, matching
 the configured `micronaut.python.pool` properties: pooling is enabled, `size = 0` selects twice the runtime's
@@ -244,9 +246,9 @@ Enable the corresponding Pyronaut run entries in `nix/suites/standard.nix` befor
 
 ```sh
 nix build --no-link \
-  ./nix#checks.x86_64-linux.pyronaut-smoke \
+  ./nix#checks.x86_64-linux.pyronaut-async-smoke \
   ./nix#checks.x86_64-linux.pyronaut-io-smoke \
-  ./nix#checks.x86_64-linux.pyronaut-native-smoke \
+  ./nix#checks.x86_64-linux.pyronaut-native-async-smoke \
   ./nix#checks.x86_64-linux.pyronaut-native-io-smoke
 ```
 
