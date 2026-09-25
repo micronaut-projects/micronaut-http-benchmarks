@@ -1,0 +1,15 @@
+--- a/api/src/main/java/io/hyperfoil/api/connection/Request.java
++++ b/api/src/main/java/io/hyperfoil/api/connection/Request.java
+@@ -158,7 +158,11 @@
+       // It doesn't make sense to throw any exceptions from this method
+       // since DefaultPromise.notifyListener0 would swallow them with a warning.
+       if (!future.isSuccess()) {
+-         log.error("Failed to write request {} to {}", this, connection);
++         // Keep the original failure and useful connection state without dumping all HTTP/2 requests.
++         log.error("Failed to write request {} on channel {} (inFlight={}, pendingRequests={})", this,
++               connection == null ? null : connection.context().channel(),
++               connection == null ? 0 : connection.inFlight(),
++               connection == null ? 0 : connection.pendingRequestCount(), future.cause());
+          if (connection != null) {
+             connection.close();
+          }

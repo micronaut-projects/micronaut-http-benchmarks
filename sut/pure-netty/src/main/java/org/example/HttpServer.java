@@ -34,9 +34,11 @@ public final class HttpServer implements AutoCloseable {
 
     private final ServerBootstrap tcpBootstrap;
     private final EventLoopGroup group;
+    private final ConnectionErrorHandler connectionErrors = new ConnectionErrorHandler();
 
     public HttpServer() {
         group = new MultiThreadIoEventLoopGroup(Runtime.getRuntime().availableProcessors(), IoUringIoHandler.newFactory());
+        group.terminationFuture().addListener(ignored -> connectionErrors.reportSuppressed());
         tcpBootstrap = new ServerBootstrap()
                 .channel(IoUringServerSocketChannel.class)
                 .group(group)
@@ -97,7 +99,8 @@ public final class HttpServer implements AutoCloseable {
     private void addHttp1Handlers(ChannelPipeline pipeline) {
         pipeline.addLast(new HttpServerCodec())
                 .addLast(makeAggregator())
-                .addLast(RequestHandler.INSTANCE);
+                .addLast(RequestHandler.INSTANCE)
+                .addLast(connectionErrors);
     }
 
     private void addHttp2Handlers(ChannelPipeline pipeline) {
@@ -106,7 +109,8 @@ public final class HttpServer implements AutoCloseable {
                         .validateHeaders(true)
                         .initialSettings(INITIAL_H2_SETTINGS)
                         .frameListener(new RequestHandlerHttp2Frame())
-                        .build());
+                        .build())
+                .addLast(connectionErrors);
     }
 
     private static HttpObjectAggregator makeAggregator() {

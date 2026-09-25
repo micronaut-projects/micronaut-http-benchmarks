@@ -9,6 +9,7 @@ pkgs.maven.buildMavenPackage {
     hash = "sha256-8n3wx4GOZRkGom+eWMTFjm9k3GfqIWzsiVG4h/inVrc=";
   };
   patches = [
+    ./hyperfoil-write-failure-logging.patch
     (pkgs.fetchurl {
       url = "https://github.com/yawkat/Hyperfoil/commit/bdf4a6c1d87ac5a038ab16b566133a429bc9e643.patch";
       hash = "sha256-dlAbxe2AzMApNTybdWrlEiOtk3JJTdIQhHeDInG6gFY=";

@@ -118,6 +118,12 @@ Each `repetitions/N/discovery` or `repetitions/N/validation` directory retains:
 - stage lifecycle record, server/agent logs, machine and environment information;
 - profiling artifacts and the original experiment closure link.
 
+Pure Netty logs UTC timestamps, thread names, and the affected channel. Closed-channel, broken-pipe, and connection-reset
+exceptions retain one full stack trace per ten-second window across all server connections; repeats are counted in a
+summary emitted at the end of the window, even if the errors stop. These are counts of suppressed log events, not distinct
+connections or failed requests. Other exceptions remain unthrottled. Hyperfoil request-write failures include the original
+exception, channel, in-flight count, and pending-request count without dumping the complete HTTP/2 stream map.
+
 `./bench summary RUN_DIR` includes repetitions, stage diagnostics, and any valid aggregate. `./bench compare A B` only
 emits an aggregate throughput delta when settings are compatible and both aggregates are available. `./bench plot DIR`
 creates a standalone report with bounds, phase diagnostics, and complete metadata. Fixed-rate analysis remains supported.
