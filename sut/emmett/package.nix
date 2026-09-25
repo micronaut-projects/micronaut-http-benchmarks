@@ -1,6 +1,5 @@
-{ lib, pkgs, ... }:
+{ pkgs }:
 let
-  tls = import ../../nix/tls.nix { inherit pkgs; };
   python = pkgs.python3;
   emmett-core-src = python.pkgs.fetchPypi {
     pname = "emmett_core";
@@ -76,44 +75,4 @@ let
     ];
     doCheck = false;
   };
-  runtime = python.withPackages (_: [ emmett pkgs.python3Packages.granian pkgs.python3Packages.orjson ]);
-  package = pkgs.stdenvNoCC.mkDerivation {
-    pname = "emmett-granian";
-    version = "1.0.0";
-    src = lib.fileset.toSource {
-      root = ./.;
-      fileset = lib.fileset.unions [ ./app.py ./run ];
-    };
-    nativeBuildInputs = [ pkgs.makeWrapper ];
-    installPhase = ''
-      install -Dm644 app.py "$out/share/emmett-granian/app.py"
-      install -Dm644 ${tls}/server.pem "$out/share/emmett-granian/cert.pem"
-      install -Dm644 ${tls}/server-key.pem "$out/share/emmett-granian/key.pem"
-      install -Dm755 run "$out/libexec/emmett-granian"
-      makeWrapper ${pkgs.bash}/bin/bash "$out/bin/emmett-granian" \
-        --add-flags "$out/libexec/emmett-granian" \
-        --set APP_DIR "$out/share/emmett-granian" \
-        --prefix PATH : ${lib.makeBinPath [ runtime pkgs.curl pkgs.coreutils pkgs.systemd ]}
-    '';
-  };
-in {
-  benchmark = {
-    sut.runtime = lib.mkForce "python";
-    sut.tlsHttp2 = true;
-    jvm.enable = false;
-    sut = {
-      inherit package;
-      executable = "emmett-granian";
-      description = "Emmett with Granian benchmark server";
-      metadata = {
-        typePrefix = "emmett-granian";
-        parameters = {
-          server = "granian";
-          interface = "rsgi";
-          workersPerProtocol = "6";
-          totalWorkers = "12";
-        };
-      };
-    };
-  };
-}
+in emmett

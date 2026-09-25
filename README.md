@@ -197,9 +197,50 @@ Pyronaut's SDK and benchmark app use Micronaut Core built from the source revisi
 from Pyronaut's `sourceRevision`. When updating the core pin, refresh Pyronaut's dependency lock and
 run all four smoke checks below.
 
+## Python server modes
+
+Flask, FastAPI, Emmett, and Django each have one framework module under `sut/`.
+Select the HTTP server with `benchmark.python.server = "gunicorn"` or `"granian"`:
+
+```nix
+fastapi-granian = {
+  imports = [ ../../sut/fastapi ];
+  benchmark.python.server = "granian";
+};
+flask-granian = {
+  imports = [ ../../sut/flask ];
+  benchmark.python.server = "granian";
+};
+```
+
+These are entries in `benchmark.suite.runs` in `nix/suites/standard.nix`. Run selectors can still include the
+server name; they select configurations of the same framework SUT. Among these Python frameworks, the standard suite
+enables `flask-gunicorn` and `fastapi-granian`, with commented entries for the other combinations. Flask and Django
+default to Gunicorn; FastAPI and Emmett default to Granian. Pyronaut uses its own Netty server and threading
+options, with its variants selected separately in the same suite.
+
+| Framework module | Gunicorn mode | Granian mode |
+| --- | --- | --- |
+| `sut/fastapi` | ASGI worker, uvloop | ASGI, uvloop |
+| `sut/flask` | WSGI, gevent worker | WSGI |
+| `sut/emmett` | ASGI worker, asyncio | RSGI, asyncio |
+| `sut/django` | WSGI, gevent worker | WSGI |
+
+The shared launcher in `sut/python-server` serves HTTP/1.1 on port 8080 and HTTP/2 over TLS on port 8443,
+with six workers per listener. It announces readiness only after both listeners pass their probes.
+Granian gives workers 10 seconds to stop before terminating any that remain. Gunicorn ASGI uses 26.2.2
+because the nixpkgs version (26.0.0) does not finish empty ASGI HTTP/2 responses correctly; WSGI retains
+the nixpkgs version. All modes support py-spy profiling through the existing Python runtime configuration.
+
+Result types identify the framework (for example `fastapi-python`); `parameters.server`, `serverVersion`,
+`interface`, and worker settings identify the selected server mode. Existing saved results keep their original metadata.
+FastAPI continues to use Pydantic request/response models, while all four frameworks expose `/status` and
+`/search/find` (404 when no match is found).
+
 ## Smoke checks
 
-The four Pyronaut checks exercise the status and search endpoints over HTTP/1 and HTTPS/2:
+The four Pyronaut checks exercise the status and search endpoints over HTTP/1 and HTTPS/2.
+Enable the corresponding Pyronaut run entries in `nix/suites/standard.nix` before running their checks:
 
 ```sh
 nix build --no-link \
@@ -209,15 +250,8 @@ nix build --no-link \
   ./nix#checks.x86_64-linux.pyronaut-native-io-smoke
 ```
 
-The standard suite includes `fastapi-gunicorn` and `fastapi-granian`. Both use the shared app in
-`sut/fastapi/app.py`, with Pydantic request/response models, `/status`, and `/search/find` (404 when no match is found).
-They serve HTTP/1.1 on port 8080 and HTTP/2 over TLS on port 8443, with six ASGI workers per listener and uvloop.
-Gunicorn uses its native `asgi` worker and the `h2` package; Granian uses its `asgi` interface.
-The FastAPI Gunicorn package pins 26.2.2 because the nixpkgs version (26.0.0) does not finish empty ASGI HTTP/2 responses correctly.
-Both support py-spy profiling through the standard Python runtime configuration.
-Granian gives workers 10 seconds to stop before terminating any that remain, preventing benchmark teardown from hanging.
-
-Run their service and profiling checks with:
+All eight Python framework/server combinations have service and profiling checks, including combinations
+disabled in the suite. For example:
 
 ```sh
 cd nix
@@ -227,6 +261,8 @@ nix build --no-link \
   .#checks.x86_64-linux.fastapi-granian-smoke \
   .#checks.x86_64-linux.fastapi-granian-profiling-smoke
 ```
+
+Replace `fastapi` with `flask`, `emmett`, or `django` to check the corresponding framework.
 
 PGO checks remain available even while the production PGO entries are commented out:
 

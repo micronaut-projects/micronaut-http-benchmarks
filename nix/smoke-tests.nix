@@ -5,12 +5,20 @@ let
   standard = evaluatedSuites.standard;
   standardRuns = evaluatedSuiteRuns.standard;
   # Exercise opt-in native builds even when they are absent from the benchmark matrix.
-  checkRuns = lib.concatMap (framework: map (runtime:
+  nativeCheckRuns = lib.concatMap (framework: map (runtime:
     expandRun "standard" standard "${framework}-${if runtime == "native-pgo" then "pgo" else runtime}" {
       imports = [ (../sut + (if framework == "micronaut" then "/micronaut-framework" else "/quarkus")) ];
       benchmark.sut.runtime = runtime;
     }
   ) [ "native" "native-pgo" ]) [ "micronaut" "quarkus" ];
+  # Server modes remain checked even when a combination is not selected in the suite.
+  pythonCheckRuns = lib.concatMap (framework: map (server:
+    expandRun "standard" standard "${framework}-${server}" {
+      imports = [ (../sut + "/${framework}") ];
+      benchmark.python.server = server;
+    }
+  ) [ "gunicorn" "granian" ]) [ "fastapi" "flask" "emmett" "django" ];
+  checkRuns = nativeCheckRuns ++ pythonCheckRuns;
   enabledRuns = lib.concatMap (run: run.variants)
     ((lib.attrValues standardRuns)
       ++ lib.filter (run: !(builtins.hasAttr run.runName standardRuns)) checkRuns);
@@ -85,6 +93,16 @@ let
         machine.succeed(${builtins.toJSON (runDefinition (localBenchmark.definition trainingCase))})
       ''}
       ${lib.optionalString profiling ''
+        ${lib.optionalString pySpy ''
+          # Single-request probes can all fall between the 1 Hz samples.
+          # Keep the application busy before checking that profiling captured stacks.
+          machine.succeed(${builtins.toJSON (runDefinition (localBenchmark.definition {
+            request = trainingRequest;
+            protocol = protocolFor "http1";
+            mode = "pgo";
+            duration = "10s";
+          }))})
+        ''}
         machine.succeed("systemctl stop sut.service")
         machine.succeed("test -s /var/lib/sut/${artifact}")
         ${lib.optionalString (nativeProfile != null) ''
