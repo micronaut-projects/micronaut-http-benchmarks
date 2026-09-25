@@ -156,6 +156,9 @@ let
       export PATH="$JAVA_HOME/bin:$PATH"
       export JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=$MITM_CACHE_HOST -Dhttp.proxyPort=$MITM_CACHE_PORT -Dhttps.proxyHost=$MITM_CACHE_HOST -Dhttps.proxyPort=$MITM_CACHE_PORT -Djavax.net.ssl.trustStore=$MITM_CACHE_KEYSTORE -Djavax.net.ssl.trustStorePassword=$MITM_CACHE_KS_PWD"
       mkdir -p "$HOME" "$TMPDIR" "$GRADLE_USER_HOME" "$TMPDIR/sdk" "$TMPDIR/m2"
+      # Develocity task-cache entries are ephemeral, not reproducible Nix inputs.
+      # The shared Gradle home also covers the nested core catalog build.
+      echo 'develocity.enabled=false' > "$GRADLE_USER_HOME/gradle.properties"
       # The Python installer resolves Maven artifacts outside the composite build.
       gradle -p micronaut-core publishToMavenLocal \
         --no-daemon \
