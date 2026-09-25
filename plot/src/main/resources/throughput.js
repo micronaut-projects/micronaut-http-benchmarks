@@ -122,8 +122,8 @@ function throughputChart(kind, data) {
         type: 'line', data: {datasets},
         options: {...common,
             scales: {
-                x: {type: 'linear', min: 0, suggestedMax: Math.max(1, ...datasets.flatMap(d => d.data.map(p => p.x))) * 1.04,
-                    title: {display: true, text: 'Offered requests / second'}, ticks: {callback: throughputRate, maxTicksLimit: 5}},
+                x: {type: 'logarithmic', suggestedMax: Math.max(1, ...datasets.flatMap(d => d.data.map(p => p.x))) * 1.04,
+                    title: {display: true, text: 'Offered requests / second (log scale)'}, ticks: {callback: throughputRate, maxTicksLimit: 5}},
                 y: {type: 'custom-log', min: Number.isFinite(min) ? min * .7 : 1,
                     max: cap ?? (Number.isFinite(max) ? max * 1.2 : 1e6),
                     title: {display: true, text: 'Request latency (log scale)'},
