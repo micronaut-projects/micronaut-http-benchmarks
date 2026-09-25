@@ -64,7 +64,7 @@
       #vertx.imports = [ ../../sut/vertx ];
     };
     profiling = {
-      enable = true;
+      enable = false;
     };
   };
 }
