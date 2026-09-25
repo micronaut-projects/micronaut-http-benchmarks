@@ -15,12 +15,16 @@ class ThroughputSearchTest {
             new ThroughputStage.Phase("main/2", 121, 1000)));
 
     static BenchmarkStats.Stats phase(String name, long duration, int responses) {
+        return phase(name, duration, 100, responses);
+    }
+
+    static BenchmarkStats.Stats phase(String name, long duration, int requests, int responses) {
         return JSON.readValue("""
                 {"name":"%s","phase":"%s","total":{"summary":{"startTime":1000,"endTime":%d,
-                  "requestCount":100,"responseCount":%d,"percentileResponseTime":{},"extensions":{},
+                  "requestCount":%d,"responseCount":%d,"percentileResponseTime":{},"extensions":{},
                   "minResponseTime":0,"maxResponseTime":0,"meanResponseTime":0,"stdDevResponseTime":0,
                   "invalid":0,"connectionErrors":0,"requestTimeouts":0,"internalErrors":0,"blockedTime":0}}}
-                """.formatted(name, name, 1000 + duration, responses), BenchmarkStats.Stats.class);
+                """.formatted(name, name, 1000 + duration, requests, responses), BenchmarkStats.Stats.class);
     }
 
     BenchmarkStats stats(String failed, String message, List<BenchmarkStats.Stats> phases) {
@@ -58,6 +62,34 @@ class ThroughputSearchTest {
         var result = plan.evaluate(stats(null, null, List.of(phase("main/0", 1000, 100))),
                 new ThroughputStage.Completion(true, false, List.of("warmup")));
         assertNull(result.highestPassingRate());
+    }
+
+    @Test
+    void toleratesMinorResponseOvercountsInCompletedMeasurements() {
+        // Counts from the completed Micronaut Loom validation phase: 26 extra responses.
+        for (var measurement : List.of(phase("main/1", 15013, 833207, 833233),
+                phase("main/1", 1000, 1000, 1001))) {
+            var result = plan.evaluate(stats(null, null, List.of(
+                    phase("main/0", 1000, 100), measurement, phase("main/2", 1000, 100))),
+                    new ThroughputStage.Completion(true, false, List.of("warmup", "main/0", "main/1", "main/2")));
+            assertEquals("LOWER_BOUND", result.outcome());
+            assertEquals(121, result.highestPassingRate());
+            assertTrue(result.eligible("main/1"));
+        }
+    }
+
+    @Test
+    void responseOvercountToleranceDoesNotHideIncompleteOrCorruptMeasurements() {
+        for (var measurement : List.of(phase("main/1", 1000, 1000, 1002),
+                phase("main/1", 1000, 1000, 999), phase("main/1", 999, 1000, 1001),
+                phase("main/1", 1000, 0, 0), phase("main/1", 1000, 0, 1))) {
+            var result = plan.evaluate(stats(null, null, List.of(
+                    phase("main/0", 1000, 100), measurement, phase("main/2", 1000, 100))));
+            assertEquals("INVALID", result.outcome());
+            assertEquals(100, result.highestPassingRate());
+            assertNull(result.firstFailingRate());
+            assertFalse(result.eligible("main/2"));
+        }
     }
 
     @Test

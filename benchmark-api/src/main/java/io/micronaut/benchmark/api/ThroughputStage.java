@@ -146,8 +146,10 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
     private static boolean complete(BenchmarkStats.Stats phase, long duration) {
         if (phase == null || phase.total() == null || phase.total().summary() == null) return false;
         var s = phase.total().summary();
-        // Controller timestamps have millisecond precision. Do not accept early termination or undrained requests.
-        return s.startTime > 0 && s.endTime - s.startTime >= duration && s.responseCount > 0
-                && s.requestCount == s.responseCount;
+        // Allow up to 0.1% extra responses for minor Hyperfoil accounting inconsistencies.
+        // Still require the full duration and reject missing responses or empty measurements.
+        return s.startTime > 0 && s.endTime - s.startTime >= duration && s.requestCount > 0
+                && s.responseCount >= s.requestCount
+                && (long) s.responseCount - s.requestCount <= s.requestCount / 1000;
     }
 }

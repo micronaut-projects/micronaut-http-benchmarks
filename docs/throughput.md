@@ -53,6 +53,9 @@ Hyperfoil can start a subsequent phase before a preceding phase's final SLA eval
 The daemon waits for finalized statistics, then accepts only the initial consecutive passing phases in planned order.
 The first failure establishes a boundary. Every later phase is excluded, even if its own SLA passes. Missing,
 unfinished, or undrained phases cannot count as passes or be skipped.
+For otherwise passing phases (including warmup), response counts may exceed request counts by up to 0.1% to tolerate
+minor Hyperfoil accounting inconsistencies. Missing responses, larger overcounts, empty measurements, and short
+durations remain invalid; SLA and error checks are unchanged.
 Each phase has a native maximum duration two minutes beyond its injection duration, bounding drain time if sessions
 become stuck. This does not shorten warmup or measurement; incomplete measurements and infrastructure errors cannot establish
 throughput bounds.
