@@ -63,7 +63,10 @@ in
 
   services.journald = {
     storage = "persistent";
-    console = serialDevice;
+    settings.Journal = {
+      ForwardToConsole = true;
+      TTYPath = serialDevice;
+    };
     rateLimitInterval = "0";
     rateLimitBurst = 0;
   };
