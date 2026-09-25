@@ -68,7 +68,8 @@ public record ThroughputSearch(String preset, int startRate, int maxRate,
         int passing = discovery.highestPassingRate();
         int start = percentage(passing, 90);
         Integer endpoint = discovery.firstFailingRate();
-        int end = endpoint == null ? maxRate : endpoint;
+        // The fresh validation process may sustain more load than discovery did.
+        int end = endpoint == null ? maxRate : (int) Math.min(maxRate, (endpoint * 125L + 99) / 100);
         var validationRates = new ArrayList<Integer>();
         // These coarse steps are measured phases, subject to the ordinary SLA cutoff.
         for (int percent : List.of(25, 50, 75)) {

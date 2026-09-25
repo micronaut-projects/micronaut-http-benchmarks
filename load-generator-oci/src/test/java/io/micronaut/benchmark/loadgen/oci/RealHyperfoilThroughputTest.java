@@ -131,7 +131,7 @@ class RealHyperfoilThroughputTest {
                         assertEquals("FAIL", result.phases().get(1).status());
                         assertTrue(result.canValidate());
                         var search = new ThroughputSearch("quick", 100, 1000, "2s", "2s", "2s", 25, 5, 1, 2);
-                        assertEquals(110, search.validation(result).phases().getLast().rate());
+                        assertEquals(138, search.validation(result).phases().getLast().rate());
                     }
                     if (scenario.startsWith("session")) {
                         assertEquals(110, result.firstFailingRate());

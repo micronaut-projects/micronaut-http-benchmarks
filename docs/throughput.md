@@ -10,8 +10,10 @@ Each repetition contains two fresh SUT process lifetimes on the same machines:
 1. Warm up using the existing fixed-concurrency workload. Discovery begins at the lowest configured protocol rate
    (or `--start-rate`), increasing by 25% up to `--max-rate` (default 300,000).
 2. Stop load, collect all artifacts, restore bootstrap, and redeploy. Warm up again.
-3. Validate at 25%, 50%, and 75% of the last passing discovery rate, then use the fine sweep from 90% through the first
-   failing discovery rate. If discovery reached the ceiling successfully, validate through that ceiling instead.
+3. Validate at 25%, 50%, and 75% of the last passing discovery rate, then use the fine sweep from 90% of that passing
+   rate through 125% of the first failing discovery rate, rounded up and capped at `--max-rate`. This gives the fresh
+   validation process 25% headroom above discovery's failure boundary in both presets. If discovery reached the ceiling
+   successfully, validate through that ceiling instead.
    The three coarse steps use the normal validation duration, SLAs, and cutoff rules; they are eligible measurements.
    Rates that coincide after rounding are included only once.
 
@@ -62,10 +64,10 @@ throughput bounds.
 
 A finalized session-limit failure is treated exactly like an SLA failure: mark the phase `FAIL`, preserve preceding
 passes, and exclude every later phase. No accompanying latency/error SLA report is required. Discovery can proceed
-to fresh validation through that failing rate, and validation can establish a bracket ending at a session-limit
-failure. This is a benchmark failure boundary under the configured session budget; session exhaustion can be a symptom
-of overload and queueing. Missing/undrained statistics, cancellation, and infrastructure/internal errors still invalidate
-the affected measurement.
+to fresh validation with the same 25% headroom above that failing rate, and validation can establish a bracket ending
+at a session-limit failure. This is a benchmark failure boundary under the configured session budget; session exhaustion
+can be a symptom of overload and queueing. Missing/undrained statistics, cancellation, and infrastructure/internal errors
+still invalidate the affected measurement.
 
 A native latency/error/response-validity SLA failure also remains `FAIL` when accompanied by connection blocking.
 Queueing must not mask a reported SLA failure. Connection blocking alone, without a session-limit or other SLA/request

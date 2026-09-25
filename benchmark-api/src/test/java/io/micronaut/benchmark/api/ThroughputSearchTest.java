@@ -125,7 +125,7 @@ class ThroughputSearchTest {
             assertTrue(result.canValidate());
             assertFalse(result.eligible("main/1"));
             assertEquals(List.of(25, 50, 75, 90), search.validation(result).phases().stream().limit(4).map(ThroughputStage.Phase::rate).toList());
-            assertEquals(110, search.validation(result).phases().getLast().rate());
+            assertEquals(138, search.validation(result).phases().getLast().rate());
             assertFalse(discovery.evaluate(mixed, new ThroughputStage.Completion(true, false, List.of("warmup", "main/0"))).canValidate());
             assertFalse(discovery.evaluate(mixed, new ThroughputStage.Completion(true, true, completion.terminatedPhases())).canValidate());
             var validation = plan.evaluate(mixed, completion);
@@ -210,7 +210,7 @@ class ThroughputSearchTest {
         var discovery = new ThroughputStage.Result("discovery", "BRACKETED", 100, 125, null, List.of());
         var validationPlan = search.validation(discovery);
         assertEquals(List.of(25, 50, 75, 90), validationPlan.phases().stream().limit(4).map(ThroughputStage.Phase::rate).toList());
-        assertEquals(125, validationPlan.phases().getLast().rate());
+        assertEquals(157, validationPlan.phases().getLast().rate());
         assertEquals(45000, validationPlan.phases().getFirst().durationMillis());
         var first = new ThroughputResult.Repetition(1, "1/discovery", discovery, "1/validation", discovery);
         assertNull(new ThroughputResult(search, List.of(first)).aggregate());
@@ -231,10 +231,35 @@ class ThroughputSearchTest {
             var validation = search.validation(discovery);
             var rates = validation.phases().stream().map(ThroughputStage.Phase::rate).toList();
             assertEquals(List.of(27140, 54280, 81420, 97704), rates.subList(0, 4));
-            assertEquals(ThroughputSearch.rates(97704, 135700, search.validationStep()), rates.subList(3, rates.size()));
+            assertEquals(ThroughputSearch.rates(97704, 169625, search.validationStep()), rates.subList(3, rates.size()));
             assertTrue(validation.phases().stream().allMatch(p -> p.durationMillis() == (quick ? 15000 : 45000)));
             assertEquals(search, JSON.readValue(JSON.writeValueAsString(search), ThroughputSearch.class));
         }
+    }
+
+    @Test
+    void validationCanBracketAboveTheDiscoveryFailure() {
+        var search = new ThroughputSearch("quick", 1000, 300000, "1s", "1s", "1s", 25, 5, 1, 2);
+        var discovery = new ThroughputStage.Result("discovery", "BRACKETED", 44465, 55582, null, List.of());
+        var validation = search.validation(discovery);
+        var last = validation.phases().getLast();
+        assertEquals(69478, last.rate());
+        var measurements = validation.phases().stream().map(p -> phase(p.name(), 1000, 100)).toList();
+        var result = validation.evaluate(stats(last.name(), "Response time exceeded", measurements));
+        assertEquals("BRACKETED", result.outcome());
+        assertEquals(68452, result.highestPassingRate());
+        assertEquals(69478, result.firstFailingRate());
+    }
+
+    @Test
+    void validationHeadroomRespectsTheCeilingWithoutOverflow() {
+        var search = new ThroughputSearch("quick", 1000, 300000, "1s", "1s", "1s", 25, 5, 1, 2);
+        var discovery = new ThroughputStage.Result("discovery", "BRACKETED", 212032, 265040, null, List.of());
+        assertEquals(300000, search.validation(discovery).phases().getLast().rate());
+
+        search = new ThroughputSearch("quick", 1000, Integer.MAX_VALUE, "1s", "1s", "1s", 25, 5, 1, 1);
+        discovery = new ThroughputStage.Result("discovery", "BRACKETED", 1600000000, 2000000000, null, List.of());
+        assertEquals(Integer.MAX_VALUE, search.validation(discovery).phases().getLast().rate());
     }
 
     @Test
