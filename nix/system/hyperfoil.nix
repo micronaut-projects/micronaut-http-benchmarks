@@ -27,6 +27,11 @@ pkgs.maven.buildMavenPackage {
       url = "https://github.com/Hyperfoil/Hyperfoil/pull/907.patch";
       hash = "sha256-LzLLj3fD8xYL4cesT8lpi23OrJXW/a+Q8XeL7TlqDq0=";
     })
+    # https://github.com/Hyperfoil/Hyperfoil/pull/908
+    (pkgs.fetchurl {
+      url = "https://github.com/yawkat/Hyperfoil/commit/a2fd8fc682ce9a0b0155229fb7af3c6a218ae540.patch";
+      hash = "sha256-kvAuXJiuPbgbsX2jF+QmxydtLo16Ef8641TUMx/J+HE=";
+    })
   ];
   mvnJdk = pkgs.jdk25;
   nativeBuildInputs = [ pkgs.jdk25 pkgs.unzip ];

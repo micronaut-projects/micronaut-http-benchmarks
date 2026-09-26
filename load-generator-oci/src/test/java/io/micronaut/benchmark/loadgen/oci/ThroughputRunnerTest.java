@@ -1,0 +1,84 @@
+package io.micronaut.benchmark.loadgen.oci;
+
+import io.hyperfoil.api.config.BenchmarkData;
+import io.hyperfoil.core.parser.BenchmarkParser;
+import io.micronaut.benchmark.api.ThroughputSearch;
+import io.micronaut.benchmark.api.ThroughputStage;
+import org.junit.jupiter.api.Test;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ThroughputRunnerTest {
+    private static final String TEMPLATE = """
+            name: adaptive
+            agents: {}
+            failurePolicy: CANCEL
+            http:
+              host: http://localhost:8080
+            phases:
+            - warmup:
+                always:
+                  duration: 180s
+                  users: 200
+                  isWarmup: true
+                  scenario:
+                  - test:
+                    - httpRequest:
+                        GET: /
+            - main/0:
+                constantRate:
+                  duration: 45s
+                  usersPerSec: 1000
+                  maxSessions: 2000
+                  startAfterStrict: warmup
+                  scenario:
+                  - test:
+                    - httpRequest:
+                        GET: /
+                        handler:
+                          autoRangeCheck: true
+                        sla:
+                        - limits: { '0.50': 100ms, '0.95': 200ms, '0.99': 1000ms }
+                          blockedRatio: 1
+                        - errorRatio: 0
+                          invalidRatio: 0
+                          blockedRatio: 0
+            """;
+
+    @Test
+    void fullDiscoverySurvivesYamlRewritingAndHyperfoilParsing() throws Exception {
+        assertLargeSweepParses("discovery");
+    }
+
+    @Test
+    void denseValidationSurvivesYamlRewritingAndHyperfoilParsing() throws Exception {
+        assertLargeSweepParses("validation");
+    }
+
+    private void assertLargeSweepParses(String stage) throws Exception {
+        // Default discovery has 53 phases including ramps; a finer validation sweep also exceeds 50.
+        var search = new ThroughputSearch("thorough", 1000, 300000, "180s", "15s", "45s",
+                25, 0.5, 2, 2, "5s");
+        var plan = stage.equals("discovery") ? search.discovery() : search.validation(
+                new ThroughputStage.Result("discovery", "BRACKETED", 100000, 125000, null, List.of()));
+        assertTrue(plan.executionPhases().size() > 50);
+        String workload = ThroughputRunner.workload(TEMPLATE, search, plan);
+
+        // The runner loads and rewrites the saved workload before submitting it to Hyperfoil.
+        // Keep the default alias limit used there and by offline analysis.
+        var yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
+        Map<String, Object> definition = yaml.load(workload);
+        String rewritten = yaml.dump(definition);
+        assertEquals(definition, yaml.load(rewritten));
+        var parser = BenchmarkParser.instance();
+        var benchmark = parser.buildBenchmark(parser.createSource(rewritten, BenchmarkData.EMPTY), Map.of());
+        assertEquals(plan.executionPhases().size() + 1, benchmark.phases().size());
+    }
+}

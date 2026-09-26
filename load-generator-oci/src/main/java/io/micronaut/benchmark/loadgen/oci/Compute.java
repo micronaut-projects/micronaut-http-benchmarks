@@ -282,6 +282,12 @@ public final class Compute {
         public CommandRunner connectSsh() throws Exception {
             return resource.connectSsh();
         }
+
+        public void pauseConsoleHistory() {
+            if (resource.launch.consoleHistoryCollector != null) {
+                resource.launch.consoleHistoryCollector.pause();
+            }
+        }
     }
 
     NixosCacheResource cacheResource(InstanceType instanceType, String configuration) {

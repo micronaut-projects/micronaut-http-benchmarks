@@ -8,9 +8,6 @@ import io.micronaut.benchmark.loadgen.oci.resource.NixosCacheResource;
 import io.micronaut.benchmark.loadgen.oci.resource.PhasedResource;
 import io.micronaut.core.annotation.Indexed;
 import jakarta.inject.Singleton;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,11 +21,10 @@ import java.util.UUID;
  * One exclusively used environment. Its lifetime is independent of experiment submissions.
  */
 public final class Infrastructure extends AbstractInfrastructure {
-    private static final Logger LOG = LoggerFactory.getLogger(Infrastructure.class);
     static final String SERVER_IP = "10.0.0.2";
     static final String BENCHMARK_SERVER_INSTANCE_TYPE = "benchmark-server";
     public static final String BENCHMARK_BOOTSTRAP = "benchmark-bootstrap";
-    private static final Duration CONSOLE_STOP_TIMEOUT = Duration.ofMinutes(5);
+    private static final Duration LOG_SWITCH_TIMEOUT = Duration.ofMinutes(5);
     private final Factory factory;
     Compute.Instance benchmarkServer;
     private final HyperfoilRunner hyperfoilRunner;
@@ -36,7 +32,9 @@ public final class Infrastructure extends AbstractInfrastructure {
     private final NixosCacheResource bootstrap;
     private final Map<Path, NixosCacheResource> publications = new HashMap<>();
     private final OutputListener.Write benchmarkServerLog;
-    private final TokenRoutingOutputListener benchmarkServerConsoleHistory;
+    private final OutputListener.Write benchmarkServerJournalLog;
+    private final TokenRoutingOutputListener benchmarkServerJournal;
+    private JournalLogCollector journalCollector;
     private boolean started;
     private boolean usable = true;
 
@@ -45,7 +43,8 @@ public final class Infrastructure extends AbstractInfrastructure {
         this.factory = factory;
         Files.createDirectories(logDirectory);
         benchmarkServerLog = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("benchmark-server.log")));
-        benchmarkServerConsoleHistory = new TokenRoutingOutputListener(benchmarkServerLog);
+        benchmarkServerJournalLog = new OutputListener.Write(Files.newOutputStream(logDirectory.resolve("benchmark-server-journal.log")), true);
+        benchmarkServerJournal = new TokenRoutingOutputListener(benchmarkServerJournalLog);
         hyperfoilRunner = factory.hyperfoilRunnerFactory.create(logDirectory, this);
         hyperfoilLock = hyperfoilRunner.require();
         bootstrap = factory.compute.cacheResource(factory.compute.getInstanceType(BENCHMARK_SERVER_INSTANCE_TYPE), BENCHMARK_BOOTSTRAP);
@@ -61,10 +60,13 @@ public final class Infrastructure extends AbstractInfrastructure {
         launch(hyperfoilRunner, hyperfoilRunner::manage);
         bootstrap.awaitPublished();
         benchmarkServer = computeBuilder(BENCHMARK_SERVER_INSTANCE_TYPE).privateIp(SERVER_IP)
-                .nixosConfiguration(bootstrap).consoleHistory(benchmarkServerConsoleHistory).launch();
+                .nixosConfiguration(bootstrap).consoleHistory(benchmarkServerLog).launch();
         for (Attachment attachment : factory.attachments) attachment.setUp(this);
         benchmarkServer.awaitStartup();
         PhasedResource.PhaseLock.awaitAll(lifecycleLocks);
+        journalCollector = new JournalLogCollector(benchmarkServer::connectSsh, benchmarkServerJournal);
+        journalCollector.awaitReady(Duration.ofMinutes(1));
+        benchmarkServer.pauseConsoleHistory();
         started = true;
     }
 
@@ -76,10 +78,12 @@ public final class Infrastructure extends AbstractInfrastructure {
     public void close() throws Exception {
         usable = false;
         bootstrap.cancelPublicationWait();
-        try (AutoCloseable base = super::close;
+        try (var consoleLog = benchmarkServerLog;
+             var journalLog = benchmarkServerJournalLog;
+             AutoCloseable base = super::close;
              AutoCloseable server = benchmarkServer;
-             var log = benchmarkServerLog;
-             var lock = hyperfoilLock) {
+             var lock = hyperfoilLock;
+             var journal = journalCollector) {
         }
     }
 
@@ -101,7 +105,7 @@ public final class Infrastructure extends AbstractInfrastructure {
         }
         progress.update(BenchmarkPhase.PUBLISHING_CLOSURE);
         NixCacheAccess cache = publish(experiment.system());
-        try (OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(directory.resolve("server.log")))) {
+        try (OutputListener.Write log = new OutputListener.Write(Files.newOutputStream(directory.resolve("server.log")), true)) {
             Exception failure = null;
             boolean cleared = false;
             try {
@@ -157,9 +161,10 @@ public final class Infrastructure extends AbstractInfrastructure {
                         failure = combine(failure, e);
                     }
                     try {
-                        switchOutput(marker("STOP"), benchmarkServerLog);
+                        switchOutput(marker("STOP"), benchmarkServerJournalLog);
                     } catch (Exception e) {
-                        LOG.warn("Could not finish console log routing", e);
+                        usable = false;
+                        failure = combine(failure, e);
                     }
                 } finally {
                     if (interrupted) {
@@ -194,14 +199,14 @@ public final class Infrastructure extends AbstractInfrastructure {
     }
 
     private void switchOutput(String marker, OutputListener target) throws Exception {
-        var change = benchmarkServerConsoleHistory.switchOn(marker, target);
+        var change = benchmarkServerJournal.switchOn(marker, target);
         try {
             try (CommandRunner client = benchmarkServer.connectSsh()) {
                 client.runAndCheck("printf '%s\\n' " + Nix.shellQuote(marker) + " | systemd-cat");
             }
-            change.await(CONSOLE_STOP_TIMEOUT);
+            change.await(LOG_SWITCH_TIMEOUT);
         } catch (Exception e) {
-            change.cancel(benchmarkServerLog);
+            change.cancel(benchmarkServerJournalLog);
             throw e;
         }
     }

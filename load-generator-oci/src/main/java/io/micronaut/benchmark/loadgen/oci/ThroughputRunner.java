@@ -134,6 +134,7 @@ final class ThroughputRunner {
             throw new IllegalArgumentException("Adaptive workload requires warmup and main/0 template phases");
         }
         var main = (Map<String, Object>) ((Map<String, Object>) phases.get(1).get("main/0")).get("constantRate");
+        String mainTemplate = yaml.dump(main);
         var generated = new ArrayList<Map<String, Object>>();
         var warmup = (Map<String, Object>) ((Map<String, Object>) phases.getFirst().get("warmup")).values().iterator().next();
         warmup.put("maxDuration", Math.addExact(plan.warmupMillis(), DRAIN_TIMEOUT_MILLIS) + "ms");
@@ -141,7 +142,9 @@ final class ThroughputRunner {
         var execution = plan.executionPhases();
         for (int i = 0; i < execution.size(); i++) {
             var phase = execution.get(i);
-            var settings = new LinkedHashMap<>(main);
+            // Give each phase its own nested collections. Sharing them emits YAML aliases that
+            // exceed downstream readers' default limit on large discovery/validation sweeps.
+            Map<String, Object> settings = yaml.load(mainTemplate);
             settings.put("duration", phase.durationMillis() + "ms");
             settings.put("maxDuration", Math.addExact(phase.durationMillis(), DRAIN_TIMEOUT_MILLIS) + "ms");
             boolean ramp = phase.name().startsWith("ramp/");

@@ -10,6 +10,7 @@ import org.slf4j.event.Level;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
@@ -154,17 +155,25 @@ public interface OutputListener {
         private static final Logger LOG = LoggerFactory.getLogger(Write.class);
 
         private final OutputStream outputStream;
+        private final boolean failOnWriteError;
 
         public Write(OutputStream outputStream) {
+            this(outputStream, false);
+        }
+
+        public Write(OutputStream outputStream, boolean failOnWriteError) {
             this.outputStream = outputStream;
+            this.failOnWriteError = failOnWriteError;
         }
 
         @Override
         public synchronized void onData(ByteBuffer data) {
             try {
                 outputStream.write(data.array(), data.arrayOffset() + data.position(), data.remaining());
-            } catch (ClosedChannelException ignored) {
+            } catch (ClosedChannelException e) {
+                if (failOnWriteError) throw new UncheckedIOException(e);
             } catch (IOException e) {
+                if (failOnWriteError) throw new UncheckedIOException(e);
                 LOG.error("Failed to write data", e);
             }
         }
@@ -173,6 +182,7 @@ public interface OutputListener {
             try {
                 outputStream.write((msg + "\n").getBytes(StandardCharsets.UTF_8));
             } catch (IOException e) {
+                if (failOnWriteError) throw new UncheckedIOException(e);
                 LOG.error("Failed to print message", e);
             }
         }

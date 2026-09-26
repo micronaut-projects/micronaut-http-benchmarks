@@ -37,6 +37,7 @@ public final class ComputeConsoleHistoryCollector {
     private final Set<String> pendingDeletes = ConcurrentHashMap.newKeySet();
     private final CompletableFuture<Void> finished = new CompletableFuture<>();
     private volatile boolean finalCaptureRequested;
+    private volatile boolean paused;
 
     private byte[] lastSnapshot = new byte[0];
     private final Thread pollingThread;
@@ -58,9 +59,19 @@ public final class ComputeConsoleHistoryCollector {
         finished.join();
     }
 
+    /** Journal capture has taken over; retain one final console snapshot at instance teardown. */
+    public void pause() {
+        paused = true;
+        LockSupport.unpark(pollingThread);
+    }
+
     private void poll() {
         try {
             while (!finalCaptureRequested) {
+                if (paused) {
+                    LockSupport.park();
+                    continue;
+                }
                 retryPendingDeletes();
                 if (finalCaptureRequested) {
                     break;

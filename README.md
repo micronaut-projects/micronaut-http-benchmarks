@@ -71,6 +71,13 @@ Infrastructure startup or reset failure triggers cleanup and stops the daemon.
 Commands that need the daemon start it implicitly. It runs from the installation project's root at `127.0.0.1:7075`;
 state and infrastructure logs live under `output/daemon`. Logback writes the daemon application log to `output/log`.
 After two idle hours it tears down infrastructure and exits.
+The benchmark server uses OCI console snapshots during boot, then streams its persistent journal through SSH over
+the existing HTTPS relay. The stream replays the retained current boot and resumes from its last delivered journal cursor after
+disconnects; an unavailable cursor is reported as a capture failure. Stage markers travel through this stream rather
+than the size-limited console snapshots. Early boot output remains in the environment's `benchmark-server.log`, and
+journal output outside experiments goes to `benchmark-server-journal.log`. OCI polling for that server pauses after
+the journal stream becomes ready, with a final console snapshot collected at teardown. Journal retention on the server
+must cover disconnections; cursor recovery does not extend across daemon restarts.
 `bench stop` cancels queued/active work, attempts cleanup, and stops the process. Local preparation and analysis
 commands do not start it.
 

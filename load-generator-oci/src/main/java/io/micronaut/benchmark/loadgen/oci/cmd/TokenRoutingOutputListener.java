@@ -68,10 +68,10 @@ public final class TokenRoutingOutputListener implements OutputListener {
             if (remaining >= tokenLength && matches(armed.token, input, index, tokenLength)) {
                 forward(input, 0, index);
                 activeTarget = armed.target;
-                pendingSwitch = null;
-                armed.markObserved();
                 emitSwitchMessage();
                 forward(input, index + tokenLength, remaining - tokenLength);
+                pendingSwitch = null;
+                armed.markObserved();
                 return;
             }
             if (remaining < tokenLength && matches(armed.token, input, index, remaining)) {
@@ -139,7 +139,7 @@ public final class TokenRoutingOutputListener implements OutputListener {
                 synchronized (this) {
                     while (!observed) {
                         if (cancelled || collectorCompleted) {
-                            throw new IllegalStateException("Console history ended before token observation");
+                            throw new IllegalStateException("Output collection ended before token observation");
                         }
                         if (remaining <= 0) {
                             throw new IllegalStateException("Timed out waiting for token observation");
