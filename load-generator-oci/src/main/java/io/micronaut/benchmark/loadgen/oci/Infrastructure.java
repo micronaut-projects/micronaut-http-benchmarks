@@ -65,7 +65,8 @@ public final class Infrastructure extends AbstractInfrastructure {
         benchmarkServer.awaitStartup();
         PhasedResource.PhaseLock.awaitAll(lifecycleLocks);
         journalCollector = new JournalLogCollector(benchmarkServer::connectSsh, benchmarkServerJournal);
-        journalCollector.awaitReady(Duration.ofMinutes(1));
+        // Allow the relay SSH client's two-minute authentication timeout and a reconnect.
+        journalCollector.awaitReady(Duration.ofMinutes(3));
         benchmarkServer.pauseConsoleHistory();
         started = true;
     }
