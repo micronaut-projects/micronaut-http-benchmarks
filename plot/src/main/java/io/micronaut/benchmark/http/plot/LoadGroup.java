@@ -248,59 +248,74 @@ final class LoadGroup {
             return;
         }
 
-        Integer rowDisc = null, colDisc = null;
+        List<Integer> varying = new ArrayList<>();
         for (int i = 0; i < optionsByDiscriminator.size(); i++) {
-            List<String> disc = optionsByDiscriminator.get(i);
-            if (disc.size() != 1) {
-                if (rowDisc == null) {
-                    rowDisc = i;
-                } else if (colDisc == null) {
-                    colDisc = i;
-                } else {
-                    throw new IllegalStateException();
-                }
+            if (optionsByDiscriminator.get(i).size() != 1) {
+                varying.add(i);
             }
         }
-        if (rowDisc != null) {
-            html.append("<table id='distinguisher-legend'").append(htmlAttr()).append('>');
-            if (colDisc != null) {
-                html.append("<tr><th colspan='2'></th><th colspan='").append(optionsByDiscriminator.get(colDisc).size()).append("'>").append(DISCRIMINATORS.get(colDisc).name()).append("</th></tr>");
-                html.append("<tr><th colspan='2'></th>");
-                for (String s : optionsByDiscriminator.get(colDisc)) {
-                    html.append("<th>").append(s).append("</th>");
-                }
-                html.append("</tr>");
-            }
-            for (int i = 0; i < optionsByDiscriminator.get(rowDisc).size(); i++) {
-                html.append("<tr>");
-                if (i == 0) {
-                    html.append("<th class='sideways' rowspan='").append(optionsByDiscriminator.get(rowDisc).size()).append("'><span>").append(DISCRIMINATORS.get(rowDisc).name()).append("</span></th>");
-                }
-                html.append("<th>").append(optionsByDiscriminator.get(rowDisc).get(i)).append("</th>");
-                for (String colValue : colDisc == null ? List.of("") : optionsByDiscriminator.get(colDisc)) {
-                    List<String> disc = new ArrayList<>(DISCRIMINATORS.size());
-                    for (int j = 0; j < DISCRIMINATORS.size(); j++) {
-                        if (j == rowDisc) {
-                            disc.add(optionsByDiscriminator.get(rowDisc).get(i));
-                        } else if (colDisc != null && j == colDisc) {
-                            disc.add(colValue);
-                        } else {
-                            disc.add(optionsByDiscriminator.get(j).getFirst());
+        if (varying.isEmpty()) {
+            return;
+        }
+        // The last varying discriminator spans the columns, all others are nested row headers.
+        Integer colDisc = varying.size() > 1 ? varying.getLast() : null;
+        List<Integer> rowDiscs = colDisc == null ? varying : varying.subList(0, varying.size() - 1);
+        List<List<String>> rows = discriminated.stream()
+                .map(d -> rowDiscs.stream().map(j -> d.label.values().get(j)).toList())
+                .distinct()
+                .sorted((a, b) -> {
+                    for (int k = 0; k < rowDiscs.size(); k++) {
+                        List<String> opts = optionsByDiscriminator.get(rowDiscs.get(k));
+                        int cmp = Integer.compare(opts.indexOf(a.get(k)), opts.indexOf(b.get(k)));
+                        if (cmp != 0) {
+                            return cmp;
                         }
                     }
-                    Discriminated wrap = discriminated.stream().filter(d -> d.label.values.equals(disc)).findAny().orElse(null);
-                    if (wrap != null) {
-                        html.append("<td style='background-color: ").append(wrap.color).append("' onclick='");
-                        detailDialogSelector.emitSelectSpecific(html, wrap.detailDialogAttribute);
-                        html.append("'></td>");
-                    } else {
-                        html.append("<td></td>");
-                    }
-                }
-                html.append("</tr>");
+                    return 0;
+                })
+                .toList();
+
+        html.append("<table id='distinguisher-legend'").append(htmlAttr()).append('>');
+        if (colDisc != null) {
+            html.append("<tr><th colspan='").append(2 * rowDiscs.size()).append("'></th><th colspan='").append(optionsByDiscriminator.get(colDisc).size()).append("'>").append(DISCRIMINATORS.get(colDisc).name()).append("</th></tr>");
+            html.append("<tr><th colspan='").append(2 * rowDiscs.size()).append("'></th>");
+            for (String s : optionsByDiscriminator.get(colDisc)) {
+                html.append("<th>").append(s).append("</th>");
             }
-            html.append("</table>");
+            html.append("</tr>");
         }
+        for (int i = 0; i < rows.size(); i++) {
+            List<String> row = rows.get(i);
+            html.append("<tr>");
+            for (int k = 0; k < rowDiscs.size(); k++) {
+                if (i == 0) {
+                    html.append("<th class='sideways' rowspan='").append(rows.size()).append("'><span>").append(DISCRIMINATORS.get(rowDiscs.get(k)).name()).append("</span></th>");
+                }
+                // merge header cells of consecutive rows that share this prefix
+                if (i == 0 || !rows.get(i - 1).subList(0, k + 1).equals(row.subList(0, k + 1))) {
+                    int span = 1;
+                    while (i + span < rows.size() && rows.get(i + span).subList(0, k + 1).equals(row.subList(0, k + 1))) {
+                        span++;
+                    }
+                    html.append("<th rowspan='").append(span).append("'>").append(row.get(k)).append("</th>");
+                }
+            }
+            for (String colValue : colDisc == null ? List.of("") : optionsByDiscriminator.get(colDisc)) {
+                Discriminated wrap = discriminated.stream()
+                        .filter(d -> rowDiscs.stream().map(j -> d.label.values().get(j)).toList().equals(row)
+                                && (colDisc == null || d.label.values().get(colDisc).equals(colValue)))
+                        .findAny().orElse(null);
+                if (wrap != null) {
+                    html.append("<td style='background-color: ").append(wrap.color).append("' onclick='");
+                    detailDialogSelector.emitSelectSpecific(html, wrap.detailDialogAttribute);
+                    html.append("'></td>");
+                } else {
+                    html.append("<td></td>");
+                }
+            }
+            html.append("</tr>");
+        }
+        html.append("</table>");
     }
 
     void emitPhaseGraphs(StringBuilder html) {
