@@ -53,7 +53,7 @@ let
     ];
   };
   upstream = builtins.fetchGit {
-    url = "ssh://git@github.com/micronaut-projects/pyronaut.git";
+    url = "https://github.com/micronaut-projects/pyronaut.git";
     ref = "0.0.x";
     rev = "3c54ff1ec4113660b5794a28aea5bc5f748520c7";
   };
