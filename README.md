@@ -34,7 +34,8 @@ warmups and `--duration` overrides validation duration. The default ceiling is 3
 Discovery inserts a five-second smooth ramp between its fixed-rate measurements. Use `--discovery-ramp-duration`
 to change it, or `--discovery-ramp-duration 0s` for direct rate changes. Ramp passes do not establish passing throughput;
 ramp failures stop discovery and retain the preceding passing measurement for validation.
-Hyperfoil preallocates sessions for every phase. The cluster defaults to four 32 GiB agents with 25 GiB Java heaps each.
+Hyperfoil preallocates sessions for every phase. The cluster defaults to four agents with 8 OCPUs and 32 GiB RAM each,
+using seven workers and `-Xms25G -Xmx25G` Java heaps per agent. The CPU watchdog samples over 15 seconds.
 Use an explicit ceiling that fits the agents; see the [capacity notes](docs/throughput.md#validity-and-interpretation).
 
 An explicit `--rate 1000` retains fixed-rate mode, with 60s warmup and 60s measurement by default.

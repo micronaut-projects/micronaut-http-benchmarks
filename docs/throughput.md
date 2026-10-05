@@ -93,13 +93,16 @@ physical connection count, allowing HTTP/2 multiplexing. Session exhaustion fail
 two-stage search when discovery has preceding passes. The ceiling affects Hyperfoil's preallocated session capacity;
 use an appropriate ceiling for the available agent resources.
 
-Hyperfoil reserves pools for all planned phases before starting the sweep. The cluster defaults to four 32 GiB agents;
-the runner assigns each a 25 GiB Java heap (80% of VM memory, rounded down). The previous two 16 GiB agents exhausted
+Hyperfoil reserves pools for all planned phases before starting the sweep. The cluster defaults to four agents with
+8 OCPUs and 32 GiB RAM each, with seven request workers per agent. The runner sets both initial and maximum heap
+to 25 GiB per agent (80% of VM memory, rounded down). This keeps total CPU and RAM unchanged from the two-agent,
+16-OCPU/64-GiB layout while providing four independent arrival-pacing chains. The CPU watchdog uses a 15-second
+measurement interval and retains its 80% per-core threshold. Earlier two 16 GiB agents exhausted
 their 12 GiB heaps during initialization, both at the former 1,000,000 RPS ceiling and during thorough validation
 with a 200,000 RPS ceiling. Capacity depends on the sum of all phases' session limits, so a dense validation sweep can
 require more memory than discovery despite its lower maximum rate. Heap exhaustion is an invalid generator run,
 not evidence of SUT overload. Size the rate ceiling and sweep for the available resources; the protocol never silently
-lowers the requested ceiling or session factor. The increased cluster capacity still requires benchmark verification.
+lowers the requested ceiling or session factor. Changes to the agent layout still require benchmark verification.
 Discovery ramps add one phase per transition, approximately doubling its reserved session capacity at the default
 rates. A short duration does not reduce that allocation. The native ramp avoids allocating a separate pool for every
 intermediate rate, but its initialization cost still needs to fit the agents and controller's initialization timeout.

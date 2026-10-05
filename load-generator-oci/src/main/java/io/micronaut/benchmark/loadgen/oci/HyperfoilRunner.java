@@ -325,9 +325,10 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
 
     private Map<String, Object> runtimeAgents() {
         InstanceType agentInstanceType = factory.compute.getInstanceType(AGENT_INSTANCE_TYPE);
+        String heap = ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
         Map<String, Object> agents = new LinkedHashMap<>();
         for (int i = 0; i < factory.config.agentCount; i++) {
-            String extras = "-Dio.hyperfoil.cpu.watchdog.period=10000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xmx" + ((int) (agentInstanceType.memoryInGb() * 0.8)) + "G";
+            String extras = "-Dio.hyperfoil.cpu.watchdog.period=15000 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseZGC -Xms" + heap + " -Xmx" + heap;
             Map<String, Object> agent = new LinkedHashMap<>();
             agent.put("host", agentIp(i));
             agent.put("port", 22);
