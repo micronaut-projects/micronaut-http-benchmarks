@@ -45,7 +45,16 @@ public final class SshCommandRunner implements CommandRunner {
 
     private static SshCommandRunner connect(ConnectFuture future) throws IOException {
         ClientSession session = future.verify().getClientSession();
-        session.auth().verify();
+        try {
+            session.auth().verify();
+        } catch (Throwable t) {
+            try {
+                session.close();
+            } catch (Throwable suppressed) {
+                t.addSuppressed(suppressed);
+            }
+            throw t;
+        }
         return new SshCommandRunner(session);
     }
 
