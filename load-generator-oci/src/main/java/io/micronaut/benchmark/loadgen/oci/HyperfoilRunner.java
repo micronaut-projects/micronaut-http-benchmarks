@@ -169,17 +169,24 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         Files.writeString(outputDirectory.resolve("hyperfoil-effective.yaml"), effective);
         Client.BenchmarkRef benchmarkRef = client.register(effective, benchmarkData(workload), null, null);
         Client.RunRef runRef = benchmarkRef.start("run", Map.of());
+        Throwable primary = null;
         try {
             collectRun(outputDirectory, runRef, progress);
+        } catch (Throwable t) {
+            primary = t;
+            throw t;
         } finally {
             // A disconnected CLI does not interrupt this thread; explicit cancellation does.
             boolean interrupted = Thread.interrupted();
             try {
                 try {
-                    if (!"TERMINATED".equals(runRef.statsRecent().status)) {
-                        runRef.kill();
+                    if (!"TERMINATED".equals(Infrastructure.retry(runRef::statsRecent, controllerPortForward::disconnect).status)) {
+                        Infrastructure.retry(() -> {
+                            runRef.kill();
+                            return null;
+                        }, controllerPortForward::disconnect);
                         long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(2);
-                        while (!"TERMINATED".equals(runRef.statsRecent().status)) {
+                        while (!"TERMINATED".equals(Infrastructure.retry(runRef::statsRecent, controllerPortForward::disconnect).status)) {
                             if (System.nanoTime() > deadline) {
                                 throw new TimeoutException("Remote load did not terminate");
                             }
@@ -187,7 +194,11 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                         }
                     }
                 } catch (Exception e) {
-                    throw new EnvironmentInvalidException("Cannot confirm that the remote load stopped", e);
+                    EnvironmentInvalidException invalid = new EnvironmentInvalidException("Cannot confirm that the remote load stopped", e);
+                    if (primary != null) {
+                        invalid.addSuppressed(primary);
+                    }
+                    throw invalid;
                 }
             } finally {
                 try {
