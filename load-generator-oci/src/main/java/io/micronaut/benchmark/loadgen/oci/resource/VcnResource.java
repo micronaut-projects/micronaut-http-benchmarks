@@ -39,7 +39,14 @@ public final class VcnResource extends AbstractSimpleResource<Vcn.LifecycleState
         this.defaultRouteTable = defaultRouteTable;
     }
 
-    public String getDefaultSecurityListId() {
+    /**
+     * Wait for the VCN to become available and return its default security list ID.
+     *
+     * @return The default security list ID
+     * @throws IllegalStateException If VCN creation failed
+     */
+    public String awaitDefaultSecurityListId() throws InterruptedException {
+        awaitPhase(Vcn.LifecycleState.Available);
         return defaultSecurityListId;
     }
 
