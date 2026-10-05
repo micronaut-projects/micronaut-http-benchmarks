@@ -24,12 +24,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
@@ -37,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 @TestInstance(TestInstance.Lifecycle.PER_METHOD)
 class TcpRelayTest {
@@ -145,6 +149,76 @@ class TcpRelayTest {
         }
     }
 
+    @Test
+    public void clientCloseIsRelayed() throws Exception {
+        try (TcpRelay.Binding forward = client.bindForward(mockServer.address);
+             MockClient cl = new MockClient(forward.address())) {
+
+            cl.writeString("foo");
+            assertEquals("foo", mockServer.connection(0).readString());
+            cl.closeChannel();
+
+            mockServer.connection(0).closed.get(5, TimeUnit.SECONDS);
+            awaitNoStreams();
+        }
+    }
+
+    @Test
+    public void serverCloseIsRelayed() throws Exception {
+        try (TcpRelay.Binding forward = client.bindForward(mockServer.address);
+             MockClient cl = new MockClient(forward.address())) {
+
+            cl.writeString("foo");
+            assertEquals("foo", mockServer.connection(0).readString());
+            mockServer.connection(0).writeString("bar");
+            mockServer.connection(0).closeChannel();
+
+            // data written before the close must still arrive
+            assertEquals("bar", cl.readString());
+            cl.closed.get(5, TimeUnit.SECONDS);
+            awaitNoStreams();
+        }
+    }
+
+    @Test
+    public void closeIsRelayedAfterReconnect() throws Exception {
+        try (TcpRelay.Binding forward = client.bindForward(mockServer.address);
+             MockClient cl = new MockClient(forward.address())) {
+
+            cl.writeString("foo");
+            assertEquals("foo", mockServer.connection(0).readString());
+            kill();
+            cl.closeChannel();
+
+            mockServer.connection(0).closed.get(5, TimeUnit.SECONDS);
+            awaitNoStreams();
+        }
+    }
+
+    @Test
+    public void connectFailureClosesLocalSocket() throws Exception {
+        InetSocketAddress unbound;
+        try (ServerSocket tmp = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            unbound = (InetSocketAddress) tmp.getLocalSocketAddress();
+        }
+        try (TcpRelay.Binding forward = client.bindForward(unbound);
+             MockClient cl = new MockClient(forward.address())) {
+
+            cl.closed.get(5, TimeUnit.SECONDS);
+            assertNull(cl.read(0, TimeUnit.SECONDS));
+            awaitNoStreams();
+        }
+    }
+
+    private void awaitNoStreams() throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while ((client.streamCount() != 0 || server.streamCount() != 0) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertEquals(0, client.streamCount());
+        assertEquals(0, server.streamCount());
+    }
+
     static class MockServer implements Closeable {
         private final EventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
 
@@ -186,6 +260,7 @@ class TcpRelayTest {
 
     static class MockConnection extends ChannelDuplexHandler {
         private final BlockingQueue<Object> inbound = new LinkedBlockingQueue<>();
+        final CompletableFuture<Void> closed = new CompletableFuture<>();
         ChannelHandlerContext ctx;
 
         @Override
@@ -196,6 +271,16 @@ class TcpRelayTest {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
             inbound.put(msg);
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+            closed.complete(null);
+            super.channelInactive(ctx);
+        }
+
+        public void closeChannel() {
+            ctx.close();
         }
 
         @SuppressWarnings("unchecked")
