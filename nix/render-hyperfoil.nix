@@ -17,7 +17,7 @@ let
     allowHttp2 = protocol.protocol == "HTTPS2";
   };
   requestHeaders = lib.mapAttrs' (name: value: lib.nameValuePair (lib.toLower name) value) request.requestHeaders;
-  requestStep = { withSla, handler }: {
+  requestStep = { withSla, handler, preflight ? false }: {
     httpRequest = {
       method = if request.method == null then "GET" else request.method;
       authority = targetSettings.authority;
@@ -25,18 +25,18 @@ let
       headers = requestHeaders // optionalAttrs { "content-type" = request.requestType; };
       sync = true;
     } // optionalAttrs { body = request.requestBody; }
-      // lib.optionalAttrs withSla {
+      // lib.optionalAttrs (withSla || preflight) {
         # Native validation returns only the first failure within each SLA. Keep latency independent
         # so connection blocking or response errors cannot hide a simultaneous percentile failure.
-        sla = [
+        sla = if preflight then [ { errorRatio = 0; invalidRatio = 0; blockedRatio = 1; } ] else [
           { limits = protocol.sla; blockedRatio = 1; }
           { errorRatio = 0; invalidRatio = 0; blockedRatio = 0; }
         ];
       }
       // lib.optionalAttrs (handler != null) { handler = handler; };
   };
-  scenario = { withSla, handler }: {
-    initialSequences = [{ test = [ (requestStep { withSla = withSla; handler = handler; }) ]; }];
+  scenario = { withSla, handler, preflight ? false }: {
+    initialSequences = [{ test = [ (requestStep { inherit withSla handler preflight; }) ]; }];
   };
   http = {
     host = targetSettings.url;
@@ -59,13 +59,22 @@ let
       password = "password";
     };
   };
-  responseHandler = {
+  statusHandler = {
     autoRangeCheck = true;
     stopOnInvalid = true;
-  } // lib.optionalAttrs (request.responseBody != null) {
+  };
+  responseHandler = statusHandler // lib.optionalAttrs (request.responseBody != null) {
     body.check = if request.responseMatchingMode == "EQUAL" then { equalTo = request.responseBody; }
       else if request.responseMatchingMode == "REGEX" then { regex = request.responseBody; }
       else { json = request.responseBody; };
+  };
+  preflightPhase = {
+    preflight.atOnce = {
+      users = 2;
+      maxDuration = "2m";
+      isWarmup = true;
+      scenario = scenario { withSla = false; preflight = true; handler = responseHandler; };
+    };
   };
 in if mode == "local" || mode == "pgo" then {
   name = "${mode}-${protocol.protocol}-${request.name}";
@@ -73,11 +82,12 @@ in if mode == "local" || mode == "pgo" then {
   http = http // { requestTimeout = "30s"; };
   phases = if mode == "local" then [{
     local.atOnce = { users = 1; scenario = scenario { withSla = false; handler = responseHandler; }; };
-  }] else [{
+  }] else [ preflightPhase {
     pgo.always = {
       users = 1;
       duration = settings.pgoDuration;
-      scenario = scenario { withSla = false; handler = responseHandler; };
+      startAfterStrict = "preflight";
+      scenario = scenario { withSla = false; handler = statusHandler; };
     };
   }];
 } else
@@ -90,12 +100,13 @@ in if mode == "local" || mode == "pgo" then {
   failurePolicy = "CANCEL";
   agents = { };
   http = http;
-  phases = [{
+  phases = [ preflightPhase {
     warmup.always = {
       users = settings.warmupUsers or (builtins.floor (protocol.compileOps * sessionLimitFactor));
       duration = warmupDuration;
       isWarmup = true;
-      scenario = scenario { withSla = false; handler = responseHandler; };
+      startAfterStrict = "preflight";
+      scenario = scenario { withSla = false; handler = statusHandler; };
     };
   }] ++ lib.imap0 (index: ops: {
     "main/${toString index}".constantRate = {
@@ -105,7 +116,7 @@ in if mode == "local" || mode == "pgo" then {
       duration = benchmarkDuration;
       isWarmup = false;
       startAfterStrict = if index == 0 then "warmup" else "main/${toString (index - 1)}";
-      scenario = scenario { withSla = true; handler = responseHandler; };
+      scenario = scenario { withSla = true; handler = statusHandler; };
     };
   }) protocol.ops;
 }

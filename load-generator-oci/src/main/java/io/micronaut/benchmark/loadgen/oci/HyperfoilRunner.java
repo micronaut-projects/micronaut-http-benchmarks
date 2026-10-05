@@ -269,7 +269,7 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
         }
         for (BenchmarkStats.SlaFailure failure : wrapper.statsAll.failures()) {
             LOG.info("SLA failure: {}", failure);
-            if (failure.phase().equals("warmup")) {
+            if (failure.phase().equals("warmup") || failure.phase().equals("preflight")) {
                 benchmarkFailures.add("SLA failure in " + failure.phase() + " phase: " + failure.message());
                 invalidatesBenchmark = true;
             }

@@ -73,6 +73,8 @@ final class ThroughputRunner {
 
     private ThroughputStage.Result stage(ExecutionEnvironment environment, PreparedExperiment experiment, Path root,
                                          String relative, ThroughputStage plan, PhaseTracker.PhaseUpdater progress) throws Exception {
+        String template = Files.readString(root.resolve("hyperfoil.yaml"));
+        plan = planForTemplate(template, plan);
         Path directory = Files.createDirectories(root.resolve(relative));
         Files.createDirectories(directory.resolve(".nix"));
         Files.createSymbolicLink(directory.resolve(".nix/experiment"), root.resolve(".nix/experiment").toRealPath());
@@ -85,8 +87,7 @@ final class ThroughputRunner {
         metadata.put("stage", plan.stage());
         mapper.writeValue(directory.resolve("metadata.json").toFile(), metadata);
         mapper.writeValue(directory.resolve("stage-plan.json").toFile(), plan);
-        Files.writeString(directory.resolve("hyperfoil.yaml"), workload(Files.readString(root.resolve("hyperfoil.yaml")),
-                experiment.search(), plan));
+        Files.writeString(directory.resolve("hyperfoil.yaml"), workload(template, experiment.search(), plan));
         var record = new LinkedHashMap<String, Object>();
         record.put("id", relative);
         record.put("parent", root.toAbsolutePath().toString());
@@ -122,6 +123,20 @@ final class ThroughputRunner {
     }
 
     @SuppressWarnings("unchecked")
+    static ThroughputStage planForTemplate(String template, ThroughputStage plan) {
+        Map<String, Object> definition = new Yaml(new SafeConstructor(new LoaderOptions())).load(template);
+        var phases = (List<Map<String, Object>>) definition.get("phases");
+        int requests = 0;
+        if (phases.getFirst().containsKey("preflight")) {
+            var preflight = (Map<String, Object>) phases.getFirst().get("preflight");
+            var settings = (Map<String, Object>) preflight.get("atOnce");
+            requests = ((Number) settings.get("users")).intValue();
+            if (requests <= 0) throw new IllegalArgumentException("Preflight requires positive request count");
+        }
+        return new ThroughputStage(plan.stage(), plan.warmupMillis(), plan.phases(), plan.rampMillis(), requests);
+    }
+
+    @SuppressWarnings("unchecked")
     static String workload(String template, ThroughputSearch search, ThroughputStage plan) {
         var options = new DumperOptions();
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
@@ -130,15 +145,18 @@ final class ThroughputRunner {
         var yaml = new Yaml(new SafeConstructor(loader), new Representer(options), options, loader);
         Map<String, Object> definition = yaml.load(template);
         var phases = (List<Map<String, Object>>) definition.get("phases");
-        if (phases.size() != 2 || !phases.getFirst().containsKey("warmup") || !phases.get(1).containsKey("main/0")) {
-            throw new IllegalArgumentException("Adaptive workload requires warmup and main/0 template phases");
+        int warmupIndex = phases.getFirst().containsKey("preflight") ? 1 : 0;
+        if (phases.size() != warmupIndex + 2 || !phases.get(warmupIndex).containsKey("warmup")
+                || !phases.get(warmupIndex + 1).containsKey("main/0")) {
+            throw new IllegalArgumentException("Adaptive workload requires optional preflight, warmup and main/0 template phases");
         }
-        var main = (Map<String, Object>) ((Map<String, Object>) phases.get(1).get("main/0")).get("constantRate");
+        var main = (Map<String, Object>) ((Map<String, Object>) phases.get(warmupIndex + 1).get("main/0")).get("constantRate");
         String mainTemplate = yaml.dump(main);
         var generated = new ArrayList<Map<String, Object>>();
-        var warmup = (Map<String, Object>) ((Map<String, Object>) phases.getFirst().get("warmup")).values().iterator().next();
+        if (warmupIndex > 0) generated.add(phases.getFirst());
+        var warmup = (Map<String, Object>) ((Map<String, Object>) phases.get(warmupIndex).get("warmup")).values().iterator().next();
         warmup.put("maxDuration", Math.addExact(plan.warmupMillis(), DRAIN_TIMEOUT_MILLIS) + "ms");
-        generated.add(phases.getFirst());
+        generated.add(phases.get(warmupIndex));
         var execution = plan.executionPhases();
         for (int i = 0; i < execution.size(); i++) {
             var phase = execution.get(i);

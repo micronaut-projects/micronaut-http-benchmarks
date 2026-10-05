@@ -7,11 +7,11 @@
 
 Each repetition contains two fresh SUT process lifetimes on the same machines:
 
-1. Warm up using the existing fixed-concurrency workload. Discovery begins at the lowest configured protocol rate
+1. Check two responses against the expected body, then warm up using the fixed-concurrency workload. Discovery begins at the lowest configured protocol rate
    (or `--start-rate`), increasing by 25% up to `--max-rate` (default 300,000). Between measurement rates, a five-second
    Hyperfoil `increasingRate` phase ramps smoothly from the preceding rate to the next. The first measurement starts
    directly after warmup. The fixed-rate discovery measurements retain their full configured duration.
-2. Stop load, collect all artifacts, restore bootstrap, and redeploy. Warm up again.
+2. Stop load, collect all artifacts, restore bootstrap, and redeploy. Repeat the two-request response preflight and warm up again.
 3. Validate at 25%, 50%, and 75% of the last passing discovery rate, then use the fine sweep from 90% of that passing
    rate through 125% of the first failing discovery rate, rounded up and capped at `--max-rate`. This gives the fresh
    validation process 25% headroom above discovery's failure boundary in both presets. If discovery reached the ceiling
@@ -21,7 +21,11 @@ Each repetition contains two fresh SUT process lifetimes on the same machines:
 
 Measurement rates round upward to integers and always increase; the endpoint appears exactly once. There is no descending search
 or retry at a lower rate. Failure at the first discovery or validation rate is inconclusive. Warmup remains an explicit
-exception to the measured sweep's overload rule: it uses fixed concurrency and retains the response checks.
+exception to the measured sweep's overload rule: it uses fixed concurrency and retains status and transport-error checks.
+Full response-body validation runs only in the two-request preflight before each stage. A failed, missing, or
+incomplete preflight invalidates the stage. Warmup, ramps, and measured requests do not parse or compare bodies;
+body correctness under load is outside this benchmark's checks. Status and transport failures still invalidate
+warmup or fail the measured phase. Previously saved experiment templates retain their original per-request checks.
 Warmup defaults to 200 concurrent clients total across all agents, configurable with
 `benchmark.hyperfoil.warmupUsers` independently of the measured phases' session limits.
 
@@ -44,7 +48,7 @@ percentages. Thorough runs typically take 30–50 minutes per case plus infrastr
 ## Validity and interpretation
 
 Measurement uses Hyperfoil `constantRate`, with `increasingRate` for discovery transitions, `startAfterStrict`, and
-`failurePolicy: CANCEL`. Ramps use the same native SLAs and response checks as the fixed-rate measurements. A passing
+`failurePolicy: CANCEL`. Ramps use the same native SLAs and status checks as the fixed-rate measurements. A passing
 ramp is recorded as `RAMP_PASS` and does not advance the highest passing rate. A failing ramp is `RAMP_FAIL`: it stops
 the search, excludes later phases, and uses the ramp's target as a conservative upper endpoint for fresh validation.
 That endpoint is not a measured constant-rate failure. An otherwise passing ramp must complete and drain;

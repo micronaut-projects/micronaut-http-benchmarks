@@ -14,6 +14,34 @@ class ThroughputSearchTest {
             new ThroughputStage.Phase("main/1", 110, 1000),
             new ThroughputStage.Phase("main/2", 121, 1000)));
 
+    @Test
+    void requiredPreflightMustCompleteBothRequestsBeforeAnyRateCanPass() {
+        var checked = new ThroughputStage(plan.stage(), plan.warmupMillis(), plan.phases(), plan.rampMillis(), 2);
+        var measurements = plan.phases().stream().map(p -> phase(p.name(), 1000, 100)).toList();
+        assertEquals("INVALID", checked.evaluate(stats(null, null, measurements)).outcome());
+        for (int responses : List.of(0, 1, 3)) {
+            var incomplete = new java.util.ArrayList<>(measurements);
+            incomplete.add(phase("preflight", 1, 2, responses));
+            var result = checked.evaluate(stats(null, null, incomplete));
+            assertEquals("INVALID", result.outcome());
+            assertNull(result.highestPassingRate());
+        }
+        var complete = new java.util.ArrayList<>(measurements);
+        complete.add(phase("preflight", 0, 2, 2));
+        assertEquals("LOWER_BOUND", checked.evaluate(stats(null, null, complete)).outcome());
+        assertEquals("INVALID", checked.evaluate(stats("preflight", "Invalid response ratio exceeded", complete)).outcome());
+        assertEquals("INVALID", checked.evaluate(stats(null, null, complete),
+                new ThroughputStage.Completion(true, false, List.of("warmup", "main/0", "main/1", "main/2"))).outcome());
+        var broken = JSON.valueToTree(complete.getLast());
+        ((tools.jackson.databind.node.ObjectNode) broken.path("total").path("summary")).put("invalid", 1);
+        complete.set(complete.size() - 1, JSON.treeToValue(broken, BenchmarkStats.Stats.class));
+        assertEquals("INVALID", checked.evaluate(stats(null, null, complete)).outcome());
+        assertEquals(checked, JSON.readValue(JSON.writeValueAsString(checked), ThroughputStage.class));
+        assertEquals(0, JSON.readValue("""
+                {"stage":"validation","warmupMillis":1000,"phases":[{"name":"main/0","rate":100,"durationMillis":1000}]}
+                """, ThroughputStage.class).preflightRequests());
+    }
+
     static BenchmarkStats.Stats phase(String name, long duration, int responses) {
         return phase(name, duration, 100, responses);
     }

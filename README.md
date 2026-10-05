@@ -145,7 +145,9 @@ Benchmark flakes expose `lib.catalog` for discovery and
 Omitting `rate` selects adaptive mode; `search` accepts the rate bounds, repetitions, discovery duration, and step
 overrides described above using camelCase names. Explicit `rate` and legacy `full = true` retain fixed workloads.
 The output contains `system`, `hyperfoil.yaml`, `artifacts.json`, `requirements.json`, and opaque `metadata.json`.
-Adaptive outputs also contain versioned `search.json`; their YAML is a warmup plus one measurement-phase template.
+Adaptive outputs also contain versioned `search.json`; their YAML contains a two-request response preflight,
+warmup, and one measurement-phase template. Body checks run only during preflight; status and transport-error
+checks remain active throughout warmup and measurement.
 An optional `hyperfoil-data/` directory supplies files referenced by Hyperfoil
 `body.fromFile` (paths relative to that directory). Payload files are retained in the Nix closure and uploaded with the
 benchmark definition. Perf experiments also retain `perf`.

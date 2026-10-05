@@ -23,11 +23,26 @@ class ThroughputRunnerTest {
             http:
               host: http://localhost:8080
             phases:
+            - preflight:
+                atOnce:
+                  users: 2
+                  maxDuration: 2m
+                  isWarmup: true
+                  scenario:
+                  - test:
+                    - httpRequest:
+                        GET: /
+                        handler:
+                          autoRangeCheck: true
+                        sla:
+                        - errorRatio: 0
+                          invalidRatio: 0
             - warmup:
                 always:
                   duration: 180s
                   users: 200
                   isWarmup: true
+                  startAfterStrict: preflight
                   scenario:
                   - test:
                     - httpRequest:
@@ -66,8 +81,9 @@ class ThroughputRunnerTest {
         // Default discovery has 53 phases including ramps; a finer validation sweep also exceeds 50.
         var search = new ThroughputSearch("thorough", 1000, 300000, "180s", "15s", "45s",
                 25, 0.5, 2, 2, "5s");
-        var plan = stage.equals("discovery") ? search.discovery() : search.validation(
-                new ThroughputStage.Result("discovery", "BRACKETED", 100000, 125000, null, List.of()));
+        var plan = ThroughputRunner.planForTemplate(TEMPLATE, stage.equals("discovery") ? search.discovery() : search.validation(
+                new ThroughputStage.Result("discovery", "BRACKETED", 100000, 125000, null, List.of())));
+        assertEquals(2, plan.preflightRequests());
         assertTrue(plan.executionPhases().size() > 50);
         String workload = ThroughputRunner.workload(TEMPLATE, search, plan);
 
@@ -79,6 +95,6 @@ class ThroughputRunnerTest {
         assertEquals(definition, yaml.load(rewritten));
         var parser = BenchmarkParser.instance();
         var benchmark = parser.buildBenchmark(parser.createSource(rewritten, BenchmarkData.EMPTY), Map.of());
-        assertEquals(plan.executionPhases().size() + 1, benchmark.phases().size());
+        assertEquals(plan.executionPhases().size() + 2, benchmark.phases().size());
     }
 }

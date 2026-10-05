@@ -5,21 +5,28 @@ import java.util.List;
 import java.util.Locale;
 
 /** The planned order, rather than arrival order of statistics, determines the eligible prefix. */
-public record ThroughputStage(String stage, long warmupMillis, List<Phase> phases, Long rampMillis) {
+public record ThroughputStage(String stage, long warmupMillis, List<Phase> phases, Long rampMillis, Integer preflightRequests) {
     public ThroughputStage(String stage, long warmupMillis, List<Phase> phases) {
-        this(stage, warmupMillis, phases, 0L);
+        this(stage, warmupMillis, phases, 0L, 0);
+    }
+
+    public ThroughputStage(String stage, long warmupMillis, List<Phase> phases, Long rampMillis) {
+        this(stage, warmupMillis, phases, rampMillis, 0);
     }
 
     public ThroughputStage {
         // Jackson supplies null when this field is absent in an older saved plan.
         if (rampMillis == null) rampMillis = 0L;
+        // Saved plans created before preflight validation checked bodies on every request.
+        if (preflightRequests == null) preflightRequests = 0;
+        if (preflightRequests < 0) throw new IllegalArgumentException("Negative preflight request count");
         if (!List.of("discovery", "validation").contains(stage) || warmupMillis <= 0 || phases.isEmpty()) {
             throw new IllegalArgumentException("Invalid throughput stage");
         }
         if (rampMillis < 0 || rampMillis > 0 && !stage.equals("discovery")) {
             throw new IllegalArgumentException("Only discovery can include ramps");
         }
-        if (rampMillis > 0 && phases.size() > 500) {
+        if (rampMillis > 0 && phases.size() > (preflightRequests > 0 ? 499 : 500)) {
             throw new IllegalArgumentException("Discovery with ramps would exceed 1000 phases; increase step size");
         }
         phases = List.copyOf(phases);
@@ -80,12 +87,21 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
         } else if (!stats.info().errors().isEmpty()) {
             invalid = "Hyperfoil errors: " + stats.info().errors();
         } else {
+            var preflight = stats.findPhase("preflight");
+            if (preflightRequests > 0 && (!complete(preflight, 0) || requestErrors(preflight)
+                    || preflight.total().summary().requestCount != preflightRequests
+                    || completion != null && !completion.terminatedPhases().contains("preflight")
+                    || stats.failures().stream().anyMatch(f -> f.phase().equals("preflight")))) {
+                invalid = "Response preflight failed or is incomplete";
+            }
             var warmup = stats.findPhase("warmup");
-            if (!complete(warmup, warmupMillis) || completion != null && !completion.terminatedPhases().contains("warmup") || requestErrors(warmup)
-                    || stats.failures().stream().anyMatch(f -> f.phase().equals("warmup"))) {
+            if (invalid == null && (!complete(warmup, warmupMillis) || completion != null && !completion.terminatedPhases().contains("warmup") || requestErrors(warmup)
+                    || stats.failures().stream().anyMatch(f -> f.phase().equals("warmup")))) {
                 invalid = "Warmup failed or is incomplete";
             }
-            if (stats.failures().stream().anyMatch(f -> !f.phase().equals("warmup") && execution.stream().noneMatch(p -> p.name().equals(f.phase())))) {
+            if (stats.failures().stream().anyMatch(f -> !f.phase().equals("warmup")
+                    && !(preflightRequests > 0 && f.phase().equals("preflight"))
+                    && execution.stream().noneMatch(p -> p.name().equals(f.phase())))) {
                 invalid = "Failure for an unknown phase";
             }
             if (stats.stats().stream().map(BenchmarkStats.Stats::name).distinct().count() != stats.stats().size()) {

@@ -149,6 +149,81 @@ class RealHyperfoilThroughputTest {
     }
 
     @Test
+    void bodiesAreCheckedOnlyInPreflightAndStatusChecksRemainActive() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 32);
+        var requests = new AtomicInteger();
+        var scenario = new java.util.concurrent.atomic.AtomicReference<String>();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            server.setExecutor(executor);
+            server.createContext("/", exchange -> {
+                boolean preflight = requests.incrementAndGet() <= 2;
+                boolean validBody = preflight && !scenario.get().equals("bad-preflight");
+                byte[] body = (validBody ? "{\"ok\":true}" : "{\"ok\":false}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                int status = !preflight && scenario.get().equals("bad-status") ? 500 : 200;
+                exchange.sendResponseHeaders(status, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            server.start();
+            try {
+                String template = """
+                        name: response-preflight
+                        threads: 1
+                        failurePolicy: CANCEL
+                        http:
+                          host: http://127.0.0.1:%d
+                          sharedConnections: 4
+                        phases:
+                        - preflight:
+                            atOnce:
+                              users: 2
+                              maxDuration: 10s
+                              isWarmup: true
+                              scenario:
+                              - test:
+                                - httpRequest:
+                                    GET: /
+                                    handler:
+                                      autoRangeCheck: true
+                                      stopOnInvalid: true
+                                      body:
+                                        check:
+                                          json: '{"ok":true}'
+                                    sla:
+                                    - errorRatio: 0
+                                      invalidRatio: 0
+                                      blockedRatio: 1
+                        """.formatted(server.getAddress().getPort())
+                        + (phase("warmup", 10, "", "1s").replace("isWarmup: true", "isWarmup: true\n      startAfterStrict: preflight")
+                        + phase("main/0", 10, "warmup", "1s"))
+                        .replace("GET: /", "GET: /\n            handler:\n              autoRangeCheck: true\n              stopOnInvalid: true");
+                var search = new ThroughputSearch("quick", 10, 10, "2s", "2s", "2s", 25, 5, 1, 2);
+                var plan = ThroughputRunner.planForTemplate(template, search.discovery());
+                assertEquals(2, plan.preflightRequests());
+                String workload = ThroughputRunner.workload(template, search, plan);
+                for (String name : List.of("body-changes", "bad-preflight", "bad-status")) {
+                    scenario.set(name);
+                    requests.set(0);
+                    var stats = execute(name, workload);
+                    var result = plan.evaluate(stats);
+                    if (name.equals("body-changes")) {
+                        assertEquals("LOWER_BOUND", result.outcome(), result.toString());
+                        assertEquals(2, stats.findPhase("preflight").total().summary().requestCount);
+                        assertTrue(requests.get() > 2);
+                        assertEquals(0, stats.findPhase("main/0").total().summary().invalid);
+                    } else {
+                        assertEquals("INVALID", result.outcome(), result.toString());
+                        String failedPhase = name.equals("bad-preflight") ? "preflight" : "warmup";
+                        assertTrue(stats.findPhase(failedPhase).total().summary().invalid > 0, stats.toString());
+                    }
+                }
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void discoveryRampsRunNativelyAndRetainTheFailureCutoff() throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 128);
