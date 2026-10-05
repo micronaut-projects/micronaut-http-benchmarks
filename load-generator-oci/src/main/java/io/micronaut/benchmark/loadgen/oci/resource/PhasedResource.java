@@ -42,6 +42,17 @@ public abstract class PhasedResource<P> {
 
     protected abstract List<P> phases();
 
+    /**
+     * Map a phase reported for this resource (e.g. an OCI lifecycle state) to one of the {@link #phases()}. Phases
+     * that are not in {@link #phases()} after normalization are ignored by {@link #setPhase}.
+     *
+     * @param phase The reported phase
+     * @return The normalized phase
+     */
+    protected P normalizePhase(P phase) {
+        return phase;
+    }
+
     public final int compare(P a, P b) {
         List<P> phases = phases();
         int indexA = a == null ? -1 : phases.indexOf(a);
@@ -86,6 +97,11 @@ public abstract class PhasedResource<P> {
      * @param phase The phase
      */
     public final synchronized void setPhase(P phase) {
+        phase = normalizePhase(phase);
+        if (phase != null && !phases().contains(phase)) {
+            LOG.warn("Ignoring unknown phase {} for {}, staying in phase {}", phase, this, currentPhase);
+            return;
+        }
         if (this.currentPhase == phase) {
             return;
         }
@@ -103,12 +119,23 @@ public abstract class PhasedResource<P> {
      * @param phase The phase to wait for. If we go past this phase, this method will return early
      * @return The new phase at the end of this method call. Can still be the same {@code phase}, or a succeeding phase
      */
-    protected final synchronized P awaitUnlocked(P phase) throws InterruptedException {
+    protected final P awaitUnlocked(P phase) throws InterruptedException {
+        return awaitUnlocked(phase, phase);
+    }
+
+    /**
+     * Wait until all locks for the given phase have been released.
+     *
+     * @param phase The phase to wait for
+     * @param upTo  The last phase in which to keep waiting. If we go past this phase, this method will return early
+     * @return The new phase at the end of this method call
+     */
+    protected final synchronized P awaitUnlocked(P phase, P upTo) throws InterruptedException {
         P current;
         boolean first = true;
         while (true) {
             current = this.currentPhase;
-            if (compare(current, phase) > 0) {
+            if (compare(current, upTo) > 0) {
                 break;
             }
             Integer l = locks.get(phase);

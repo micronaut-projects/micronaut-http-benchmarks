@@ -21,6 +21,7 @@ public final class BastionResource extends AbstractSimpleResource<BastionLifecyc
         super(
                 BastionLifecycleState.Creating,
                 BastionLifecycleState.Active,
+                BastionLifecycleState.Failed,
                 BastionLifecycleState.Deleting,
                 BastionLifecycleState.Deleted,
                 context);
@@ -35,6 +36,11 @@ public final class BastionResource extends AbstractSimpleResource<BastionLifecyc
                 ListBastionsResponse::getOpcNextPage,
                 ListBastionsResponse::getItems
         );
+    }
+
+    @Override
+    protected BastionLifecycleState normalizePhase(BastionLifecycleState phase) {
+        return phase == BastionLifecycleState.Updating ? BastionLifecycleState.Active : phase;
     }
 
     public BastionResource subnet(SubnetResource resource) {

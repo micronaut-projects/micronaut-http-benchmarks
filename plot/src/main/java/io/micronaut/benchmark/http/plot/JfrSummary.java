@@ -26,13 +26,17 @@ final class JfrSummary {
             this.duration = duration;
         }
 
+        /**
+         * Phases shorter than the jdk.CPULoad period (or recorded without CPU monitoring) have no
+         * CPU load samples; report 0 for them rather than failing the whole plot.
+         */
         double get(CpuUsageMetric metric) {
             return switch (metric) {
                 case EXECUTION_SAMPLES -> executionSamples / (duration.toMillis() / 1000.0);
-                case JVM_USER -> jvmUser.stream().mapToDouble(Float::doubleValue).average().orElseThrow();
-                case JVM_SYSTEM -> jvmSystem.stream().mapToDouble(Float::doubleValue).average().orElseThrow();
+                case JVM_USER -> jvmUser.stream().mapToDouble(Float::doubleValue).average().orElse(0);
+                case JVM_SYSTEM -> jvmSystem.stream().mapToDouble(Float::doubleValue).average().orElse(0);
                 case JVM -> get(CpuUsageMetric.JVM_USER) + get(CpuUsageMetric.JVM_SYSTEM);
-                case MACHINE_TOTAL -> machineTotal.stream().mapToDouble(Float::doubleValue).average().orElseThrow();
+                case MACHINE_TOTAL -> machineTotal.stream().mapToDouble(Float::doubleValue).average().orElse(0);
             };
         }
     }

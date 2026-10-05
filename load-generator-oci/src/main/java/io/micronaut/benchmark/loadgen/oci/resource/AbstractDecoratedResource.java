@@ -21,13 +21,14 @@ public abstract class AbstractDecoratedResource extends PhasedResource<AbstractD
     }
 
     public final void manage() throws Exception {
-        launchDependencies();
-
         if (managing) {
             throw new IllegalStateException("Resource is already managed");
         }
         managing = true;
         try {
+            // inside the try so that we always end up Terminated, even if launching dependencies fails
+            launchDependencies();
+
             setPhase(Phase.Waiting);
             PhaseLock.awaitAll(locks);
 

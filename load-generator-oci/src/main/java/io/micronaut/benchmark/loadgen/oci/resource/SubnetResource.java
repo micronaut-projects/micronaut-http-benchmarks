@@ -25,6 +25,11 @@ public final class SubnetResource extends AbstractSimpleResource<Subnet.Lifecycl
                 context);
     }
 
+    @Override
+    protected Subnet.LifecycleState normalizePhase(Subnet.LifecycleState phase) {
+        return phase == Subnet.LifecycleState.Updating ? Subnet.LifecycleState.Available : phase;
+    }
+
     public static List<Subnet> list(ResourceContext context, OciLocation location) {
         return CompartmentCleaner.list(
                 context.clients.vcn().forRegion(location)::listSubnets,

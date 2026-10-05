@@ -244,8 +244,16 @@ public final class ExperimentQueue implements AutoCloseable {
                         active = job;
                     }
                     execute(job, round);
-                    active = null;
-                    Thread.interrupted();
+                    synchronized (job) {
+                        // cancel() only interrupts while holding this lock, so no interrupt for this job can
+                        // arrive after this point. A cancel that raced with the end of the repetition left the
+                        // job in WAITING_FOR_REPETITION; finish it here.
+                        active = null;
+                        Thread.interrupted();
+                        if (job.cancelled && job.finished == null) {
+                            job.finish("CANCELLED", null);
+                        }
+                    }
                     if (job.view().terminal() && !"SUCCEEDED".equals(job.view().state())) {
                         throw new IOException("Batch stopped after " + job.id + ": " + job.view().state());
                     }

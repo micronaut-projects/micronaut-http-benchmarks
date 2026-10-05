@@ -98,6 +98,11 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
     private final BastionResource bastion;
     private final TcpAgentRelay.TcpRelayResource tcpRelayResource;
     private final OutputListener.Write relayLog;
+    /**
+     * Whether the relay instance was launched. If not, it will never terminate, so {@link #close()} must not wait for
+     * it.
+     */
+    private volatile boolean relayLaunched = false;
 
     final List<PhasedResource.PhaseLock> lifecycleLocks = new ArrayList<>();
 
@@ -205,6 +210,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
 
         if (RELAY_MODE == SshRelayMode.RELAY_SERVER) {
             relayServerBuilder.launchAsResource();
+            relayLaunched = true;
         }
 
         if (publicSubnet != null) {
@@ -213,8 +219,9 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
                     .cidrBlock(RELAY_SUBNET)));
         }
 
+        String defaultSecurityListId = vcn.awaitDefaultSecurityListId();
         SecurityList securityList = retry(() -> context.clients.vcn().forRegion(location).getSecurityList(GetSecurityListRequest.builder()
-                .securityListId(vcn.getDefaultSecurityListId())
+                .securityListId(defaultSecurityListId)
                 .build()).getSecurityList());
         List<IngressSecurityRule> ingressRules = new ArrayList<>(securityList.getIngressSecurityRules());
         // allow all internal traffic
@@ -241,7 +248,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         retry(() -> {
             Throttle.VCN.take();
             context.clients.vcn().forRegion(location).updateSecurityList(UpdateSecurityListRequest.builder()
-                    .securityListId(vcn.getDefaultSecurityListId())
+                    .securityListId(defaultSecurityListId)
                     .updateSecurityListDetails(UpdateSecurityListDetails.builder()
                             .ingressSecurityRules(ingressRules)
                             .build())
@@ -251,6 +258,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
 
         if (RELAY_MODE == SshRelayMode.TCP_AGENT) {
             launch(tcpRelayResource, tcpRelayResource::manage);
+            relayLaunched = true;
         }
 
         if (bastion != null) {
@@ -292,7 +300,7 @@ public abstract class AbstractInfrastructure implements AutoCloseable {
         for (PhasedResource.PhaseLock lifecycleLock : lifecycleLocks) {
             lifecycleLock.close();
         }
-        if (relayServerBuilder != null) {
+        if (relayLaunched) {
             relayServerBuilder.resource().awaitTermination();
         }
         if (relayLog != null) {

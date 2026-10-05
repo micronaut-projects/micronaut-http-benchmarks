@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.slf4j.event.Level;
 
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -15,10 +16,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -84,7 +83,7 @@ public interface OutputListener {
 
                     byte expected = pattern.get();
                     if (actual != expected) {
-                        pattern.rewind();
+                        pattern.position(fallback(pattern, pattern.position() - 1, actual));
                     } else if (!pattern.hasRemaining()) {
                         pattern = null;
                         foundCondition.signalAll();
@@ -93,6 +92,30 @@ public interface OutputListener {
             } finally {
                 lock.unlock();
             }
+        }
+
+        /**
+         * Find the longest prefix of the pattern that is a suffix of the first {@code matched} pattern bytes followed
+         * by {@code actual}, i.e. how much of the pattern is still matched after a mismatch.
+         */
+        private static int fallback(ByteBuffer pattern, int matched, byte actual) {
+            for (int candidate = matched; candidate > 0; candidate--) {
+                if (pattern.get(candidate - 1) != actual) {
+                    continue;
+                }
+                int shift = matched + 1 - candidate;
+                boolean ok = true;
+                for (int j = 0; j < candidate - 1; j++) {
+                    if (pattern.get(j) != pattern.get(shift + j)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    return candidate;
+                }
+            }
+            return 0;
         }
 
         @Override
@@ -201,7 +224,7 @@ public interface OutputListener {
         private final Logger logger;
         private final Level level;
 
-        private final Queue<ByteBuffer> queue = new ArrayDeque<>();
+        private final ByteArrayOutputStream pending = new ByteArrayOutputStream();
         private final Map<String, String> mdc;
 
         public Log(Logger logger, Level level) {
@@ -214,16 +237,19 @@ public interface OutputListener {
         public void onData(ByteBuffer data) {
             for (int i = data.position(); i < data.limit(); i++) {
                 if (data.get(i) == '\n') {
-                    StringBuilder builder = new StringBuilder();
-                    drain(builder);
-                    builder.append(StandardCharsets.UTF_8.decode(data.slice(data.position(), i - data.position())));
-                    log(builder.toString());
+                    append(data.slice(data.position(), i - data.position()));
+                    log(drain());
                     data.position(i + 1);
                 }
             }
-            if (data.hasRemaining()) {
-                queue.add(data);
-            }
+            // copy the partial line: the caller may reuse the buffer after we return
+            append(data);
+        }
+
+        private void append(ByteBuffer data) {
+            byte[] bytes = new byte[data.remaining()];
+            data.get(bytes);
+            pending.writeBytes(bytes);
         }
 
         protected void log(String msg) {
@@ -238,19 +264,13 @@ public interface OutputListener {
 
         @Override
         public void onComplete() {
-            StringBuilder builder = new StringBuilder();
-            drain(builder);
-            log(builder.toString());
+            log(drain());
         }
 
-        private void drain(StringBuilder builder) {
-            while (true) {
-                ByteBuffer buffer = queue.poll();
-                if (buffer == null) {
-                    break;
-                }
-                builder.append(StandardCharsets.UTF_8.decode(buffer));
-            }
+        private String drain() {
+            String line = pending.toString(StandardCharsets.UTF_8);
+            pending.reset();
+            return line;
         }
     }
 

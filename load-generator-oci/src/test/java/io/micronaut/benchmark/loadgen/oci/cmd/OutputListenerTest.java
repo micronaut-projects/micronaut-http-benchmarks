@@ -1,11 +1,15 @@
 package io.micronaut.benchmark.loadgen.oci.cmd;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -27,6 +31,45 @@ class OutputListenerTest {
         assertFalse(waiter.found());
         waiter.onData(ByteBuffer.wrap("fo\033[1;2;3mo".getBytes(StandardCharsets.UTF_8)));
         assertTrue(waiter.found());
+    }
+
+    @Test
+    public void waiterRecoversFromMismatchAtPatternStart() {
+        OutputListener.Waiter waiter = new OutputListener.Waiter(buffer("Moved to TCP log"));
+        waiter.onData(buffer("MMoved to TCP log"));
+        assertTrue(waiter.found());
+    }
+
+    @Test
+    public void waiterRecoversFromSelfOverlappingMismatch() {
+        OutputListener.Waiter waiter = new OutputListener.Waiter(buffer("aab"));
+        waiter.onData(buffer("aaab"));
+        assertTrue(waiter.found());
+    }
+
+    @Test
+    public void logCopiesPartialLineFromReusedBuffer() {
+        List<String> lines = new ArrayList<>();
+        OutputListener.Log log = new OutputListener.Log(LoggerFactory.getLogger(OutputListenerTest.class), Level.DEBUG) {
+            @Override
+            protected void log(String msg) {
+                lines.add(msg);
+            }
+        };
+        byte[] reused = new byte[8];
+        try (OutputListener.Stream stream = new OutputListener.Stream(List.of(log))) {
+            write(stream, reused, "a\nb\u00e4");
+            write(stream, reused, "c\nd");
+        }
+        assertEquals(List.of("a", "b\u00e4c", "d"), lines);
+    }
+
+    private static void write(OutputListener.Stream stream, byte[] reused, String s) {
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        java.util.Arrays.fill(reused, (byte) 'x');
+        System.arraycopy(bytes, 0, reused, 0, bytes.length);
+        stream.write(reused, 0, bytes.length);
+        java.util.Arrays.fill(reused, (byte) 'x');
     }
 
     @Test
