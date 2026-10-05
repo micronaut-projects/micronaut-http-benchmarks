@@ -17,8 +17,6 @@ import io.netty.handler.codec.http2.Http2Headers;
 import io.netty.handler.codec.http2.Http2Stream;
 import io.netty.util.AsciiString;
 
-import java.io.IOException;
-
 final class RequestHandlerHttp2Frame extends Http2FrameAdapter {
     static final AsciiString PATH_STATUS = AsciiString.of("/status");
     static final AsciiString PATH_FIND = AsciiString.of("/search/find");
@@ -106,7 +104,7 @@ final class RequestHandlerHttp2Frame extends Http2FrameAdapter {
                 ByteBuf buf;
                 try {
                     buf = AgnosticRequestHandler.INSTANCE.status(ctx);
-                } catch (IOException e) {
+                } catch (Exception e) {
                     e.printStackTrace();
                     error(HttpResponseStatus.INTERNAL_SERVER_ERROR);
                     return;
@@ -157,14 +155,18 @@ final class RequestHandlerHttp2Frame extends Http2FrameAdapter {
                 ByteBuf res;
                 try {
                     res = AgnosticRequestHandler.INSTANCE.find(ctx, buf);
-                } catch (IOException e) {
+                } catch (Exception e) {
                     e.printStackTrace();
                     error(HttpResponseStatus.INTERNAL_SERVER_ERROR);
                     return;
                 } finally {
                     buf.release();
                 }
-                ok(res);
+                if (res == null) {
+                    error(HttpResponseStatus.NOT_FOUND);
+                } else {
+                    ok(res);
+                }
             }
         }
     }
