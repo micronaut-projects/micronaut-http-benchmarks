@@ -21,6 +21,7 @@ public final class BastionSessionResource extends AbstractSimpleResource<Session
     public BastionSessionResource(ResourceContext context) {
         super(SessionLifecycleState.Creating,
                 SessionLifecycleState.Active,
+                SessionLifecycleState.Failed,
                 SessionLifecycleState.Deleting,
                 SessionLifecycleState.Deleted,
                 context);

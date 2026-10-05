@@ -22,6 +22,7 @@ public final class PostgresqlResource extends AbstractSimpleResource<DbSystem.Li
     public PostgresqlResource(ResourceContext context) {
         super(DbSystem.LifecycleState.Creating,
                 DbSystem.LifecycleState.Active,
+                DbSystem.LifecycleState.Failed,
                 DbSystem.LifecycleState.Deleting,
                 DbSystem.LifecycleState.Deleted,
                 context);
@@ -36,6 +37,14 @@ public final class PostgresqlResource extends AbstractSimpleResource<DbSystem.Li
                 ListDbSystemsResponse::getOpcNextPage,
                 r -> r.getDbSystemCollection().getItems()
         );
+    }
+
+    @Override
+    protected DbSystem.LifecycleState normalizePhase(DbSystem.LifecycleState phase) {
+        return switch (phase) {
+            case Updating, Inactive, NeedsAttention -> DbSystem.LifecycleState.Active;
+            case null, default -> phase;
+        };
     }
 
     public PostgresqlResource networkDetails(SubnetResource subnet, String privateIp) {

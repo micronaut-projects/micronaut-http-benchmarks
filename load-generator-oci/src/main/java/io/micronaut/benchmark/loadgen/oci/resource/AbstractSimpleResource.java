@@ -2,13 +2,16 @@ package io.micronaut.benchmark.loadgen.oci.resource;
 
 import io.micronaut.benchmark.loadgen.oci.AbstractInfrastructure;
 import io.micronaut.benchmark.loadgen.oci.OciLocation;
+import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.util.functional.ThrowingSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
     private static final Logger LOG = LoggerFactory.getLogger(AbstractSimpleResource.class);
@@ -17,6 +20,8 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
 
     private final P provisioning;
     private final P available;
+    @Nullable
+    private final P failed;
     private final P terminating;
     private final P terminated;
 
@@ -25,9 +30,20 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
     public AbstractSimpleResource(
             P provisioning, P available, P terminating, P terminated,
             ResourceContext context) {
+        this(provisioning, available, null, terminating, terminated, context);
+    }
+
+    /**
+     * @param failed A phase the resource may enter instead of {@code available}. Dependents waiting for
+     *               {@code available} will fail, but the resource is still deleted.
+     */
+    public AbstractSimpleResource(
+            P provisioning, P available, @Nullable P failed, P terminating, P terminated,
+            ResourceContext context) {
         super(context);
         this.provisioning = provisioning;
         this.available = available;
+        this.failed = failed;
         this.terminating = terminating;
         this.terminated = terminated;
     }
@@ -46,7 +62,7 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
 
     @Override
     protected List<P> phases() {
-        return List.of(provisioning, available, terminating, terminated);
+        return Stream.of(provisioning, available, failed, terminating, terminated).filter(Objects::nonNull).toList();
     }
 
     public final String ocid() {
@@ -90,7 +106,9 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
         this.ocid = ocid;
         try {
             getPoller(location).subscribeUntil(ocid, this, available);
-            awaitPhaseOrPast(available);
+            if (awaitPhaseOrPast(available) == failed) {
+                LOG.warn("{} {} is in phase {}", this, ocid, failed);
+            }
 
             if (LOG.isDebugEnabled()) {
                 synchronized (this) {
@@ -99,7 +117,8 @@ public abstract class AbstractSimpleResource<P> extends PhasedResource<P> {
                     }
                 }
             }
-            if (awaitUnlocked(available) == available) {
+            P current = awaitUnlocked(available, failed == null ? available : failed);
+            if (current == available || (failed != null && current == failed)) {
                 AbstractInfrastructure.retry(() -> {
                     LOG.info("Deleting {} {}", this, ocid);
                     delete(location, ocid);

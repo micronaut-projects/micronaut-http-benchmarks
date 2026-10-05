@@ -25,6 +25,11 @@ public final class VcnResource extends AbstractSimpleResource<Vcn.LifecycleState
                 context);
     }
 
+    @Override
+    protected Vcn.LifecycleState normalizePhase(Vcn.LifecycleState phase) {
+        return phase == Vcn.LifecycleState.Updating ? Vcn.LifecycleState.Available : phase;
+    }
+
     public static List<Vcn> list(ResourceContext context, OciLocation location) {
         return CompartmentCleaner.list(
                 context.clients.vcn().forRegion(location)::listVcns,
