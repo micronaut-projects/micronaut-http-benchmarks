@@ -78,7 +78,7 @@ public abstract class PhasePoller<K, P> implements ResourceContext.Poller {
         List<Subscription> completed = new ArrayList<>();
         for (Subscription subscription : current) {
             subscription.resource.setPhase(phase);
-            if (subscription.isComplete(phase)) {
+            if (subscription.isComplete(subscription.resource.getCurrentPhase())) {
                 completed.add(subscription);
             }
         }
