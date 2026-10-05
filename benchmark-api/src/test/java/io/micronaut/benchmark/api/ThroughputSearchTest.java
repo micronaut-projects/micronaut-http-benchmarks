@@ -15,6 +15,48 @@ class ThroughputSearchTest {
             new ThroughputStage.Phase("main/2", 121, 1000)));
 
     @Test
+    void deliveredRateMustSupportTheClaimedRateEvenWithPerfectResponses() {
+        var measured = new ThroughputStage("validation", 1000, List.of(
+                new ThroughputStage.Phase("main/0", 75000, 45000),
+                new ThroughputStage.Phase("main/1", 300000, 45000),
+                new ThroughputStage.Phase("main/2", 330000, 45000)));
+        // Actual request count from the thorough Pure Netty run, with every request completed.
+        var phases = List.of(phase("main/0", 45000, 3375000, 3375000),
+                phase("main/1", 45000, 5779328, 5779328), phase("main/2", 45000, 14850000, 14850000));
+        var result = measured.evaluate(stats(null, null, phases));
+        assertEquals("GENERATOR_LIMITED", result.outcome());
+        assertEquals(75000, result.highestPassingRate());
+        assertNull(result.firstFailingRate());
+        assertFalse(result.canValidate());
+        assertEquals(List.of("PASS", "GENERATOR_LIMITED", "EXCLUDED"), result.phases().stream().map(ThroughputStage.Observation::status).toList());
+        assertTrue(result.reason().contains("5779328 of 13500000.0"));
+        // An independently reported overload remains a SUT failure boundary.
+        assertEquals("BRACKETED", measured.evaluate(stats("main/1", "Response time exceeded", phases)).outcome());
+    }
+
+    @Test
+    void deliveredRateUsesInjectionTimeRampAverageAndPoissonCountTolerance() {
+        assertNull(ThroughputStage.deliveryShortfallReason(990000, 100000, 10000));
+        assertNotNull(ThroughputStage.deliveryShortfallReason(989999, 100000, 10000));
+        assertNull(ThroughputStage.deliveryShortfallReason(9700, 1000, 10000));
+        assertNotNull(ThroughputStage.deliveryShortfallReason(9400, 1000, 10000));
+        assertNull(ThroughputStage.deliveryShortfallReason(1, 1, 1000));
+
+        var ramp = new ThroughputStage("discovery", 1000, List.of(
+                new ThroughputStage.Phase("main/0", 1000, 10000),
+                new ThroughputStage.Phase("main/1", 10000, 10000)), 5000L);
+        var phases = new java.util.ArrayList<>(List.of(phase("main/0", 10000, 10000, 10000),
+                phase("ramp/1", 5000, 27500, 27500), phase("main/1", 120000, 100000, 100000)));
+        assertEquals("LOWER_BOUND", ramp.evaluate(stats(null, null, phases)).outcome());
+        phases.set(1, phase("ramp/1", 5000, 20000, 20000));
+        var result = ramp.evaluate(stats(null, null, phases));
+        assertEquals("GENERATOR_LIMITED", result.outcome());
+        assertEquals(1000, result.highestPassingRate());
+        assertNull(result.firstFailingRate());
+        assertEquals("EXCLUDED", result.phases().getLast().status());
+    }
+
+    @Test
     void requiredPreflightMustCompleteBothRequestsBeforeAnyRateCanPass() {
         var checked = new ThroughputStage(plan.stage(), plan.warmupMillis(), plan.phases(), plan.rampMillis(), 2);
         var measurements = plan.phases().stream().map(p -> phase(p.name(), 1000, 100)).toList();
@@ -258,7 +300,7 @@ class ThroughputSearchTest {
     @Test
     void aPassingRampDoesNotReplaceAMissingOrIncompleteMeasurement() {
         var discovery = new ThroughputSearch("quick", 100, 125, "1s", "1s", "1s", 25, 5, 1, 2, "2s").discovery();
-        var points = List.of(phase("main/0", 1000, 100), phase("ramp/1", 2000, 100), phase("main/1", 999, 100));
+        var points = List.of(phase("main/0", 1000, 100), phase("ramp/1", 2000, 225, 225), phase("main/1", 999, 125, 125));
         var result = discovery.evaluate(stats(null, null, points));
         assertEquals("INVALID", result.outcome());
         assertEquals(100, result.highestPassingRate());
@@ -278,7 +320,7 @@ class ThroughputSearchTest {
     @Test
     void delayedRampFailureCutsOffLaterMeasurementsAtTheRampTarget() {
         var discovery = new ThroughputSearch("quick", 100, 125, "1s", "1s", "1s", 25, 5, 1, 2, "2s").discovery();
-        var points = List.of(phase("main/1", 1000, 100), phase("ramp/1", 2000, 100), phase("main/0", 1000, 100));
+        var points = List.of(phase("main/1", 1000, 125, 125), phase("ramp/1", 2000, 225, 225), phase("main/0", 1000, 100));
         var completion = new ThroughputStage.Completion(true, false, List.of("warmup", "main/0", "ramp/1", "main/1"));
         for (String failure : List.of("Response time exceeded", "Exceeded session limit")) {
             var result = discovery.evaluate(stats("ramp/1", failure, points), completion);
@@ -336,7 +378,7 @@ class ThroughputSearchTest {
         var validation = search.validation(discovery);
         var last = validation.phases().getLast();
         assertEquals(69478, last.rate());
-        var measurements = validation.phases().stream().map(p -> phase(p.name(), 1000, 100)).toList();
+        var measurements = validation.phases().stream().map(p -> phase(p.name(), 1000, p.rate(), p.rate())).toList();
         var result = validation.evaluate(stats(last.name(), "Response time exceeded", measurements));
         assertEquals("BRACKETED", result.outcome());
         assertEquals(68452, result.highestPassingRate());

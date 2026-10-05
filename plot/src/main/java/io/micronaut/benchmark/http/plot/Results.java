@@ -58,6 +58,7 @@ public final class Results {
     }
 
     public static Summary summary(Path directory) throws IOException {
+        directory = directory.toAbsolutePath().normalize();
         Path metadataFile = directory.resolve("metadata.json");
         JsonNode savedMetadata = JSON.readTree(metadataFile.toFile());
         BenchmarkResult metadata = JSON.treeToValue(savedMetadata, BenchmarkResult.class);
@@ -76,6 +77,14 @@ public final class Results {
                     }
                 }
             }
+            var reassessed = new ArrayList<ThroughputResult.Repetition>();
+            for (var repetition : result.repetitions()) {
+                reassessed.add(new ThroughputResult.Repetition(repetition.repetition(), repetition.discoveryDirectory(),
+                        stageResult(directory, stages, repetition.discoveryDirectory(), repetition.discovery()),
+                        repetition.validationDirectory(), repetition.validationDirectory() == null ? null
+                        : stageResult(directory, stages, repetition.validationDirectory(), repetition.validation())));
+            }
+            result = new ThroughputResult(result.search(), reassessed);
             return new Summary(directory.toAbsolutePath().toString(), run.path("state").asString(), metadata,
                     savedMetadata.path("profileCoverage").asString("unknown"), List.of(), List.of(), List.of(),
                     result, "SUCCEEDED".equals(run.path("state").asString()) ? result.aggregate() : null, stages, null);
@@ -115,6 +124,13 @@ public final class Results {
         return new Summary(directory.toAbsolutePath().toString(), run.get("state").stringValue(),
                 metadata, savedMetadata.path("profileCoverage").asString("unknown"), phases, stats.failures(), stats.info() == null ? List.of() : stats.info().errors(),
                 null, null, List.of(), eligibility);
+    }
+
+    private static ThroughputStage.Result stageResult(Path root, List<Summary> stages, String relative,
+                                                     ThroughputStage.Result saved) {
+        String directory = root.resolve(relative).toAbsolutePath().normalize().toString();
+        return stages.stream().filter(s -> s.directory().equals(directory)).map(Summary::eligibility)
+                .filter(Objects::nonNull).findFirst().orElse(saved);
     }
 
     private static Double percentile(BenchmarkStats.Stats phase, double percentile) {

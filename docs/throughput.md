@@ -75,6 +75,13 @@ unfinished, or undrained phases cannot count as passes or be skipped.
 For otherwise passing phases (including warmup), response counts may exceed request counts by up to 0.1% to tolerate
 minor Hyperfoil accounting inconsistencies. Missing responses, larger overcounts, empty measurements, and short
 durations remain invalid; SLA and error checks are unchanged.
+An otherwise passing measurement must also issue its expected request count, allowing the larger of 1% or five
+Poisson standard deviations (`5 × sqrt(expected)`) for random arrival-count variation. Expected requests use the
+configured injection duration, excluding drain time; a linear ramp uses the average of its initial and target rates.
+Under-delivery is `GENERATOR_LIMITED`: earlier passes remain visible, later phases are excluded, and the search
+does not claim a failing SUT rate or proceed to validation. Preflight and closed-loop warmup are exempt. Existing
+SLA/request/session-limit failures retain their failure-boundary semantics. Fixed-rate runs also reject under-delivery.
+Offline adaptive summaries re-evaluate available stage data so saved pass labels cannot bypass this check.
 Each phase has a native maximum duration two minutes beyond its injection duration, bounding drain time if sessions
 become stuck. This does not shorten warmup or measurement; incomplete measurements and infrastructure errors cannot establish
 throughput bounds.

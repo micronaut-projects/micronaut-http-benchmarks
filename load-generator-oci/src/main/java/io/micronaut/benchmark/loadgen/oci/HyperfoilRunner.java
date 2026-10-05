@@ -7,6 +7,7 @@ import io.hyperfoil.controller.model.RequestStats;
 import io.hyperfoil.http.statistics.HttpStats;
 import io.micronaut.benchmark.api.BenchmarkStats;
 import io.micronaut.benchmark.api.InstanceType;
+import io.micronaut.benchmark.api.ThroughputStage;
 import io.micronaut.benchmark.loadgen.oci.cmd.CommandRunner;
 import io.micronaut.benchmark.loadgen.oci.cmd.OutputListener;
 import io.micronaut.benchmark.loadgen.oci.resource.AbstractDecoratedResource;
@@ -285,6 +286,11 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
                 invalidatesBenchmark = true;
             }
         }
+        var deliveryFailures = deliveryFailures(Files.readString(outputDirectory.resolve("hyperfoil.yaml")), wrapper.statsAll);
+        if (!deliveryFailures.isEmpty()) {
+            benchmarkFailures.addAll(deliveryFailures);
+            invalidatesBenchmark = true;
+        }
 
         LOG.info("Benchmark complete, writing output");
         Path outputPath = outputDirectory.resolve(benchmarkFailures.isEmpty() ? "output.json" : "output-failed.json");
@@ -295,6 +301,32 @@ public final class HyperfoilRunner extends PhasedResource<HyperfoilRunner.Hyperf
             String msg = String.join("\n", benchmarkFailures) + "\nOutput written at: " + outputPath;
             throw invalidatesBenchmark ? new InvalidatesBenchmarkException(msg) : new Exception(msg);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    static List<String> deliveryFailures(String workload, BenchmarkStats stats) {
+        Map<String, Object> definition = new Yaml(new SafeConstructor(new LoaderOptions())).load(workload);
+        var failures = new ArrayList<String>();
+        // Phases run in template order. An SLA failure cancels the run, so the failing phase is cut short
+        // and later phases never run; neither is a load generator shortfall.
+        phases:
+        for (var phase : (List<Map<String, Map<String, Map<String, Object>>>>) definition.get("phases")) {
+            for (var entry : phase.entrySet()) {
+                if (stats.failures().stream().anyMatch(f -> f.phase().equals(entry.getKey()))) break phases;
+                var settings = entry.getValue().get("constantRate");
+                if (settings == null || Boolean.TRUE.equals(settings.get("isWarmup"))) continue;
+                var actual = stats.findPhase(entry.getKey());
+                if (actual == null || actual.total() == null || actual.total().summary() == null) {
+                    failures.add("Missing measurement statistics for " + entry.getKey());
+                    continue;
+                }
+                var reason = ThroughputStage.deliveryShortfallReason(actual.total().summary().requestCount,
+                        ((Number) settings.get("usersPerSec")).doubleValue(),
+                        io.hyperfoil.impl.Util.parseToMillis(settings.get("duration").toString()));
+                if (reason != null) failures.add(entry.getKey() + ": " + reason);
+            }
+        }
+        return failures;
     }
 
     private void downloadAgentLogs(Path outputDirectory) {

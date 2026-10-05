@@ -113,7 +113,8 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
         String outcome = invalid == null ? "LOWER_BOUND" : "INVALID";
         String reason = invalid;
         boolean cutoff = invalid != null;
-        for (Phase planned : execution) {
+        for (int i = 0; i < execution.size(); i++) {
+            Phase planned = execution.get(i);
             boolean ramp = planned.name().startsWith("ramp/");
             if (cutoff) {
                 observations.add(new Observation(planned.name(), planned.rate(), "EXCLUDED", reason));
@@ -124,6 +125,7 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
             boolean sessionLimit = failures.stream().anyMatch(f -> f.message().toLowerCase(Locale.ROOT).contains("session limit"));
             boolean limited = failures.stream().anyMatch(f -> generatorLimit(f.message()))
                     || actual != null && actual.total() != null && actual.total().summary() != null && actual.total().summary().blockedTime > 0;
+            double offeredRate = ramp ? (execution.get(i - 1).rate() + (double) planned.rate()) / 2 : planned.rate();
             String status;
             if (actual == null || actual.total() == null || actual.total().summary() == null
                     || completion != null && !completion.terminatedPhases().contains(planned.name())) {
@@ -162,6 +164,10 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
                 outcome = "INVALID";
                 status = "INCOMPLETE";
                 reason = "Missing or incomplete measurement phase";
+            } else if ((reason = deliveryShortfallReason(actual.total().summary().requestCount, offeredRate,
+                    planned.durationMillis())) != null) {
+                outcome = "GENERATOR_LIMITED";
+                status = "GENERATOR_LIMITED";
             } else {
                 // A changing rate cannot establish a passing fixed-rate measurement.
                 if (!ramp) passing = planned.rate();
@@ -174,6 +180,21 @@ public record ThroughputStage(String stage, long warmupMillis, List<Phase> phase
             cutoff = true;
         }
         return new Result(stage, outcome, passing, failing, reason, List.copyOf(observations));
+    }
+
+    /** Uses injection duration, not elapsed time including drain. Rate may be a linear ramp's average. */
+    public static String deliveryShortfallReason(long requests, double rate, long durationMillis) {
+        if (!(rate > 0) || !Double.isFinite(rate) || durationMillis <= 0) {
+            throw new IllegalArgumentException("Invalid offered load");
+        }
+        double expected = rate * (durationMillis / 1000.0);
+        // Hyperfoil uses Poisson arrivals by default. Allow random count variation at low rates,
+        // while requiring 99% delivery for large samples. This is not an SLA latency tolerance.
+        double minimum = Math.ceil(Math.max(1, expected - Math.max(expected * 0.01, 5 * Math.sqrt(expected))));
+        if (requests >= minimum) return null;
+        return String.format(Locale.ROOT,
+                "Offered load not reached: issued %d of %.1f expected requests (%.2f%%); minimum %.0f for %.1f RPS over %d ms",
+                requests, expected, 100 * requests / expected, minimum, rate, durationMillis);
     }
 
     private static boolean generatorLimit(String message) {

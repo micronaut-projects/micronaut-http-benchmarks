@@ -2,6 +2,7 @@ package io.micronaut.benchmark.loadgen.oci;
 
 import io.hyperfoil.api.config.BenchmarkData;
 import io.hyperfoil.core.parser.BenchmarkParser;
+import io.micronaut.benchmark.api.BenchmarkStats;
 import io.micronaut.benchmark.api.ThroughputSearch;
 import io.micronaut.benchmark.api.ThroughputStage;
 import org.junit.jupiter.api.Test;
@@ -75,6 +76,29 @@ class ThroughputRunnerTest {
     @Test
     void denseValidationSurvivesYamlRewritingAndHyperfoilParsing() throws Exception {
         assertLargeSweepParses("validation");
+    }
+
+    @Test
+    void fixedRateRunRejectsUnderDeliveryAndIgnoresClosedLoopWarmup() {
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        String json = """
+                {"info":{"errors":[]},"failures":[],"stats":[
+                  {"name":"main/0","phase":"main","total":{"summary":{
+                    "startTime":1000,"endTime":46000,"minResponseTime":0,"maxResponseTime":0,
+                    "meanResponseTime":0,"stdDevResponseTime":0,"invalid":0,"connectionErrors":0,
+                    "requestTimeouts":0,"internalErrors":0,"blockedTime":0,
+                    "requestCount":20000,"responseCount":20000,"percentileResponseTime":{},"extensions":{}}}}
+                ]}
+                """;
+        var stats = mapper.readValue(json, BenchmarkStats.class);
+        var failures = HyperfoilRunner.deliveryFailures(TEMPLATE, stats);
+        assertEquals(1, failures.size());
+        assertTrue(failures.getFirst().contains("main/0: Offered load not reached"));
+        assertTrue(HyperfoilRunner.deliveryFailures(TEMPLATE.replace("usersPerSec: 1000", "usersPerSec: 400"), stats).isEmpty());
+        // An SLA failure cancels the run: the failing phase is cut short and later phases have no statistics.
+        var overloaded = mapper.readValue(json.replace("\"failures\":[]",
+                "\"failures\":[{\"phase\":\"main/0\",\"message\":\"Response time exceeded\"}]"), BenchmarkStats.class);
+        assertTrue(HyperfoilRunner.deliveryFailures(TEMPLATE, overloaded).isEmpty());
     }
 
     private void assertLargeSweepParses(String stage) throws Exception {

@@ -188,6 +188,18 @@ class ResultsTest {
         assertEquals("BRACKETED", summary.throughput().repetitions().getFirst().validation().outcome());
         assertEquals(100, summary.aggregate().medianPassingRate());
         assertEquals(110, ThroughputCharts.data(List.of(summary)).runs().getFirst().bounds().getFirst().failing());
+
+        // Do not retain the old aggregate if raw traffic cannot support its saved passing rate.
+        ((ObjectNode) phases.get(1).path("total").path("summary")).put("requestCount", 1000).put("responseCount", 1000);
+        JSON.writeValue(parent.resolve(relative).resolve("output.json").toFile(), stats);
+        summary = Results.summary(parent);
+        assertEquals("GENERATOR_LIMITED", summary.throughput().repetitions().getFirst().validation().outcome());
+        assertEquals("GENERATOR_LIMITED", Results.summary(parent.resolve("..").resolve(parent.getFileName()))
+                .throughput().repetitions().getFirst().validation().outcome());
+        assertNull(summary.aggregate());
+        assertNull(ThroughputCharts.data(List.of(summary)).runs().getFirst().bounds().getFirst().passing());
+        assertEquals("BRACKETED", JSON.readValue(parent.resolve("throughput.json").toFile(), ThroughputResult.class)
+                .repetitions().getFirst().validation().outcome());
     }
 
     @Test
@@ -203,6 +215,7 @@ class ResultsTest {
         raw.add(ramp);
         var next = ((ObjectNode) raw.get(1)).deepCopy();
         next.put("name", "main/1");
+        ((ObjectNode) next.path("total").path("summary")).put("requestCount", 7500).put("responseCount", 7500);
         raw.add(next);
         JSON.writeValue(directory.resolve("output.json").toFile(), stats);
         var plan = new ThroughputStage("discovery", 1000, List.of(
