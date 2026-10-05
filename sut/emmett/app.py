@@ -1,4 +1,4 @@
-from emmett import App, abort, request
+from emmett import App, abort, request, response
 from emmett.tools import service
 
 
@@ -7,7 +7,8 @@ app = App(__name__)
 
 @app.route("/status", methods="get")
 async def status():
-    return "", 204
+    response.status = 204
+    return ""
 
 
 @app.route("/search/find", methods="post")
