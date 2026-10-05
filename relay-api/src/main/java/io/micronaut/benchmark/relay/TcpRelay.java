@@ -5,12 +5,14 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.CompositeByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
@@ -69,6 +71,11 @@ public final class TcpRelay implements Closeable {
     private static final int WINDOW_SIZE = 16 * 1024 * 1024;
 
     private static final AsciiString HEADER_ERROR = AsciiString.of("error");
+    /**
+     * Written to {@link UnreliableOutputStream#liveDestination} to make the {@link UnreliableSender} send an
+     * {@link EndFrame} once the source socket has closed.
+     */
+    private static final Object END_OF_STREAM = new Object();
     private static final Logger LOG = LoggerFactory.getLogger(TcpRelay.class);
 
     private static final Http2Settings SETTINGS = new Http2Settings().initialWindowSize(WINDOW_SIZE);
@@ -86,6 +93,10 @@ public final class TcpRelay implements Closeable {
 
     long bufferedBytes() {
         return streams.values().stream().mapToLong(pair -> pair.unreliableOutput.bufferLength).sum();
+    }
+
+    int streamCount() throws Exception {
+        return loop.submit(streams::size).get();
     }
 
     public TcpRelay reestablishDelay(Duration reestablishDelay) {
@@ -153,16 +164,17 @@ public final class TcpRelay implements Closeable {
                                 UUID.randomUUID().toString(),
                                 remoteAddress.getHostString(),
                                 remoteAddress.getPort(),
-                                0, 0
+                                0, 0, false
                         );
                         LOG.info("Establishing new connection {}", request);
                         StreamPair pair = new StreamPair(
+                                true,
                                 request,
                                 new UnreliableInputStream(ch),
                                 new UnreliableOutputStream(ch)
                         );
                         streams.put(request.id, pair);
-                        ch.pipeline().addLast(new ReliableReceiver(pair.unreliableOutput));
+                        ch.pipeline().addLast(new ReliableReceiver(pair));
                         tunnel(pair);
                     }
                 })
@@ -181,12 +193,23 @@ public final class TcpRelay implements Closeable {
                     protected void initChannel(Http2StreamChannel ch) {
                         long outputStart = pair.unreliableOutput.position - pair.unreliableOutput.bufferLength;
                         ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+                            @Override
+                            public void channelInactive(ChannelHandlerContext ctx) {
+                                // The server only closes an established stream once it has finished the pair. If
+                                // instead the whole tunnel went down, keep the pair so it is re-tunneled later.
+                                if (pair.established && ch.parent().isActive()) {
+                                    finish(pair);
+                                }
+                            }
+                        });
+                        ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
                             private final Request request = new Request(
                                     pair.initialize.id,
                                     pair.initialize.host,
                                     pair.initialize.port,
                                     outputStart,
-                                    pair.unreliableInput.position
+                                    pair.unreliableInput.position,
+                                    pair.established
                             );
 
                             @Override
@@ -202,13 +225,19 @@ public final class TcpRelay implements Closeable {
                                 HttpResponseStatus status = HttpResponseStatus.parseLine(response.headers().status());
                                 if (status == HttpResponseStatus.OK) {
                                     LOG.info("Stream for {} established", request);
+                                    pair.established = true;
                                     ch.pipeline().remove(ctx.name());
                                     ch.pipeline()
-                                            .addLast(new UnreliableSender(pair.unreliableOutput, outputStart))
-                                            .addLast(new UnreliableReceiver(pair.unreliableInput, pair.unreliableInput.position));
+                                            .addLast(new UnreliableSender(pair, outputStart))
+                                            .addLast(new UnreliableReceiver(pair, pair.unreliableInput.position));
                                 } else {
-                                    LOG.warn("Failed to connect stream ({}): {}", status, response.headers().get(HEADER_ERROR));
+                                    if (status == HttpResponseStatus.GONE) {
+                                        LOG.info("Connection {} was already finished by the other side", request);
+                                    } else {
+                                        LOG.warn("Failed to connect stream ({}): {}", status, response.headers().get(HEADER_ERROR));
+                                    }
                                     ch.close();
+                                    finish(pair);
                                 }
                             }
                         });
@@ -220,6 +249,36 @@ public final class TcpRelay implements Closeable {
                         LOG.warn("Failed to open stream channel", future.cause());
                     }
                 });
+    }
+
+    /**
+     * Forget a pair once both directions have reached EOF. Only the server side decides this on its own: the client
+     * keeps re-tunneling its pairs after a reconnect, so it must not drop a pair the server may still need. The
+     * server signals that it is done by closing the stream, or by answering a resumed stream with
+     * {@link HttpResponseStatus#GONE}. Since the server only finishes once the client has acknowledged all data, both
+     * signals also tell the client that nothing is lost.
+     */
+    private void checkFinished(StreamPair pair) {
+        if (pair.client) {
+            return;
+        }
+        if (pair.unreliableInput.eof && pair.unreliableOutput.eof && pair.unreliableOutput.bufferLength == 0) {
+            finish(pair);
+        }
+    }
+
+    private void finish(StreamPair pair) {
+        if (pair.finished) {
+            return;
+        }
+        pair.finished = true;
+        LOG.info("Connection {} finished", pair.initialize);
+        streams.remove(pair.initialize.id, pair);
+        pair.unreliableOutput.source.close();
+        pair.unreliableOutput.release();
+        if (pair.unreliableOutput.liveDestination != null) {
+            pair.unreliableOutput.liveDestination.close();
+        }
     }
 
     @Override
@@ -428,45 +487,52 @@ public final class TcpRelay implements Closeable {
             Request request = Request.fromHttp2Headers(headersFrame.headers());
 
             StreamPair streamPair = streams.get(request.id);
-            if (streamPair == null) {
+            if (streamPair != null) {
+                LOG.info("Linking existing forwarder: {}", request);
+                connect(ctx, request, streamPair);
+            } else if (request.resume) {
+                // We finished this pair before the client saw the end of the stream
+                respondError(ctx, HttpResponseStatus.GONE, "Connection already finished");
+            } else {
                 LOG.info("Creating new forwarder: {}", request);
                 new Bootstrap()
                         .channel(NioSocketChannel.class)
                         .group(loop)
-                        .handler(new ChannelInitializer<>() {
-                            @Override
-                            protected void initChannel(Channel ch) {
-                                StreamPair pair = streams.get(request.id);
-                                if (pair != null) {
-                                    // race
-                                    ch.close();
-                                    connect(ctx, request, pair);
-                                    return;
-                                }
-                                pair = new StreamPair(
-                                        request,
-                                        new UnreliableInputStream(ch),
-                                        new UnreliableOutputStream(ch)
-                                );
-                                ch.pipeline().addLast(new ReliableReceiver(pair.unreliableOutput));
-                                streams.put(request.id, pair);
-                                connect(ctx, request, pair);
-                            }
-                        })
+                        .option(ChannelOption.AUTO_READ, false)
+                        .handler(new ChannelInboundHandlerAdapter())
                         .connect(request.host, request.port)
                         .addListener((ChannelFutureListener) future -> {
+                            Channel ch = future.channel();
                             if (!future.isSuccess()) {
                                 LOG.warn("Failed to connect to {}:{}", request.host, request.port, future.cause());
-                                DefaultHttp2Headers response = new DefaultHttp2Headers();
-                                response.status(HttpResponseStatus.INTERNAL_SERVER_ERROR.codeAsText());
-                                response.add(HEADER_ERROR, future.cause().toString());
-                                ctx.writeAndFlush(new DefaultHttp2HeadersFrame(response, true), ctx.voidPromise());
+                                respondError(ctx, HttpResponseStatus.INTERNAL_SERVER_ERROR, future.cause().toString());
+                                return;
                             }
+                            StreamPair pair = streams.get(request.id);
+                            if (pair != null) {
+                                // race
+                                ch.close();
+                                connect(ctx, request, pair);
+                                return;
+                            }
+                            pair = new StreamPair(
+                                    false,
+                                    request,
+                                    new UnreliableInputStream(ch),
+                                    new UnreliableOutputStream(ch)
+                            );
+                            ch.pipeline().addLast(new ReliableReceiver(pair));
+                            streams.put(request.id, pair);
+                            connect(ctx, request, pair);
                         });
-            } else {
-                LOG.info("Linking existing forwarder: {}", request);
-                connect(ctx, request, streamPair);
             }
+        }
+
+        private void respondError(ChannelHandlerContext ctx, HttpResponseStatus status, String error) {
+            DefaultHttp2Headers response = new DefaultHttp2Headers();
+            response.status(status.codeAsText());
+            response.add(HEADER_ERROR, error);
+            ctx.writeAndFlush(new DefaultHttp2HeadersFrame(response, true), ctx.voidPromise());
         }
 
         private void connect(ChannelHandlerContext ctx, Request request, StreamPair streamPair) {
@@ -474,20 +540,26 @@ public final class TcpRelay implements Closeable {
             response.status(HttpResponseStatus.OK.codeAsText());
             ctx.writeAndFlush(new DefaultHttp2HeadersFrame(response, false), ctx.voidPromise());
 
-            ctx.pipeline().addAfter(ctx.name(), null, new UnreliableReceiver(streamPair.unreliableInput, request.inputOffset));
-            ctx.pipeline().addAfter(ctx.name(), null, new UnreliableSender(streamPair.unreliableOutput, request.outputOffset));
+            // The client has received everything up to outputOffset, even if the acknowledgement got lost
+            streamPair.unreliableOutput.pruneUntil(request.outputOffset);
+
+            ctx.pipeline().addAfter(ctx.name(), null, new UnreliableReceiver(streamPair, request.inputOffset));
+            ctx.pipeline().addAfter(ctx.name(), null, new UnreliableSender(streamPair, request.outputOffset));
             ctx.pipeline().remove(ctx.name());
 
             ctx.read();
+            checkFinished(streamPair);
         }
     }
 
-    private static final class UnreliableReceiver extends ChannelInboundHandlerAdapter {
+    private final class UnreliableReceiver extends ChannelInboundHandlerAdapter {
+        private final StreamPair pair;
         private final UnreliableInputStream stream;
         private long position;
 
-        UnreliableReceiver(UnreliableInputStream stream, long position) {
-            this.stream = stream;
+        UnreliableReceiver(StreamPair pair, long position) {
+            this.pair = pair;
+            this.stream = pair.unreliableInput;
             this.position = position;
         }
 
@@ -504,7 +576,6 @@ public final class TcpRelay implements Closeable {
                     if (buf.isReadable()) {
                         this.position += buf.readableBytes();
                         stream.position += buf.readableBytes();
-                        stream.eof |= data.isEndStream();
                         stream.destination.writeAndFlush(buf.retain()).addListener(f -> ctx.read());
                         ctx.write(new DiscardUntilFrame(stream.position).toFrame(ctx.alloc()), ctx.voidPromise());
                     } else {
@@ -513,17 +584,30 @@ public final class TcpRelay implements Closeable {
                 } finally {
                     data.release();
                 }
+            } else if (msg instanceof Http2UnknownFrame u && EndFrame.fromUnknownFrame(u) instanceof EndFrame end) {
+                if (end.position != stream.position) {
+                    LOG.warn("Received end of {} at {}, but we are at {}", pair.initialize, end.position, stream.position);
+                } else if (!stream.eof) {
+                    LOG.info("Received end of {} at {}", pair.initialize, end.position);
+                    stream.eof = true;
+                    // Close once everything has been written. This also ends the opposite direction.
+                    stream.destination.writeAndFlush(Unpooled.EMPTY_BUFFER).addListener(ChannelFutureListener.CLOSE);
+                }
+                ctx.read();
+                checkFinished(pair);
             } else {
                 ctx.fireChannelRead(msg);
             }
         }
     }
 
-    private static final class ReliableReceiver extends ChannelInboundHandlerAdapter {
+    private final class ReliableReceiver extends ChannelInboundHandlerAdapter {
+        private final StreamPair pair;
         private final UnreliableOutputStream stream;
 
-        ReliableReceiver(UnreliableOutputStream stream) {
-            this.stream = stream;
+        ReliableReceiver(StreamPair pair) {
+            this.pair = pair;
+            this.stream = pair.unreliableOutput;
         }
 
         @Override
@@ -535,6 +619,10 @@ public final class TcpRelay implements Closeable {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
             ByteBuf buf = (ByteBuf) msg;
+            if (pair.finished) {
+                buf.release();
+                return;
+            }
             if (!buf.isReadable()) {
                 ctx.read();
                 return;
@@ -554,15 +642,26 @@ public final class TcpRelay implements Closeable {
         @Override
         public void channelInactive(ChannelHandlerContext ctx) {
             stream.eof = true;
+            if (pair.finished) {
+                return;
+            }
+            LOG.info("Local end of {} closed at {}", pair.initialize, stream.position);
+            if (stream.liveDestination != null && stream.liveDestination.isActive()) {
+                stream.liveDestination.writeAndFlush(END_OF_STREAM, stream.liveDestination.voidPromise());
+            }
+            checkFinished(pair);
         }
     }
 
-    private static final class UnreliableSender extends ChannelDuplexHandler {
+    private final class UnreliableSender extends ChannelDuplexHandler {
+        private final StreamPair pair;
         private final UnreliableOutputStream stream;
         private long position;
+        private boolean endSent;
 
-        UnreliableSender(UnreliableOutputStream stream, long position) {
-            this.stream = stream;
+        UnreliableSender(StreamPair pair, long position) {
+            this.pair = pair;
+            this.stream = pair.unreliableOutput;
             this.position = position;
         }
 
@@ -592,6 +691,15 @@ public final class TcpRelay implements Closeable {
                 write(ctx, catchup, ctx.voidPromise());
             }
             stream.liveDestination = ctx.channel();
+            sendEndIfDone(ctx);
+            ctx.flush();
+        }
+
+        private void sendEndIfDone(ChannelHandlerContext ctx) {
+            if (stream.eof && !endSent && position == stream.position) {
+                endSent = true;
+                ctx.write(new EndFrame(position).toFrame(ctx.alloc()), ctx.voidPromise());
+            }
         }
 
         @Override
@@ -608,6 +716,7 @@ public final class TcpRelay implements Closeable {
                 if (discardUntilFrame != null) {
                     stream.pruneUntil(discardUntilFrame.untilPosition);
                     ctx.read();
+                    checkFinished(pair);
                     return;
                 }
             }
@@ -620,20 +729,23 @@ public final class TcpRelay implements Closeable {
                 super.write(ctx, msg, promise);
                 return;
             }
+            if (msg == END_OF_STREAM) {
+                sendEndIfDone(ctx);
+                return;
+            }
 
             ByteBuf buf = (ByteBuf) msg;
             position += buf.readableBytes();
             ctx.write(new DefaultHttp2DataFrame(buf), promise);
         }
-
-        @Override
-        public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
-            super.userEventTriggered(ctx, evt);
-        }
     }
 
     private sealed abstract static class Stream {
         long position = 0;
+        /**
+         * For the input, whether the other side sent an {@link EndFrame}. For the output, whether the local socket
+         * closed, so that {@link #position} is final.
+         */
         boolean eof;
     }
 
@@ -680,13 +792,36 @@ public final class TcpRelay implements Closeable {
                 source.read();
             }
         }
+
+        void release() {
+            ByteBuf buf;
+            while ((buf = buffer.poll()) != null) {
+                buf.release();
+            }
+            bufferLength = 0;
+        }
     }
 
-    private record StreamPair(
-            Request initialize,
-            UnreliableInputStream unreliableInput,
-            UnreliableOutputStream unreliableOutput
-    ) {
+    private static final class StreamPair {
+        /**
+         * Whether this side created the pair and opens the HTTP/2 streams for it.
+         */
+        final boolean client;
+        final Request initialize;
+        final UnreliableInputStream unreliableInput;
+        final UnreliableOutputStream unreliableOutput;
+        /**
+         * Whether the server accepted a stream for this pair at least once, so that it knows about the pair.
+         */
+        boolean established;
+        boolean finished;
+
+        StreamPair(boolean client, Request initialize, UnreliableInputStream unreliableInput, UnreliableOutputStream unreliableOutput) {
+            this.client = client;
+            this.initialize = initialize;
+            this.unreliableInput = unreliableInput;
+            this.unreliableOutput = unreliableOutput;
+        }
     }
 
     private record Request(
@@ -694,12 +829,14 @@ public final class TcpRelay implements Closeable {
             String host,
             int port,
             long inputOffset,
-            long outputOffset
+            long outputOffset,
+            boolean resume
     ) {
         private static final AsciiString HEADER_HOST = AsciiString.of("host");
         private static final AsciiString HEADER_PORT = AsciiString.of("port");
         private static final AsciiString HEADER_INPUT_OFFSET = AsciiString.of("input-offset");
         private static final AsciiString HEADER_OUTPUT_OFFSET = AsciiString.of("output-offset");
+        private static final AsciiString HEADER_RESUME = AsciiString.of("resume");
 
         static Request fromHttp2Headers(Http2Headers headers) {
             return new Request(
@@ -707,7 +844,8 @@ public final class TcpRelay implements Closeable {
                     headers.get(HEADER_HOST).toString(),
                     headers.getInt(HEADER_PORT),
                     headers.getLong(HEADER_INPUT_OFFSET, 0),
-                    headers.getLong(HEADER_OUTPUT_OFFSET, 0)
+                    headers.getLong(HEADER_OUTPUT_OFFSET, 0),
+                    headers.getBoolean(HEADER_RESUME, false)
             );
         }
 
@@ -717,7 +855,8 @@ public final class TcpRelay implements Closeable {
                     .add(HEADER_HOST, host)
                     .addInt(HEADER_PORT, port)
                     .addLong(HEADER_INPUT_OFFSET, inputOffset)
-                    .addLong(HEADER_OUTPUT_OFFSET, outputOffset);
+                    .addLong(HEADER_OUTPUT_OFFSET, outputOffset)
+                    .addBoolean(HEADER_RESUME, resume);
         }
     }
 
@@ -765,6 +904,33 @@ public final class TcpRelay implements Closeable {
         Http2StreamFrame toFrame(ByteBufAllocator alloc) {
             ByteBuf buffer = alloc.buffer(8);
             buffer.writeLong(untilPosition);
+            return new DefaultHttp2UnknownFrame(FRAME_TYPE, new Http2Flags(), buffer);
+        }
+    }
+
+    /**
+     * Sent after the last data frame once the local socket has closed. {@link #position} is the total number of bytes
+     * in this direction.
+     */
+    private record EndFrame(
+            long position
+    ) {
+        private static final byte FRAME_TYPE = 0x72;
+
+        static EndFrame fromUnknownFrame(Http2UnknownFrame frame) {
+            if (frame.frameType() != FRAME_TYPE) {
+                return null;
+            }
+            try {
+                return new EndFrame(frame.content().readLong());
+            } finally {
+                frame.release();
+            }
+        }
+
+        Http2StreamFrame toFrame(ByteBufAllocator alloc) {
+            ByteBuf buffer = alloc.buffer(8);
+            buffer.writeLong(position);
             return new DefaultHttp2UnknownFrame(FRAME_TYPE, new Http2Flags(), buffer);
         }
     }
