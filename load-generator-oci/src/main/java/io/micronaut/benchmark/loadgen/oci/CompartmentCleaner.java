@@ -148,7 +148,7 @@ public record CompartmentCleaner(
         for (Compartment subCompartment : CompartmentResource.list(context, location)) {
             CompartmentResource resource = adaptCompartment(new OciLocation(subCompartment.getId(), location.region(), location.availabilityDomain()), true);
             resource.setPhase(subCompartment.getLifecycleState());
-            compartmentResource.dependOn(resource.require());
+            resource.dependOn(compartmentResource.require());
             delete(location, subCompartment.getId(), resource);
         }
         // other network resources take little time to delete
