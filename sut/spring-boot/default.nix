@@ -43,6 +43,7 @@ in
     jvm.enable = true;
     sut = {
       inherit package;
+      tlsHttp2 = true;
       executable = "spring-boot";
       description = "Spring Boot benchmark server";
       environment = [ "SPRING_SYSTEMD_NOTIFY_ENABLED=true" ];

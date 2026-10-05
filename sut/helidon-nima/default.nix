@@ -46,6 +46,7 @@ in
     jvm.enable = true;
     sut = {
       inherit package;
+      tlsHttp2 = true;
       executable = "helidon-nima";
       description = "Helidon Nima benchmark server";
       metadata = {

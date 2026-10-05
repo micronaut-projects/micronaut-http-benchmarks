@@ -325,7 +325,10 @@ in {
         package = sut;
         executable = "pyronaut";
         description = "Pyronaut ${if isJvm then "JVM" else "native"} benchmark server";
-        environment = [ "XDG_CACHE_HOME=/var/lib/sut/.cache" ];
+        environment = [
+          "XDG_CACHE_HOME=/var/lib/sut/.cache"
+          "MICRONAUT_SERVER_NETTY_HTTP2_MAX_CONCURRENT_STREAMS=2147483647"
+        ];
         metadata = {
           typePrefix = "pyronaut";
           parameters.threading = threading;

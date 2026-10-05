@@ -11,6 +11,11 @@ let
       benchmark.sut.runtime = runtime;
     }
   ) [ "native" "native-pgo" ]) [ "micronaut" "quarkus" ];
+  jvmCheckRuns = map (framework:
+    expandRun "standard" standard framework {
+      imports = [ (../sut + "/${framework}") ];
+    }
+  ) [ "helidon-nima" "quarkus" "spring-boot" "vertx" ];
   # Server modes remain checked even when a combination is not selected in the suite.
   pythonCheckRuns = lib.concatMap (framework: map (server:
     expandRun "standard" standard "${framework}-${server}" {
@@ -18,7 +23,7 @@ let
       benchmark.python.server = server;
     }
   ) [ "gunicorn" "granian" ]) [ "fastapi" "flask" "emmett" "django" ];
-  checkRuns = nativeCheckRuns ++ pythonCheckRuns;
+  checkRuns = nativeCheckRuns ++ jvmCheckRuns ++ pythonCheckRuns;
   enabledRuns = lib.concatMap (run: run.variants)
     ((lib.attrValues standardRuns)
       ++ lib.filter (run: !(builtins.hasAttr run.runName standardRuns)) checkRuns);
@@ -33,12 +38,46 @@ let
   protocolFor = name: standard.config.benchmark.suite.protocols.${name} // {
     protocol = if name == "http1" then "HTTP1" else if name == "https1" then "HTTPS1" else "HTTPS2";
   };
+  verifyHttp2Streams = pkgs.writeText "verify-http2-stream-limit.py" ''
+    import socket
+    import ssl
+    import struct
+
+    context = ssl.create_default_context(cafile="/etc/benchmark-tls/ca.pem")
+    context.set_alpn_protocols(["h2"])
+    with socket.create_connection(("127.0.0.1", 8443), timeout=10) as tcp:
+        with context.wrap_socket(tcp, server_hostname="localhost") as connection:
+            assert connection.selected_alpn_protocol() == "h2"
+            connection.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + b"\x00\x00\x00\x04\x00\x00\x00\x00\x00")
+
+            def read_exact(size):
+                data = b""
+                while len(data) < size:
+                    chunk = connection.recv(size - len(data))
+                    assert chunk, "Connection closed before SETTINGS"
+                    data += chunk
+                return data
+
+            for _ in range(20):
+                header = read_exact(9)
+                length = int.from_bytes(header[:3], "big")
+                payload = read_exact(length)
+                if header[3] == 4 and not header[4] & 1:
+                    settings = dict(struct.iter_unpack("!HI", payload))
+                    maximum = settings.get(3, 0xffffffff)
+                    print(f"Advertised HTTP/2 concurrent stream limit: {maximum}")
+                    assert maximum >= 2147483647, f"HTTP/2 stream limit is still {maximum}"
+                    break
+            else:
+                raise AssertionError("Server sent no SETTINGS")
+  '';
   verifyEndpoints = tlsHttp2: ''
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition statusRequest "http1"))})
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition trainingRequest "http1"))})
   '' + lib.optionalString tlsHttp2 ''
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition statusRequest "https2"))})
     machine.succeed(${builtins.toJSON (runDefinition (localDefinition trainingRequest "https2"))})
+    machine.succeed("${pkgs.python3}/bin/python ${verifyHttp2Streams}")
   '';
   verifyNativeProfile = sutPackage: ''
     machine.succeed("test -s /var/lib/sut/profile.jit.data")

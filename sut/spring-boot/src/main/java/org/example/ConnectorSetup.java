@@ -1,6 +1,7 @@
 package org.example;
 
 import org.eclipse.jetty.server.Connector;
+import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory;
 import org.eclipse.jetty.server.HttpConnectionFactory;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.ServerConnector;
@@ -16,6 +17,10 @@ public class ConnectorSetup {
         JettyServletWebServerFactory factory = new JettyServletWebServerFactory(8443);
         factory.addServerCustomizers(server -> {
             for (Connector connector : server.getConnectors()) {
+                HTTP2ServerConnectionFactory http2 = connector.getConnectionFactory(HTTP2ServerConnectionFactory.class);
+                if (http2 != null) {
+                    http2.setMaxConcurrentStreams(Integer.MAX_VALUE);
+                }
                 connector.getConnectionFactory(HttpConnectionFactory.class)
                         .getHttpConfiguration()
                         .getCustomizer(SecureRequestCustomizer.class)

@@ -41,6 +41,7 @@ in
     jvm.enable = true;
     sut = {
       inherit package;
+      tlsHttp2 = true;
       executable = "vertx";
       description = "Vert.x benchmark server";
       metadata = {

@@ -4,6 +4,7 @@ import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpHeaders;
+import io.vertx.core.http.Http2Settings;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.internal.VertxInternal;
@@ -39,6 +40,7 @@ public class MyVerticle extends AbstractVerticle {
                 .listen(httpPort)
                 .onSuccess(event -> httpPort = event.actualPort());
         Future<HttpServer> https = vertx.createHttpServer(new HttpServerOptions()
+                        .setInitialSettings(new Http2Settings().setMaxConcurrentStreams(Integer.MAX_VALUE))
                         .setSsl(true)
                         .setUseAlpn(true)
                         .addEnabledCipherSuite("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256")

@@ -39,6 +39,7 @@ in
     jvm.enable = true;
     sut = {
       inherit package;
+      tlsHttp2 = true;
       executable = "pure-netty";
       description = "Pure Netty benchmark server";
       metadata = {

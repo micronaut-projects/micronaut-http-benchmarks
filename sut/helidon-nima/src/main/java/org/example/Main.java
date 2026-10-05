@@ -70,7 +70,8 @@ public class Main {
                                 .tcpNoDelay(true)
                                 .build())
                         .addConnectionSelector(Http1ConnectionSelector.builder().config(Http1Config.builder().build()).build())
-                        .addConnectionSelector(Http2ConnectionSelector.builder().http2Config(Http2Config.builder().build()).build())
+                        .addConnectionSelector(Http2ConnectionSelector.builder()
+                                .http2Config(Http2Config.builder().maxConcurrentStreams(Integer.MAX_VALUE).build()).build())
                         .routing(routing));
         return builder.build().start();
     }

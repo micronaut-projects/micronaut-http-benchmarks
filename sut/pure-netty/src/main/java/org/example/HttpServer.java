@@ -30,7 +30,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public final class HttpServer implements AutoCloseable {
-    private static final Http2Settings INITIAL_H2_SETTINGS = Http2Settings.defaultSettings();
+    private static final Http2Settings INITIAL_H2_SETTINGS = Http2Settings.defaultSettings()
+            .maxConcurrentStreams(Integer.MAX_VALUE);
 
     private final ServerBootstrap tcpBootstrap;
     private final EventLoopGroup group;

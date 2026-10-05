@@ -29,6 +29,11 @@ warmup or fail the measured phase. Previously saved experiment templates retain 
 Warmup defaults to 200 concurrent clients total across all agents, configurable with
 `benchmark.hyperfoil.warmupUsers` independently of the measured phases' session limits.
 
+HTTP/2 stream concurrency is set to 2,147,483,647 on the load generator and all SUTs, the largest value
+Hyperfoil's signed-integer setting accepts. Stream concurrency per connection is not an intended throughput
+limit. The physical connection count and the phase session budgets remain separate controls. Nix smoke tests
+check the servers' advertised HTTP/2 stream limit as well as their responses.
+
 | Preset | Warmup per stage | Discovery phase | Validation phase | Validation increase | Repetitions |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | quick | 60s | 10s | 15s | 5% | 1 |

@@ -13,6 +13,8 @@ micronaut:
       handshake-timeout: 1m
     dual-protocol: true
     netty:
+      http2:
+        max-concurrent-streams: 2147483647
       parent:
         event-loop-group: default
   http:

@@ -43,7 +43,8 @@ in {
       protocol = "HTTPS2";
       sharedConnections = 265;
       pipeliningLimit = 1;
-      maxHttp2Streams = 100;
+      # Hyperfoil's setting is a signed Java int. Keep stream concurrency out of the benchmark limit.
+      maxHttp2Streams = 2147483647;
       compileOps = 25;
       ops = [ 1000 4000 8000 16000 32000 64000 80000 ];
     };

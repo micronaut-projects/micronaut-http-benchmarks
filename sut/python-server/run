@@ -14,7 +14,7 @@ case "$PYTHON_SERVER" in
     # Only this launcher announces readiness after probing both listeners.
     env -u NOTIFY_SOCKET gunicorn "${args[@]}" --http-protocols h1 --bind 0.0.0.0:8080 "$PYTHON_APPLICATION" &
     http_pid=$!
-    env -u NOTIFY_SOCKET gunicorn "${args[@]}" --http-protocols h2 --certfile cert.pem --keyfile key.pem --bind 0.0.0.0:8443 "$PYTHON_APPLICATION" &
+    env -u NOTIFY_SOCKET gunicorn "${args[@]}" --http-protocols h2 --http2-max-concurrent-streams 2147483647 --certfile cert.pem --keyfile key.pem --bind 0.0.0.0:8443 "$PYTHON_APPLICATION" &
     https_pid=$!
     ;;
   granian)
@@ -24,7 +24,7 @@ case "$PYTHON_SERVER" in
     fi
     env -u NOTIFY_SOCKET granian "${args[@]}" --http 1 --port 8080 "$PYTHON_APPLICATION" &
     http_pid=$!
-    env -u NOTIFY_SOCKET granian "${args[@]}" --http 2 --port 8443 --ssl-certificate cert.pem --ssl-keyfile key.pem --ssl-protocol-min tls1.2 "$PYTHON_APPLICATION" &
+    env -u NOTIFY_SOCKET granian "${args[@]}" --http 2 --http2-max-concurrent-streams 2147483647 --port 8443 --ssl-certificate cert.pem --ssl-keyfile key.pem --ssl-protocol-min tls1.2 "$PYTHON_APPLICATION" &
     https_pid=$!
     ;;
   *)

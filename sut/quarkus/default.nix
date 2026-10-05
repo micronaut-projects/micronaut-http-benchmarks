@@ -62,6 +62,7 @@ in {
     jvm.enable = runtimeInfo.isJvm;
     sut = {
       inherit package;
+      tlsHttp2 = true;
       executable = "quarkus";
       description = "Quarkus${if runtimeInfo.isJvm then "" else if runtimeInfo.isPgo then " PGO" else " native"} benchmark server";
       metadata = {
