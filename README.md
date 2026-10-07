@@ -279,6 +279,22 @@ nix build --no-link \
 
 Replace `fastapi` with `flask`, `emmett`, or `django` to check the corresponding framework.
 
+The `loop` and `db` suites call nginx or PostgreSQL attachments. Their checks run a stand-in on the test VM,
+set up like the OCI attachment, and send each suite document with response validation:
+
+```sh
+cd nix
+nix build --no-link \
+  .#checks.x86_64-linux.loop-micronaut-smoke \
+  .#checks.x86_64-linux.loop-micronaut-loom-carrier-smoke \
+  .#checks.x86_64-linux.db-micronaut-smoke \
+  .#checks.x86_64-linux.db-micronaut-loom-carrier-smoke
+```
+
+Micronaut runs in these suites select controllers with `micronaut-framework.executeOn` (`null` for the reactive
+handlers, `"blocking"` for `@ExecuteOn(BLOCKING)`) and `micronaut-framework.httpClient` (`"micronaut"` or `"jdk"`).
+`/db` always runs JDBC on the blocking executor.
+
 PGO checks remain available even while the production PGO entries are commented out:
 
 ```sh

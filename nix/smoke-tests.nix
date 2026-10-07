@@ -179,4 +179,71 @@ let
     inherit (run) trainingCase;
     modules = runModulesFor run true;
   });
-in lib.listToAttrs ((map profilingSmoke enabledRuns) ++ serviceSmokeTests)
+  # The loop and db suites call a remote nginx or PostgreSQL. Their checks run a local stand-in on
+  # the test VM, set up like the OCI attachments, and send each suite document over every enabled
+  # protocol with response validation.
+  attachmentStandIns = {
+    nginx = {
+      services.nginx = {
+        enable = true;
+        virtualHosts.localhost = {
+          default = true;
+          locations."= /hello".extraConfig = ''
+            default_type text/plain;
+            return 200 'Hello World';
+          '';
+        };
+      };
+    };
+    postgresql = {
+      services.postgresql = {
+        enable = true;
+        enableTCPIP = true;
+        authentication = lib.mkForce ''
+          local all all trust
+          host all all 127.0.0.1/32 scram-sha-256
+        '';
+        initialScript = pkgs.writeText "benchmark-db.sql" ''
+          CREATE ROLE benchmark LOGIN PASSWORD 'Benchmark1!';
+          CREATE DATABASE benchmark OWNER benchmark;
+          \c benchmark
+          CREATE TABLE values (index integer not null primary key, value varchar(40) not null);
+          INSERT INTO values SELECT i, gen_random_uuid()::text FROM generate_series(0, 1023) i;
+          GRANT SELECT ON values TO benchmark;
+        '';
+      };
+    };
+  };
+  attachmentSmokeTests = lib.concatMap (suiteName:
+    let
+      suite = evaluatedSuites.${suiteName};
+      suiteConfig = suite.config.benchmark.suite;
+      protocols = lib.attrValues suiteConfig.resolvedProtocols;
+      # Route log line of the controller that the run's executeOn and httpClient options select.
+      expectedController = run:
+        let cfg = run.system.config.micronaut-framework; in
+        if suiteName == "db" then "GET /db -> BlockingJdbc#"
+        else "GET /loop -> " + (if cfg.executeOn == null then "NonBlocking" else "Blocking") + (if cfg.httpClient == "jdk" then "Jdk" else "Mn") + "#";
+    in map (run: lib.nameValuePair "${suiteName}-${runName run}-smoke" (pkgs.testers.runNixOSTest {
+      name = "${suiteName}-${runName run}-smoke";
+      nodes.machine.imports = runModulesFor run false ++ map (a: attachmentStandIns.${a}) suiteConfig.attachments ++ [{
+        benchmark.jvm.extraArgs = [ "-Dloop-remote=http://127.0.0.1" "-Ddb-remote=127.0.0.1" ];
+        # Logs the controller of every route, to check which one the options selected.
+        benchmark.sut.environment = [ "LOGGER_LEVELS_IO_MICRONAUT_WEB_ROUTER=DEBUG" ];
+      }];
+      testScript = ''
+        start_all()
+        machine.wait_for_unit("multi-user.target")
+        ${lib.concatMapStrings (a: ''
+          machine.wait_for_unit("${a}.service")
+        '') suiteConfig.attachments}
+        machine.succeed("systemctl start sut.service || (journalctl --no-pager -u sut.service; false)")
+        machine.wait_for_unit("sut.service")
+        machine.succeed(${builtins.toJSON "journalctl --no-pager -u sut.service | grep -F 'Created Route' | grep -F '${expectedController run}'"})
+        ${lib.concatMapStrings (protocol: lib.concatMapStrings (request: ''
+          machine.succeed(${builtins.toJSON (runDefinition (localBenchmark.definition { inherit request protocol; }))})
+        '') suiteConfig.documents) protocols}
+      '';
+    })) (lib.concatMap (run: run.variants) (lib.attrValues evaluatedSuiteRuns.${suiteName}))
+  ) [ "loop" "db" ];
+in lib.listToAttrs ((map profilingSmoke enabledRuns) ++ serviceSmokeTests ++ attachmentSmokeTests)

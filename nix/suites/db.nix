@@ -1,7 +1,11 @@
 { ... }:
+let
+  micronaut = ../../sut/micronaut-framework;
+in
 {
   imports = [ ./common.nix ./jvm-defaults.nix ];
 
+  # Each request runs a JDBC query against PostgreSQL on the blocking executor.
   benchmark.suite = {
     attachments = [ "postgresql" ];
     documents = [{
@@ -12,6 +16,14 @@
       responseMatchingMode = "REGEX";
     }];
     protocols.http1.enable = true;
-    runs.micronaut.imports = [ ../../sut/micronaut-framework ];
+    runs = {
+      # Virtual threads on the default scheduler.
+      micronaut.imports = [ micronaut ];
+      # Virtual threads carried by the event loop.
+      micronaut-loom-carrier = {
+        imports = [ micronaut ];
+        micronaut-framework.threading = "loom-carrier";
+      };
+    };
   };
 }

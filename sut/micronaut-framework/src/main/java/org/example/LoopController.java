@@ -102,7 +102,7 @@ public class LoopController {
 
     @Controller("/loop")
     @Requires(property = "execute-on", value = "blocking")
-    @Requires(missingProperty = "use-jdk-client")
+    @Requires(property = "http-client", notEquals = "jdk")
     public static class BlockingMn {
         @Inject
         @Client("${loop-remote}")
@@ -121,7 +121,7 @@ public class LoopController {
 
     @Controller("/loop")
     @Requires(missingProperty = "execute-on")
-    @Requires(missingProperty = "use-jdk-client")
+    @Requires(property = "http-client", notEquals = "jdk")
     public static class NonBlockingMn {
         @Inject
         @Client("${loop-remote}")
