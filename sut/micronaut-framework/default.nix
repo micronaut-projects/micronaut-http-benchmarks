@@ -2,6 +2,8 @@
 let
   codec = "micronaut-serialization";
   threading = config.micronaut-framework.threading;
+  executeOn = config.micronaut-framework.executeOn;
+  httpClient = config.micronaut-framework.httpClient;
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
   tls = import ../../nix/tls.nix { inherit pkgs; };
@@ -97,6 +99,16 @@ in {
     default = "default";
     description = "Server threading mode; virtual and loom-carrier use BLOCKING thread selection.";
   };
+  options.micronaut-framework.executeOn = lib.mkOption {
+    type = lib.types.nullOr (lib.types.enum [ "blocking" ]);
+    default = null;
+    description = "Select the controllers annotated with @ExecuteOn(BLOCKING) (search and loop); null selects the non-blocking ones. /db always runs on the blocking executor.";
+  };
+  options.micronaut-framework.httpClient = lib.mkOption {
+    type = lib.types.enum [ "micronaut" "jdk" ];
+    default = "micronaut";
+    description = "HTTP client used by the loop endpoint.";
+  };
   config.benchmark = {
     jvm = {
       enable = runtimeInfo.isJvm;
@@ -111,14 +123,19 @@ in {
       tlsHttp2 = true;
       executable = "micronaut-framework";
       description = if runtimeInfo.isJvm then "Micronaut Framework ${codec} benchmark server" else if runtimeInfo.isPgo then "Micronaut Framework PGO benchmark server" else "Micronaut Framework native benchmark server";
-      environment = [ "MICRONAUT_SYSTEMD_NOTIFY_ENABLED=true" ];
+      # Environment variables rather than system properties, so that native images see them too.
+      environment = [ "MICRONAUT_SYSTEMD_NOTIFY_ENABLED=true" ]
+        ++ lib.optional (executeOn != null) "EXECUTE_ON=${executeOn}"
+        ++ lib.optional (httpClient != "micronaut") "HTTP_CLIENT=${httpClient}";
       metadata = {
         typePrefix = "micronaut-framework";
         typeSuffix = codec;
-        parameters.codec = codec;
-        parameters.threading = threading;
-        parameters.transport = "io-uring";
-        parameters.sourceRevision = upstream.rev;
+        parameters = {
+          inherit codec threading httpClient;
+          transport = "io-uring";
+          sourceRevision = upstream.rev;
+          executeOn = if executeOn == null then "default" else executeOn;
+        };
       };
     };
   };

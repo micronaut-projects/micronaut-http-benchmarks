@@ -2,7 +2,6 @@ package org.example;
 
 import io.agroal.api.AgroalDataSource;
 import io.agroal.api.configuration.supplier.AgroalPropertiesReader;
-import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.annotation.Value;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Get;
@@ -18,8 +17,8 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class DbController {
+    // JDBC always blocks, so the endpoint always runs on the blocking executor, whatever execute-on says.
     @Controller("/db")
-    @Requires(property = "execute-on", value = "blocking")
     public static class BlockingJdbc {
         private final DataSource dataSource;
 
