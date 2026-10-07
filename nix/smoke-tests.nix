@@ -16,6 +16,26 @@ let
       imports = [ (../sut + "/${framework}") ];
     }
   ) [ "helidon-nima" "quarkus" "spring-boot" "vertx" ];
+  # Runtime loom-carrier settings must bind; every property is set to a non-default value.
+  loomCarrierCheckRuns = [
+    (expandRun "standard" standard "micronaut-loom-carrier-tuned" {
+      imports = [ ../sut/micronaut-framework ];
+      micronaut-framework = {
+        threading = "loom-carrier";
+        eventLoopThreads = 3;
+        loomCarrier = {
+          time-slice-latency = "garbage";
+          time-slice-throughput = "2ms";
+          fifo-switch-time = "500us";
+          task-fifo-threshold = "2ms";
+          block-time = "100ms";
+          throughput-mode-threshold = "20";
+          work-spill-threshold = "4";
+          normal-warmup-tasks = "10";
+        };
+      };
+    })
+  ];
   # Server modes remain checked even when a combination is not selected in the suite.
   pythonCheckRuns = lib.concatMap (framework: map (server:
     expandRun "standard" standard "${framework}-${server}" {
@@ -23,7 +43,7 @@ let
       benchmark.python.server = server;
     }
   ) [ "gunicorn" "granian" ]) [ "fastapi" "flask" "emmett" "django" ];
-  checkRuns = nativeCheckRuns ++ jvmCheckRuns ++ pythonCheckRuns;
+  checkRuns = nativeCheckRuns ++ jvmCheckRuns ++ loomCarrierCheckRuns ++ pythonCheckRuns;
   enabledRuns = lib.concatMap (run: run.variants)
     ((lib.attrValues standardRuns)
       ++ lib.filter (run: !(builtins.hasAttr run.runName standardRuns)) checkRuns);
@@ -106,7 +126,7 @@ let
       done < <(${pkgs.findutils}/bin/find /var/lib/sut/jitdump -type f -print0)
     ''})
   '';
-  serviceTest = { name, tlsHttp2, profiling, pySpy, artifact, nativeProfile ? null, trainingCase ? null, modules }: pkgs.testers.runNixOSTest {
+  serviceTest = { name, tlsHttp2, profiling, pySpy, artifact, nativeProfile ? null, trainingCase ? null, extraScript ? "", modules }: pkgs.testers.runNixOSTest {
     inherit name;
     nodes.machine.imports = modules;
     nodes.machine.boot.kernel.sysctl = lib.mkIf (nativeProfile != null) {
@@ -131,6 +151,7 @@ let
         }))})
         machine.succeed(${builtins.toJSON (runDefinition (localBenchmark.definition trainingCase))})
       ''}
+      ${extraScript}
       ${lib.optionalString profiling ''
         ${lib.optionalString pySpy ''
           # Single-request probes can all fall between the 1 Hz samples.
@@ -159,12 +180,21 @@ let
       # Both checks exercise the deployable optimized binary, including its debug symbols.
       benchmark.sut.package = lib.mkForce run.system.config.benchmark.sut.package;
     });
+  # A configured Micronaut event loop size must reach the server: count its event loop threads.
+  eventLoopThreadsCheck = run:
+    let
+      threads = run.system.config.micronaut-framework.eventLoopThreads or null;
+      count = ''runuser -u sut -- jcmd "$(systemctl show -p MainPID --value sut.service)" Thread.print | grep -cE '^"default-nioEventLoopGroup-[0-9]+-[0-9]+"' '';
+    in lib.optionalString (threads != null) ''
+      machine.succeed(${builtins.toJSON "test \"$(${count})\" = ${toString threads}"})
+    '';
   serviceSmokeTests = map (run: lib.nameValuePair (smokeName run) (serviceTest {
     name = smokeName run;
     tlsHttp2 = run.system.config.benchmark.sut.tlsHttp2;
     profiling = false;
     pySpy = false;
     artifact = "";
+    extraScript = eventLoopThreadsCheck run;
     inherit (run) trainingCase;
     modules = runModulesFor run false;
   }))

@@ -4,6 +4,10 @@ let
   threading = config.micronaut-framework.threading;
   executeOn = config.micronaut-framework.executeOn;
   httpClient = config.micronaut-framework.httpClient;
+  loomCarrier = config.micronaut-framework.loomCarrier;
+  eventLoopThreads = config.micronaut-framework.eventLoopThreads;
+  # micronaut.netty.loom-carrier.time-slice-latency -> MICRONAUT_NETTY_LOOM_CARRIER_TIME_SLICE_LATENCY
+  envName = property: lib.toUpper (lib.replaceStrings [ "." "-" ] [ "_" "_" ] property);
   runtime = config.benchmark.sut.runtime;
   runtimeInfo = config.benchmark.sut.runtimeInfo;
   tls = import ../../nix/tls.nix { inherit pkgs; };
@@ -104,11 +108,26 @@ in {
     default = null;
     description = "Select the controllers annotated with @ExecuteOn(BLOCKING) (search and loop); null selects the non-blocking ones. /db always runs on the blocking executor.";
   };
+  options.micronaut-framework.loomCarrier = lib.mkOption {
+    type = lib.types.attrsOf lib.types.str;
+    default = { };
+    example = { time-slice-latency = "200us"; work-spill-threshold = "4"; };
+    description = "micronaut.netty.loom-carrier.* properties, set at runtime so that variants share one build. Requires threading = \"loom-carrier\".";
+  };
+  options.micronaut-framework.eventLoopThreads = lib.mkOption {
+    type = lib.types.nullOr lib.types.ints.positive;
+    default = null;
+    description = "Number of threads of the default event loop group; null keeps the Micronaut default of one per core.";
+  };
   options.micronaut-framework.httpClient = lib.mkOption {
     type = lib.types.enum [ "micronaut" "jdk" ];
     default = "micronaut";
     description = "HTTP client used by the loop endpoint.";
   };
+  config.assertions = [{
+    assertion = loomCarrier == { } || threading == "loom-carrier";
+    message = "micronaut-framework.loomCarrier requires micronaut-framework.threading = \"loom-carrier\".";
+  }];
   config.benchmark = {
     jvm = {
       enable = runtimeInfo.isJvm;
@@ -126,7 +145,9 @@ in {
       # Environment variables rather than system properties, so that native images see them too.
       environment = [ "MICRONAUT_SYSTEMD_NOTIFY_ENABLED=true" ]
         ++ lib.optional (executeOn != null) "EXECUTE_ON=${executeOn}"
-        ++ lib.optional (httpClient != "micronaut") "HTTP_CLIENT=${httpClient}";
+        ++ lib.optional (httpClient != "micronaut") "HTTP_CLIENT=${httpClient}"
+        ++ lib.mapAttrsToList (name: value: "${envName "micronaut.netty.loom-carrier.${name}"}=${value}") loomCarrier
+        ++ lib.optional (eventLoopThreads != null) "MICRONAUT_NETTY_EVENT_LOOPS_DEFAULT_NUM_THREADS=${toString eventLoopThreads}";
       metadata = {
         typePrefix = "micronaut-framework";
         typeSuffix = codec;
@@ -135,6 +156,8 @@ in {
           transport = "io-uring";
           sourceRevision = upstream.rev;
           executeOn = if executeOn == null then "default" else executeOn;
+          loomCarrier = builtins.toJSON loomCarrier;
+          eventLoopThreads = if eventLoopThreads == null then "default" else toString eventLoopThreads;
         };
       };
     };
