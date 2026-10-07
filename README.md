@@ -295,6 +295,11 @@ Micronaut runs in these suites select controllers with `micronaut-framework.exec
 handlers, `"blocking"` for `@ExecuteOn(BLOCKING)`) and `micronaut-framework.httpClient` (`"micronaut"` or `"jdk"`).
 `/db` always runs JDBC on the blocking executor.
 
+`micronaut-framework.eventLoopThreads` sets the size of the default event loop group, and
+`micronaut-framework.loomCarrier` sets `micronaut.netty.loom-carrier.*` properties for `threading = "loom-carrier"`
+runs, e.g. `{ work-spill-threshold = "4"; }`. Both are runtime settings, so such variants share one build.
+`micronaut-loom-carrier-tuned-smoke` sets every loom-carrier property and checks the event loop size.
+
 PGO checks remain available even while the production PGO entries are commented out:
 
 ```sh
